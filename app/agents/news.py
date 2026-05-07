@@ -97,7 +97,7 @@ async def fetch_and_summarize() -> str:
             break
 
     if not items:
-        async with await get_db() as db:
+        async with get_db() as db:
             await db.execute(
                 "INSERT INTO audit_logs (action, details) VALUES (?, ?)",
                 ("news_fetch_completed", "count=0"),
@@ -105,7 +105,7 @@ async def fetch_and_summarize() -> str:
             await db.commit()
         return "📌 วันนี้ยังไม่พบข่าว AI/Tech ที่เข้าเงื่อนไข"
 
-    async with await get_db() as db:
+    async with get_db() as db:
         for item in items:
             prompt = (
                 "สรุปข่าวต่อไปนี้เป็น JSON\n"

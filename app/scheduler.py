@@ -12,7 +12,7 @@ _BANGKOK = ZoneInfo("Asia/Bangkok")
 
 async def _send_scheduled_message(bot: Bot, text: str, action: str):
     await bot.send_message(chat_id=settings.telegram_chat_id, text=text, parse_mode=None)
-    async with await get_db() as db:
+    async with get_db() as db:
         await db.execute(
             "INSERT INTO audit_logs (action, details) VALUES (?, ?)",
             (action, f"chat_id={settings.telegram_chat_id}"),
@@ -35,7 +35,7 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
         message = await summary.generate_weekly_summary()
         today = datetime.now(_BANGKOK).date()
         start_date = today - timedelta(days=6)
-        async with await get_db() as db:
+        async with get_db() as db:
             cursor = await db.execute(
                 """
                 SELECT mistake, lesson

@@ -11,7 +11,7 @@ async def generate_daily_summary() -> str:
     today = datetime.now(_BANGKOK).date()
     today_text = today.strftime("%d/%m/%Y")
 
-    async with await get_db() as db:
+    async with get_db() as db:
         cursor = await db.execute(
             "SELECT category, content FROM daily_logs WHERE log_date = ? ORDER BY id",
             (today.isoformat(),),
@@ -139,7 +139,7 @@ async def generate_weekly_summary() -> str:
     today = datetime.now(_BANGKOK).date()
     start_date = today - timedelta(days=6)
 
-    async with await get_db() as db:
+    async with get_db() as db:
         cursor = await db.execute(
             """
             SELECT log_date, category, content
@@ -172,7 +172,7 @@ async def generate_weekly_summary() -> str:
     weekly_body = (await chat(prompt)).strip()
     result = f"📌 รีวิว 7 วันที่ผ่านมา\n\n{weekly_body}"
 
-    async with await get_db() as db:
+    async with get_db() as db:
         await db.execute(
             "INSERT INTO audit_logs (action, details) VALUES (?, ?)",
             (

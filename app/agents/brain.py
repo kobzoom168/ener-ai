@@ -33,7 +33,7 @@ async def process_note(text: str) -> str:
         summary = text[:80]
         extracted_tasks = []
 
-    async with await get_db() as db:
+    async with get_db() as db:
         await db.execute(
             "INSERT INTO notes (content, category, ai_summary) VALUES (?, ?, ?)",
             (text, category, summary),

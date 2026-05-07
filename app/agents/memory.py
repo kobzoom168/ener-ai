@@ -6,7 +6,7 @@ from app.core.database import get_db
 async def search_memory(query: str) -> str:
     like_query = f"%{query}%"
 
-    async with await get_db() as db:
+    async with get_db() as db:
         notes_cursor = await db.execute(
             """
             SELECT id, content, category
@@ -101,7 +101,7 @@ async def search_memory(query: str) -> str:
 async def park_idea(text: str) -> str:
     memory_key = str(uuid4())
 
-    async with await get_db() as db:
+    async with get_db() as db:
         await db.execute(
             "INSERT INTO memories (key, value, tag) VALUES (?, ?, ?)",
             (memory_key, text, "parked"),

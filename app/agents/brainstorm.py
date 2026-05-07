@@ -78,7 +78,7 @@ async def run_brainstorm(topic: str) -> str:
     verdict = str(final_result.get("verdict", "pivot")).strip().lower()
     reason = str(final_result.get("reason", "")).strip()
 
-    async with await get_db() as db:
+    async with get_db() as db:
         await db.execute(
             "INSERT INTO audit_logs (action, details) VALUES (?, ?)",
             ("brainstorm_completed", f"topic={topic} verdict={verdict}"),

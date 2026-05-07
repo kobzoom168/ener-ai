@@ -41,7 +41,7 @@ async def record_lesson(text: str) -> str:
         reason = reason_hint
         lesson = f"ครั้งหน้าต้องระวังเรื่อง {mistake}"
 
-    async with await get_db() as db:
+    async with get_db() as db:
         await db.execute(
             """
             INSERT INTO lessons_learned (mistake, reason, lesson)

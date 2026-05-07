@@ -6,7 +6,7 @@ _PRIORITY_EMOJI = {"high": "🔴", "medium": "🟡", "low": "🟢"}
 
 
 async def create_task(title: str, priority: str = "medium", deadline_hint: str = "") -> str:
-    async with await get_db() as db:
+    async with get_db() as db:
         cursor = await db.execute(
             "INSERT INTO tasks (title, priority, deadline_hint) VALUES (?, ?, ?)",
             (title, priority, deadline_hint),
@@ -36,7 +36,7 @@ async def create_task(title: str, priority: str = "medium", deadline_hint: str =
 
 
 async def list_tasks() -> str:
-    async with await get_db() as db:
+    async with get_db() as db:
         cursor = await db.execute(
             "SELECT id, title, priority, deadline_hint FROM tasks WHERE status = 'open' ORDER BY id",
         )
@@ -55,7 +55,7 @@ async def list_tasks() -> str:
 
 
 async def complete_task(task_id: int) -> str:
-    async with await get_db() as db:
+    async with get_db() as db:
         cursor = await db.execute(
             "SELECT title FROM tasks WHERE id = ? AND status = 'open'",
             (task_id,),
