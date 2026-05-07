@@ -30,6 +30,13 @@ def _data_dir() -> Path:
     return configured.parent if configured.parent != Path("") else Path(".")
 
 
+def _truncate_text(text: str, limit: int = 100) -> str:
+    clean = str(text).strip()
+    if len(clean) <= limit:
+        return clean
+    return clean[: limit - 3].rstrip() + "..."
+
+
 async def _require_admin(request: Request):
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Basic "):
@@ -94,6 +101,25 @@ async def _load_admin_status() -> dict:
             """,
         )
         recent_rows = await recent_cursor.fetchall()
+        conversation_cursor = await db.execute(
+            """
+            SELECT
+              datetime(m.created_at, '+7 hours') AS local_created_at,
+              m.role,
+              m.content,
+              r.model
+            FROM messages m
+            LEFT JOIN ai_runs r ON (
+              r.agent = 'chat' AND
+              ABS(strftime('%s', r.created_at) - strftime('%s', m.created_at)) < 5
+            )
+            WHERE m.chat_id = ?
+            ORDER BY m.created_at DESC
+            LIMIT 20
+            """,
+            ("7486743496",),
+        )
+        conversation_rows = await conversation_cursor.fetchall()
         sqlite_ok = True
         try:
             check_cursor = await db.execute("SELECT 1 AS ok")
@@ -107,6 +133,47 @@ async def _load_admin_status() -> dict:
     uptime_delta = datetime.now(_BANGKOK) - _APP_STARTED_AT
     uptime_minutes = int(uptime_delta.total_seconds() // 60)
     uptime_text = f"{uptime_minutes // 60}h {uptime_minutes % 60}m"
+    ordered_messages = list(reversed(conversation_rows))
+    recent_conversations = []
+    current_pair: dict[str, str] | None = None
+    for row in ordered_messages:
+        role = row["role"]
+        if role == "user":
+            if current_pair and (current_pair.get("user") or current_pair.get("assistant")):
+                recent_conversations.append(current_pair)
+            current_pair = {
+                "time": str(row["local_created_at"])[11:16],
+                "model": row["model"] or "haiku",
+                "model_label": get_model_label(row["model"] or "haiku"),
+                "user": _truncate_text(row["content"]),
+                "assistant": "",
+            }
+        elif role == "assistant":
+            if current_pair is None:
+                current_pair = {
+                    "time": str(row["local_created_at"])[11:16],
+                    "model": row["model"] or "haiku",
+                    "model_label": get_model_label(row["model"] or "haiku"),
+                    "user": "",
+                    "assistant": _truncate_text(row["content"]),
+                }
+            elif not current_pair.get("assistant"):
+                current_pair["assistant"] = _truncate_text(row["content"])
+                if row["model"]:
+                    current_pair["model"] = row["model"]
+                    current_pair["model_label"] = get_model_label(row["model"])
+            else:
+                recent_conversations.append(current_pair)
+                current_pair = {
+                    "time": str(row["local_created_at"])[11:16],
+                    "model": row["model"] or "haiku",
+                    "model_label": get_model_label(row["model"] or "haiku"),
+                    "user": "",
+                    "assistant": _truncate_text(row["content"]),
+                }
+    if current_pair and (current_pair.get("user") or current_pair.get("assistant")):
+        recent_conversations.append(current_pair)
+    recent_conversations = list(reversed(recent_conversations[-10:]))
 
     return {
         "active_model": active_model,
@@ -130,6 +197,7 @@ async def _load_admin_status() -> dict:
             }
             for row in recent_rows
         ],
+        "recent_conversations": recent_conversations,
     }
 
 
@@ -226,6 +294,32 @@ def build_admin_html(status: dict) -> HTMLResponse:
     li:last-child {{
       border-bottom: none;
     }}
+    .full {{
+      grid-column: 1 / -1;
+    }}
+    .conversation-list {{
+      display: grid;
+      gap: 12px;
+    }}
+    .conversation-item {{
+      background: #111224;
+      border: 1px solid #2b2d42;
+      border-radius: 14px;
+      padding: 12px;
+    }}
+    .conversation-head {{
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+      color: #d4d7e8;
+      flex-wrap: wrap;
+    }}
+    .conversation-line {{
+      margin: 6px 0;
+      line-height: 1.45;
+      word-break: break-word;
+    }}
   </style>
 </head>
 <body>
@@ -267,6 +361,10 @@ def build_admin_html(status: dict) -> HTMLResponse:
         <h2>📊 การเรียก AI ล่าสุด</h2>
         <ul id="recent-calls"></ul>
       </section>
+      <section class="card full">
+        <h2>💬 บทสนทนาล่าสุด</h2>
+        <div id="recent-conversations" class="conversation-list"></div>
+      </section>
     </div>
   </div>
   <script>
@@ -300,6 +398,25 @@ def build_admin_html(status: dict) -> HTMLResponse:
         const item = document.createElement("li");
         item.textContent = `${{run.time}} ${{run.agent}} ${{run.model_label}} ฿${{Number(run.cost).toFixed(2)}}`;
         recent.appendChild(item);
+      }}
+      const conversations = document.getElementById("recent-conversations");
+      conversations.innerHTML = "";
+      if (!status.recent_conversations.length) {{
+        conversations.innerHTML = "<div class='conversation-item'>ยังไม่มีบทสนทนา</div>";
+        return;
+      }}
+      for (const item of status.recent_conversations) {{
+        const box = document.createElement("div");
+        box.className = "conversation-item";
+        box.innerHTML = `
+          <div class="conversation-head">
+            <span>${{escapeHtml(item.time)}}</span>
+            <span>[${{escapeHtml(item.model_label)}}]</span>
+          </div>
+          <div class="conversation-line">👤 ${{escapeHtml(item.user || "-")}}</div>
+          <div class="conversation-line">🤖 ${{escapeHtml(item.assistant || "-")}}</div>
+        `;
+        conversations.appendChild(box);
       }}
     }}
     async function refreshStatus() {{
