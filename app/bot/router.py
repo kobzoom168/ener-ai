@@ -224,10 +224,16 @@ async def msg_fallback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not text.strip():
         return
     chat_id = str(update.effective_chat.id)
-    pending_result = await brain.handle_pending_reply(chat_id, text)
-    if pending_result is not None:
-        await _reply(update, pending_result)
-        return
+    pending = await brain.get_pending_clarification(chat_id)
+    if pending is not None:
+        normalized = text.strip()
+        if normalized in {"1", "2", "3", "4", "1️⃣", "2️⃣", "3️⃣", "4️⃣"}:
+            pending_result = await brain.handle_pending_reply(chat_id, text)
+            if pending_result is not None:
+                await _reply(update, pending_result)
+                return
+        else:
+            await brain.clear_pending_clarification(chat_id)
     result = await chat.run_chat(chat_id, text)
     await _reply(update, result)
 

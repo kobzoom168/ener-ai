@@ -67,6 +67,34 @@ def _parse_clarification_reply(text: str) -> str | None:
     return mapping.get(normalized)
 
 
+async def get_pending_clarification(chat_id: str):
+    async with get_db() as db:
+        cursor = await db.execute(
+            """
+            SELECT id, raw_text, detected_category
+            FROM pending_clarification
+            WHERE chat_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (chat_id,),
+        )
+        return await cursor.fetchone()
+
+
+async def clear_pending_clarification(chat_id: str) -> None:
+    async with get_db() as db:
+        await db.execute(
+            "DELETE FROM pending_clarification WHERE chat_id = ?",
+            (chat_id,),
+        )
+        await db.execute(
+            "INSERT INTO audit_logs (action, details) VALUES (?, ?)",
+            ("clarification_cleared", f"chat_id={chat_id}"),
+        )
+        await db.commit()
+
+
 async def _save_note(text: str, category: str, summary: str, extracted_tasks: list[str]) -> str:
     task_titles = extracted_tasks[:]
     if category == "task" and not task_titles:
@@ -165,19 +193,7 @@ async def process_note(text: str, chat_id: str) -> str:
 
 
 async def handle_pending_reply(chat_id: str, reply_text: str) -> str | None:
-    async with get_db() as db:
-        cursor = await db.execute(
-            """
-            SELECT id, raw_text, detected_category
-            FROM pending_clarification
-            WHERE chat_id = ?
-            ORDER BY id DESC
-            LIMIT 1
-            """,
-            (chat_id,),
-        )
-        row = await cursor.fetchone()
-
+    row = await get_pending_clarification(chat_id)
     if not row:
         return None
 
