@@ -6,6 +6,8 @@ class Settings(BaseSettings):
     telegram_webhook_url: str
     telegram_chat_id: str
 
+    anthropic_api_key: str = ""
+
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "qwen2.5:7b"
 
