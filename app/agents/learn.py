@@ -32,7 +32,7 @@ async def record_lesson(text: str) -> str:
         "สกัดบทเรียนจากข้อความนี้"
     )
     try:
-        result = await chat_json(prompt, system=_LEARN_SYSTEM)
+        result = await chat_json(prompt, system=_LEARN_SYSTEM, agent="learn")
         mistake = str(result.get("mistake", mistake_hint or text)).strip()
         reason = str(result.get("reason", reason_hint)).strip()
         lesson = str(result.get("lesson", text)).strip()

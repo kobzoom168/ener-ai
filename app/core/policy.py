@@ -9,6 +9,8 @@ ALLOWED_NEWS_SOURCES = [
     "wired.com",
 ]
 
+ALLOWED_CHAT_IDS = [7486743496]
+
 BLOCKED_DOMAINS: list[str] = []
 
 BLOCKED_ACTIONS = [

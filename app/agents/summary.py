@@ -169,7 +169,7 @@ async def generate_weekly_summary() -> str:
         + "4) โฟกัสที่ควรทำต่อสัปดาห์หน้า\n"
         + "ห้ามเกริ่นนำยาว และไม่ต้องใส่ markdown code block"
     )
-    weekly_body = (await chat(prompt)).strip()
+    weekly_body = (await chat(prompt, agent="summary")).strip()
     result = f"📌 รีวิว 7 วันที่ผ่านมา\n\n{weekly_body}"
 
     async with get_db() as db:

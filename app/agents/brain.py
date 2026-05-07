@@ -141,7 +141,7 @@ async def _create_pending_clarification(chat_id: str, text: str, detected_catego
 
 async def process_note(text: str, chat_id: str) -> str:
     try:
-        result = await chat_json(text, system=_CLASSIFY_SYSTEM)
+        result = await chat_json(text, system=_CLASSIFY_SYSTEM, agent="brain")
         category = str(result.get("category", "random")).strip().lower()
         summary = str(result.get("summary", text[:50])).strip()
         extracted_tasks: list[str] = result.get("extracted_tasks", [])

@@ -27,7 +27,7 @@ async def run_brainstorm(topic: str) -> str:
             f"นี่คือรอบที่ {round_number}\n"
             "โจมตีไอเดียนี้แบบตรงไปตรงมาและเป็นภาษาไทย"
         )
-        ai_a = (await chat(prompt_a, system=_AI_A_SYSTEM)).strip()
+        ai_a = (await chat(prompt_a, system=_AI_A_SYSTEM, agent="brainstorm")).strip()
 
         prompt_b = (
             f"หัวข้อ: {topic}\n"
@@ -35,7 +35,7 @@ async def run_brainstorm(topic: str) -> str:
             f"ข้อโจมตีจาก AI_A รอบ {round_number}:\n{ai_a}\n\n"
             "ตอบโต้ทุกประเด็นและเสนอทางแก้เป็นภาษาไทย"
         )
-        ai_b = (await chat(prompt_b, system=_AI_B_SYSTEM)).strip()
+        ai_b = (await chat(prompt_b, system=_AI_B_SYSTEM, agent="brainstorm")).strip()
 
         prompt_c = (
             f"หัวข้อ: {topic}\n"
@@ -43,7 +43,7 @@ async def run_brainstorm(topic: str) -> str:
             f"คำตอบจาก AI_B รอบ {round_number}:\n{ai_b}\n\n"
             "สรุปอย่างเป็นกลางว่ารอบนี้เห็นอะไร จุดไหนยังเสี่ยง จุดไหนน่าไปต่อ"
         )
-        ai_c = (await chat(prompt_c, system=_AI_C_SYSTEM)).strip()
+        ai_c = (await chat(prompt_c, system=_AI_C_SYSTEM, agent="brainstorm")).strip()
 
         history.append(
             {
@@ -73,7 +73,7 @@ async def run_brainstorm(topic: str) -> str:
         )
         + "\n\nตัดสินผลรวมทั้งหมด"
     )
-    final_result = await chat_json(final_prompt, system=_FINAL_SYSTEM)
+    final_result = await chat_json(final_prompt, system=_FINAL_SYSTEM, agent="brainstorm")
     summary = str(final_result.get("summary", "สรุปไอเดียเสร็จแล้ว")).strip()
     verdict = str(final_result.get("verdict", "pivot")).strip().lower()
     reason = str(final_result.get("reason", "")).strip()

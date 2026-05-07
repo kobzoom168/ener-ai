@@ -123,7 +123,7 @@ async def fetch_and_summarize() -> str:
                 "- ห้ามตอบเกิน JSON"
             )
             try:
-                ai_result = await chat_json(prompt)
+                ai_result = await chat_json(prompt, agent="news")
                 summary = str(ai_result.get("summary", item["title"])).strip()
                 relevance = str(
                     ai_result.get("relevance", "เกี่ยวข้องกับงานและความสนใจด้าน AI/เทคโนโลยีของกบ")

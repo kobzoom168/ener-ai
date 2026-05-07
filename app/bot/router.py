@@ -8,14 +8,23 @@ from telegram.ext import (
     ContextTypes,
 )
 from app.core.config import settings
-from app.agents import brain, brainstorm, learn, memory, news, summary, task
+from app.core.database import get_db
+from app.core.policy import ALLOWED_CHAT_IDS
+from app.agents import brain, brainstorm, chat, learn, memory, news, summary, task
 
 
 async def _reply(update: Update, text: str):
     await update.message.reply_text(text, parse_mode=None)
 
 
+def _is_allowed(update: Update) -> bool:
+    chat_id = str(update.effective_chat.id)
+    return chat_id in [str(x) for x in ALLOWED_CHAT_IDS]
+
+
 async def cmd_note(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
     text = " ".join(ctx.args) if ctx.args else ""
     if not text:
         await _reply(update, "📌 พิมพ์ข้อความหลัง /note เช่น /note ไอเดีย X")
@@ -26,6 +35,8 @@ async def cmd_note(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_task(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
     if not ctx.args:
         await _reply(update, "📌 พิมพ์ชื่อ task เช่น /task ซื้อของ")
         return
@@ -51,11 +62,15 @@ async def cmd_task(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_tasks(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
     result = await task.list_tasks()
     await _reply(update, result)
 
 
 async def cmd_done(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
     if not ctx.args or not ctx.args[0].isdigit():
         await _reply(update, "📌 ระบุ ID task เช่น /done 3")
         return
@@ -64,6 +79,8 @@ async def cmd_done(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_learn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
     text = " ".join(ctx.args) if ctx.args else ""
     if not text:
         await _reply(update, "📌 พิมพ์ข้อความหลัง /learn เช่น /learn พลาดเรื่อง X เพราะ Y")
@@ -73,6 +90,8 @@ async def cmd_learn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_think(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
     text = " ".join(ctx.args) if ctx.args else ""
     if not text:
         await _reply(update, "📌 พิมพ์หัวข้อหลัง /think เช่น /think ทำโปรดักต์ AI ตัวนี้ดีไหม")
@@ -82,6 +101,8 @@ async def cmd_think(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_park(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
     text = " ".join(ctx.args) if ctx.args else ""
     if not text:
         await _reply(update, "📌 พิมพ์ไอเดียหลัง /park เช่น /park ระบบแจ้งเตือนแบบใหม่")
@@ -91,6 +112,8 @@ async def cmd_park(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
     text = " ".join(ctx.args) if ctx.args else ""
     if not text:
         await _reply(update, "📌 พิมพ์คำค้นหลัง /search เช่น /search โปรเจกต์ AI")
@@ -99,7 +122,59 @@ async def cmd_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await _reply(update, result)
 
 
+async def cmd_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+    async with get_db() as db:
+        today_cursor = await db.execute(
+            "SELECT COALESCE(SUM(estimated_cost_thb), 0) AS total FROM ai_runs WHERE date(created_at) = date('now', 'localtime')",
+        )
+        today_row = await today_cursor.fetchone()
+        month_cursor = await db.execute(
+            """
+            SELECT COALESCE(SUM(estimated_cost_thb), 0) AS total
+            FROM ai_runs
+            WHERE strftime('%Y-%m', created_at, 'localtime') = strftime('%Y-%m', 'now', 'localtime')
+            """,
+        )
+        month_row = await month_cursor.fetchone()
+        model_cursor = await db.execute(
+            """
+            SELECT model, COALESCE(SUM(estimated_cost_thb), 0) AS total
+            FROM ai_runs
+            WHERE strftime('%Y-%m', created_at, 'localtime') = strftime('%Y-%m', 'now', 'localtime')
+            GROUP BY model
+            ORDER BY total DESC, model
+            """,
+        )
+        model_rows = await model_cursor.fetchall()
+        await db.execute(
+            "INSERT INTO audit_logs (action, details) VALUES (?, ?)",
+            ("cost_viewed", f"chat_id={update.effective_chat.id}"),
+        )
+        await db.commit()
+
+    lines = [
+        "📌 สรุปค่าใช้จ่าย AI",
+        "",
+        "📊 ค่าใช้จ่าย AI",
+        "",
+        f"วันนี้: {float(today_row['total']):.2f} บาท",
+        f"เดือนนี้: {float(month_row['total']):.2f} บาท",
+        "",
+        "แยกตาม model:",
+    ]
+    if model_rows:
+        for row in model_rows:
+            lines.append(f"· {row['model']}: {float(row['total']):.2f} บาท")
+    else:
+        lines.append("· ยังไม่มี")
+    await _reply(update, "\n".join(lines))
+
+
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
     text = (
         "📌 คำสั่งที่ใช้ได้ใน Ener-AI\n\n"
         "/note <ข้อความ>  — จดความคิด\n"
@@ -115,27 +190,36 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/today           — สรุปวันนี้\n"
         "/news            — ดึงข่าว AI/Tech วันนี้\n"
         "/week            — รีวิว 7 วันที่ผ่านมา\n"
-        "\nหรือพิมพ์ตรงๆ โดยไม่มี / → บันทึกใน brain อัตโนมัติ"
+        "/cost            — ดูค่าใช้จ่าย AI\n"
+        "\nหรือพิมพ์ข้อความปกติ โดยไม่มี / → คุยกับ Ener-AI ได้เลย"
     )
     await _reply(update, text)
 
 
 async def cmd_today(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
     result = await summary.generate_daily_summary()
     await _reply(update, result)
 
 
 async def cmd_news(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
     result = await news.fetch_and_summarize()
     await _reply(update, result)
 
 
 async def cmd_week(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
     result = await summary.generate_weekly_summary()
     await _reply(update, result)
 
 
 async def msg_fallback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
     text = update.message.text or ""
     if not text.strip():
         return
@@ -144,7 +228,7 @@ async def msg_fallback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if pending_result is not None:
         await _reply(update, pending_result)
         return
-    result = await brain.process_note(text, chat_id)
+    result = await chat.run_chat(chat_id, text)
     await _reply(update, result)
 
 
@@ -163,6 +247,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("today", cmd_today))
     app.add_handler(CommandHandler("news", cmd_news))
     app.add_handler(CommandHandler("week", cmd_week))
+    app.add_handler(CommandHandler("cost", cmd_cost))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("start", cmd_help))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, msg_fallback))
