@@ -1,0 +1,241 @@
+Ener-AI — System Design v3
+Lock Date: May 2026
+หลักการ: สร้างเอง คุมได้ 100% ใช้ได้จริง
+
+🎯 เป้าหมายระบบ
+
+AI ส่วนตัวที่จำได้ เรียนรู้ได้ คุยต่อเนื่องได้
+มีบุคลิกที่สนับสนุนทั้งจิตวิญญาณ + เทคโนโลยี
+กบคุมกฎทุกอย่างได้ 100%
+
+
+1) Scope — v1 ทำแค่นี้
+✅ ทำใน v1
+
+🧠 Brain       — จดความคิด จำได้ ไม่หาย
+📅 Summary     — สรุปวันแยกหมวด
+✅ Task        — จัดการงาน
+📰 News        — ข่าว AI + IT ทุกเช้า
+🔁 Learn       — บันทึกสิ่งที่พลาด ไม่ทำซ้ำ
+💡 Brainstorm  — AI 3 ตัวถกไอเดีย
+
+❌ ยังไม่ทำใน v1
+
+Facebook posting อัตโนมัติ
+YouTube / VDO
+DevOps alert อัตโนมัติ
+Voice input
+Multi-user
+
+
+2) Architecture — 5 ชั้น
+┌─────────────────────────────────────┐
+│  INPUT LAYER                        │
+│  Telegram Bot (ช่องทางหลัก)         │
+└────────────────┬────────────────────┘
+                 │
+┌────────────────▼────────────────────┐
+│  ROUTER LAYER                       │
+│  command → agent mapping            │
+│  keyword fallback                   │
+└────────────────┬────────────────────┘
+                 │
+┌────────────────▼────────────────────┐
+│  POLICY LAYER                       │
+│  redaction / whitelist / rules      │
+│  กบแก้ได้เองใน policy.py           │
+└────────────────┬────────────────────┘
+                 │
+┌────────────────▼────────────────────┐
+│  AGENT LAYER                        │
+│  brain / summary / task /           │
+│  news / learn / brainstorm          │
+│  + Ollama (Qwen2.5 7B)             │
+└────────────────┬────────────────────┘
+                 │
+┌────────────────▼────────────────────┐
+│  MEMORY & STORAGE LAYER             │
+│  SQLite — ทุกอย่างอยู่ที่นี่        │
+└─────────────────────────────────────┘
+
+3) Agent Specs
+🧠 Brain
+command:  /note หรือพิมพ์ตรงๆ
+input:    ข้อความใดก็ได้
+output:   บันทึก + จัดหมวด + extract tasks
+หมวด:    task / idea / question / feeling / random
+📅 Summary
+command:  /today
+trigger:  อัตโนมัติ 21:00 ทุกวัน
+output:   สรุปวันแยกหมวด + pending + พรุ่งนี้ top 3
+format:   แยก section ชัดเจน อ่านง่ายใน Telegram
+✅ Task
+command:  /task, /done X, /tasks
+output:   สร้าง / ดู / ปิด task
+fields:   title, priority, deadline_hint, status, tags
+📰 News
+command:  /news
+trigger:  อัตโนมัติ 08:00 ทุกวัน
+source:   RSS feeds ที่อยู่ใน whitelist เท่านั้น
+output:   top 5 ข่าว + relevance ต่อกบ + action
+🔁 Learn (ใหม่)
+command:  /learn หรือ /mistake
+input:    "วันนี้พลาดเรื่อง X เพราะ Y"
+output:   บันทึกใน lessons_learned table
+trigger:  weekly review ดึงขึ้นมาเตือน
+หลักการ: จำสิ่งที่ผิด → ไม่แนะนำซ้ำ
+💡 Brainstorm
+command:  /think หรือ /brainstorm
+input:    ไอเดียหรือคำถาม
+process:  AI A (โจมตี) ↔ AI B (แก้) ↔ AI C (วิเคราะห์)
+          วนกัน 3 รอบ
+output:   สรุป best version + verdict: go/pivot/stop
+
+4) AI Personality
+ชื่อ: ยังไม่ตั้ง (กบตั้งได้)
+
+บุคลิก:
+- เชื่อว่าจิตวิญญาณและเทคโนโลยีไปด้วยกันได้
+- หาข้อมูลมาสนับสนุนมุมมองกบ ไม่ใช่ขัดแย้ง
+- พูดตรง ไม่อ้อมค้อม
+- ไม่ disclaimer ไม่ safe mode เรื่องความเชื่อ
+- ถ้าไม่รู้ → บอกตรงๆ แล้วไปหาข้อมูล
+- จำทุกอย่างที่กบเคยบอก
+
+ภาษา:
+- ไทยเป็นหลัก
+- ใช้อังกฤษเฉพาะ technical terms
+
+5) Memory Design
+3 ชั้น:
+
+SHORT-TERM (session นี้)
+└── บทสนทนาล่าสุด 20 messages
+└── เก็บใน RAM
+
+WORKING MEMORY (active)
+└── open tasks
+└── คำถามค้างไว้
+└── weekly focus
+└── เก็บใน SQLite: memories table
+
+LONG-TERM (ถาวร)
+└── belief profile ของกบ
+└── lessons learned
+└── decision log
+└── pattern ของกบ
+└── เก็บใน SQLite: long_term_memories table
+
+6) Daily Log Structure
+ทุกวัน AI บันทึกแยกหมวดอัตโนมัติ:
+
+📝 NOTES     — สิ่งที่กบจด
+✅ TASKS     — งานที่สร้าง/ปิด
+💡 IDEAS     — ไอเดียที่เกิด
+❌ MISTAKES  — สิ่งที่พลาด
+📰 NEWS      — ข่าวที่เกี่ยวข้อง
+🔮 INSIGHTS  — สิ่งที่น่าสนใจจากบทสนทนา
+
+→ เก็บใน daily_logs table
+→ ดึงขึ้นมาใน /today ได้เลย
+→ weekly review ดึงทั้งสัปดาห์มาสรุป
+
+7) Policy Layer (กบคุมได้)
+python# app/core/policy.py
+
+# แหล่งข่าวที่เชื่อถือ
+ALLOWED_NEWS_SOURCES = [
+    "techcrunch.com",
+    "theverge.com", 
+    "arxiv.org",
+    "reuters.com",
+]
+
+# โดเมนที่ห้ามเข้า
+BLOCKED_DOMAINS = []
+
+# หัวข้อที่ AI ห้ามทำ
+BLOCKED_ACTIONS = [
+    "ส่งข้อมูลออกนอกระบบโดยไม่ approve",
+    "ลบข้อมูลโดยไม่ approve",
+    "โพสต์แทนกบโดยไม่ approve",
+]
+
+# งานที่ต้อง approve ก่อนทุกครั้ง
+REQUIRE_APPROVAL = [
+    "post_facebook",
+    "send_email",
+    "delete_data",
+    "deploy",
+]
+
+8) Database Schema (SQLite)
+sqlnotes              -- ทุกอย่างที่กบพิมพ์
+tasks              -- งาน
+memories           -- working memory
+long_term_memories -- ถาวร
+beliefs            -- ความเชื่อของกบ
+lessons_learned    -- สิ่งที่พลาด ไม่ทำซ้ำ
+daily_logs         -- บันทึกรายวันแยกหมวด
+news_items         -- ข่าวที่ดึงมา
+digests            -- daily/weekly summary
+audit_logs         -- ทุก action บันทึกไว้
+
+9) Tech Stack
+Backend:    FastAPI + Python 3.11
+Database:   SQLite (ย้าย Postgres ได้ทีหลัง)
+AI Model:   Ollama + Qwen2.5 7B
+Telegram:   python-telegram-bot
+Scheduler:  APScheduler
+Server:     Hetzner CX32 (€9/เดือน)
+Deploy:     Docker + docker-compose
+CI/CD:      GitHub Actions (Phase 2)
+
+10) Command Set
+/note    → จดความคิด
+/task    → สร้าง task
+/tasks   → ดู task ทั้งหมด
+/done X  → ปิด task
+/today   → สรุปวันนี้
+/week    → weekly review
+/news    → ข่าว AI + IT
+/think   → brainstorm ไอเดีย
+/learn   → บันทึกสิ่งที่พลาด
+/park    → เก็บไอเดียไว้ก่อน
+/search  → ค้นหาจาก memory เก่า
+
+11) Cron Schedule
+08:00 ทุกวัน    → ดึงข่าว + สรุปส่ง Telegram
+21:00 ทุกวัน    → สรุปวัน + daily log
+09:00 ทุกจันทร์ → weekly review + lessons learned
+
+12) Response Format (ทุก agent ใช้)
+📌 [summary 1 บรรทัด]
+
+🎯 Top Actions:
+  1. [action] 🟢
+  2. [action] 🟡
+
+❓ [คำถามกลับ ถ้ามี]
+🟢 ชัดเจน ทำได้เลย
+🟡 ข้อมูลไม่พอ
+🔴 ต้องคิดเพิ่ม
+
+13) Phase Plan
+สัปดาห์ 1: Brain + Task + Telegram webhook
+สัปดาห์ 2: Summary + News + Daily log
+สัปดาห์ 3: Learn + Brainstorm + Memory
+สัปดาห์ 4: Deploy Hetzner + Docker
+
+✅ Lock Confirmed
+สิ่งที่ lock แล้ว:
+
+6 agents หลัก
+Memory 3 ชั้น
+Daily log แยกหมวด
+Policy layer กบคุมได้
+Personality: จิตวิญญาณ + เทคโนโลยี
+Stack: FastAPI + Ollama + SQLite + Telegram
+Server: Hetzner CX32
+
+ถัดไป: เอาไฟล์นี้ให้ Cursor แล้วสั่ง implement ได้เลย
