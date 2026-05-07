@@ -20,7 +20,8 @@ async def cmd_note(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not text:
         await _reply(update, "📌 พิมพ์ข้อความหลัง /note เช่น /note ไอเดีย X")
         return
-    result = await brain.process_note(text)
+    chat_id = str(update.effective_chat.id)
+    result = await brain.process_note(text, chat_id)
     await _reply(update, result)
 
 
@@ -138,7 +139,12 @@ async def msg_fallback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = update.message.text or ""
     if not text.strip():
         return
-    result = await brain.process_note(text)
+    chat_id = str(update.effective_chat.id)
+    pending_result = await brain.handle_pending_reply(chat_id, text)
+    if pending_result is not None:
+        await _reply(update, pending_result)
+        return
+    result = await brain.process_note(text, chat_id)
     await _reply(update, result)
 
 
