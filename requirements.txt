@@ -11,3 +11,4 @@ anthropic
 groq
 google-generativeai
 psutil
+edge-tts==6.1.12

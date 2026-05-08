@@ -1,3 +1,4 @@
+import io
 import re
 from telegram import Update
 from telegram.ext import (
@@ -10,10 +11,27 @@ from telegram.ext import (
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.policy import ALLOWED_CHAT_IDS
+from app.core.tts import is_voice_enabled, set_voice_mode, text_to_voice_bytes
 from app.agents import brain, brainstorm, chat, learn, memory, news, summary, task
 
 
 async def _reply(update: Update, text: str):
+    await update.message.reply_text(text, parse_mode=None)
+
+
+async def _reply_smart(update: Update, text: str):
+    chat_id = str(update.effective_chat.id)
+    if await is_voice_enabled(chat_id):
+        try:
+            audio_bytes = await text_to_voice_bytes(text)
+            voice_file = io.BytesIO(audio_bytes)
+            voice_file.name = "ener-ai-voice.mp3"
+            await update.message.reply_voice(voice=voice_file)
+            await update.message.reply_text(text, parse_mode=None)
+            return
+        except Exception:
+            await update.message.reply_text(text, parse_mode=None)
+            return
     await update.message.reply_text(text, parse_mode=None)
 
 
@@ -31,7 +49,7 @@ async def cmd_note(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     chat_id = str(update.effective_chat.id)
     result = await brain.process_note(text, chat_id)
-    await _reply(update, result)
+    await _reply_smart(update, result)
 
 
 async def cmd_task(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -97,7 +115,7 @@ async def cmd_think(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await _reply(update, "📌 พิมพ์หัวข้อหลัง /think เช่น /think ทำโปรดักต์ AI ตัวนี้ดีไหม")
         return
     result = await brainstorm.run_brainstorm(text)
-    await _reply(update, result)
+    await _reply_smart(update, result)
 
 
 async def cmd_park(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -149,6 +167,41 @@ async def cmd_memory(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     result = await memory.list_memory()
     await _reply(update, result)
+
+
+async def cmd_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+    chat_id = str(update.effective_chat.id)
+    if not ctx.args:
+        enabled = await is_voice_enabled(chat_id)
+        status = "🔊 เปิดอยู่" if enabled else "🔇 ปิดอยู่"
+        await _reply(
+            update,
+            f"📌 Voice Mode: {status}\n\n"
+            f"🔊 /voice on  — เปิด (ส่งเสียง + ข้อความ)\n"
+            f"🔇 /voice off — ปิด (ข้อความอย่างเดียว)\n\n"
+            f"เสียง: ภาษาไทย หญิง (PremwadeeNeural)",
+        )
+        return
+
+    cmd = ctx.args[0].lower()
+    if cmd == "on":
+        await set_voice_mode(chat_id, True)
+        await _reply(
+            update,
+            "🔊 เปิด Voice Mode แล้วครับ\n"
+            "AI จะส่งเสียงภาษาไทยหญิง + ข้อความเต็มพร้อมกัน",
+        )
+    elif cmd == "off":
+        await set_voice_mode(chat_id, False)
+        await _reply(
+            update,
+            "🔇 ปิด Voice Mode แล้วครับ\n"
+            "กลับเป็นข้อความปกติ",
+        )
+    else:
+        await _reply(update, "📌 พิมพ์ /voice on หรือ /voice off ครับ")
 
 
 async def cmd_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -219,6 +272,7 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/remember <ข้อความ> — บันทึก long-term memory ทันที\n"
         "/forget <คำค้น>  — ลบ long-term memory ที่ตรงคำค้น\n"
         "/memory          — ดู long-term memory ทั้งหมด\n"
+        "/voice           — เปิด/ปิดตอบเป็นเสียง\n"
         "/today           — สรุปวันนี้\n"
         "/news            — ดึงข่าว AI/Tech วันนี้\n"
         "/week            — รีวิว 7 วันที่ผ่านมา\n"
@@ -232,21 +286,21 @@ async def cmd_today(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
     result = await summary.generate_daily_summary()
-    await _reply(update, result)
+    await _reply_smart(update, result)
 
 
 async def cmd_news(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
     result = await news.fetch_and_summarize()
-    await _reply(update, result)
+    await _reply_smart(update, result)
 
 
 async def cmd_week(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
     result = await summary.generate_weekly_summary()
-    await _reply(update, result)
+    await _reply_smart(update, result)
 
 
 async def msg_fallback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -262,12 +316,12 @@ async def msg_fallback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if normalized in {"1", "2", "3", "4", "1️⃣", "2️⃣", "3️⃣", "4️⃣"}:
             pending_result = await brain.handle_pending_reply(chat_id, text)
             if pending_result is not None:
-                await _reply(update, pending_result)
+                await _reply_smart(update, pending_result)
                 return
         else:
             await brain.clear_pending_clarification(chat_id)
     result = await chat.run_chat(chat_id, text)
-    await _reply(update, result)
+    await _reply_smart(update, result)
 
 
 def build_application() -> Application:
@@ -285,6 +339,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("remember", cmd_remember))
     app.add_handler(CommandHandler("forget", cmd_forget))
     app.add_handler(CommandHandler("memory", cmd_memory))
+    app.add_handler(CommandHandler("voice", cmd_voice))
     app.add_handler(CommandHandler("today", cmd_today))
     app.add_handler(CommandHandler("news", cmd_news))
     app.add_handler(CommandHandler("week", cmd_week))
