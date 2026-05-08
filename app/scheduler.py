@@ -6,10 +6,11 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from telegram import Bot
-from app.agents import news, session_agent, summary
+from app.agents import log_keeper, news, session_agent, summary
 from app.core.agents import log_agent_run
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.event_log import prune_old_events
 
 _BANGKOK = ZoneInfo("Asia/Bangkok")
 _APP_DATA_DIR = Path("/app/data")
@@ -100,6 +101,15 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
             lesson_lines.append("· ไม่มี")
         message = message + "\n" + "\n".join(lesson_lines)
         await _send_scheduled_message(bot, message, "scheduled_weekly_review_sent")
+
+    async def send_agent_health_report():
+        message = await log_keeper.analyze_agent_health(_agent_triggered_by="scheduler")
+        await _send_scheduled_message(bot, message, "scheduled_agent_health_sent")
+
+    @log_agent_run("LogPruneAgent", triggered_by="scheduler")
+    async def prune_agent_events():
+        deleted = await prune_old_events(30)
+        await _log_audit("agent_events_pruned", f"deleted={deleted}")
 
     @log_agent_run("BackupAgent", triggered_by="scheduler")
     async def run_daily_backup():
@@ -206,6 +216,12 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
         replace_existing=True,
     )
     scheduler.add_job(
+        send_agent_health_report,
+        CronTrigger(hour=22, minute=0, timezone=_BANGKOK),
+        id="agent_health_report",
+        replace_existing=True,
+    )
+    scheduler.add_job(
         run_daily_backup,
         CronTrigger(hour=2, minute=30, timezone=_BANGKOK),
         id="daily_backup",
@@ -221,6 +237,12 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
         record_server_metrics,
         CronTrigger(minute="*/10", timezone=_BANGKOK),
         id="server_metrics",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        prune_agent_events,
+        CronTrigger(day_of_week="sun", hour=3, minute=15, timezone=_BANGKOK),
+        id="agent_events_prune",
         replace_existing=True,
     )
     return scheduler

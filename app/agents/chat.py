@@ -1,6 +1,7 @@
 from app.core.ai import chat, chat_json
 from app.core.agents import log_agent_run
 from app.core.database import get_db
+from app.core.event_log import get_agent_context, log_event
 from app.core.memory import (
     extract_and_store_long_term_memories,
     get_long_term_context,
@@ -92,6 +93,7 @@ def _render_reply(reply: str, created_tasks: list[str]) -> str:
 
 @log_agent_run("MainChatAgent")
 async def run_chat(chat_id: str, text: str) -> str:
+    agent_memory = await get_agent_context("MainChatAgent", ["chat", "conversation"])
     async with get_db() as db:
         cursor = await db.execute(
             """
@@ -123,19 +125,35 @@ async def run_chat(chat_id: str, text: str) -> str:
 
 หมายเหตุ: ข้อมูลเหล่านี้คือสิ่งที่กบบอกไว้ก่อนหน้า จำและใช้ตอบได้เลย
 
+{agent_memory}
+
 หน้าที่:
 - คุยกับกบเหมือนผู้ช่วยส่วนตัวแบบ conversational
 - ตอบเป็นภาษาไทย กระชับ ตรงประเด็น
 - พูดเหมือนคุยกับกบตรงๆ แบบ GPT/Claude ที่เป็นผู้ช่วยส่วนตัว
 - ตอบเป็นข้อความธรรมดาเท่านั้น ไม่ต้องตอบเป็น JSON"""
-    reply = (
-        await chat(
-            text,
-            system=system_prompt,
-            agent="chat",
-            messages=history,
-        )
-    ).strip() or "ยังไม่มีคำตอบตอนนี้"
+    try:
+        reply = (
+            await chat(
+                text,
+                system=system_prompt,
+                agent="chat",
+                messages=history,
+            )
+        ).strip() or "ยังไม่มีคำตอบตอนนี้"
+    except Exception as exc:
+        try:
+            await log_event(
+                agent_name="MainChatAgent",
+                event_type="task_failed",
+                summary=f"chat fail: {text[:80]}",
+                tags=["chat", "error"],
+                result="failure",
+                learned=str(exc)[:200],
+            )
+        except Exception:
+            pass
+        raise
 
     extracted_tasks = []
     if _looks_like_task_message(text):
@@ -158,4 +176,17 @@ async def run_chat(chat_id: str, text: str) -> str:
 
     await extract_and_store_long_term_memories(text, reply)
     created_tasks = await _create_tasks(extracted_tasks)
-    return _render_reply(reply, created_tasks)
+    final_reply = _render_reply(reply, created_tasks)
+    try:
+        await log_event(
+            agent_name="MainChatAgent",
+            event_type="task_done" if created_tasks else "insight",
+            summary=f"ตอบแชต: {text[:80]}",
+            tags=["chat"] + (["task"] if created_tasks else ["conversation"]),
+            context=reply[:200],
+            result="success",
+            learned=f"สร้าง task {len(created_tasks)} รายการ" if created_tasks else None,
+        )
+    except Exception:
+        pass
+    return final_reply

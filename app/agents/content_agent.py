@@ -1,5 +1,6 @@
 from app.core.ai import chat
 from app.core.agents import log_agent_run
+from app.core.event_log import get_agent_context, log_event
 from app.core.policy import build_system_prompt
 
 SYSTEM = build_system_prompt("""Content creator เชี่ยวชาญสายมู/พระเครื่อง
@@ -13,4 +14,32 @@ Format:
 
 @log_agent_run("ContentAgent")
 async def run(text: str) -> str:
-    return await chat(text, system=SYSTEM, agent="content")
+    context = await get_agent_context("ContentAgent", ["content", "marketing"])
+    system_with_context = SYSTEM + f"\n\n{context}" if context else SYSTEM
+
+    try:
+        result = await chat(text, system=system_with_context, agent="content")
+        try:
+            await log_event(
+                agent_name="ContentAgent",
+                event_type="task_done",
+                summary=f"สร้าง content: {text[:80]}",
+                tags=["content"],
+                result="success",
+            )
+        except Exception:
+            pass
+        return result
+    except Exception as exc:
+        try:
+            await log_event(
+                agent_name="ContentAgent",
+                event_type="task_failed",
+                summary=f"content fail: {text[:80]}",
+                tags=["content", "error"],
+                result="failure",
+                learned=str(exc)[:200],
+            )
+        except Exception:
+            pass
+        raise

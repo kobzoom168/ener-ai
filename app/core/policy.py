@@ -27,6 +27,11 @@ TASK_MODEL_MAP = {
     "summary": "groq",
     "learn": "groq",
     "session": "haiku",
+    "logkeeper": "haiku",
+    "code": "groq",
+    "content": "groq",
+    "ener": "haiku",
+    "mainagent": "haiku",
 }
 
 BLOCKED_DOMAINS: list[str] = []

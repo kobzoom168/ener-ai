@@ -7,6 +7,7 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
+from app.agents import log_keeper
 from app.core.config import settings
 from app.core.policy import ALLOWED_CHAT_IDS
 from app.core.tts import is_voice_enabled, text_to_voice_bytes
@@ -199,6 +200,13 @@ async def cmd_content(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await _reply(update, result)
 
 
+async def cmd_health(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+    result = await log_keeper.analyze_agent_health(_agent_triggered_by="user")
+    await _reply(update, result)
+
+
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
@@ -221,6 +229,7 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/code <ข้อความ>  — ช่วยเขียน/review/debug code\n"
         "/ener <ข้อความ>  — วิเคราะห์พระ/ener report\n"
         "/content <ข้อความ> — สร้าง caption/script ขายของ\n"
+        "/health          — ดูสุขภาพของ agents\n"
         "/today           — สรุปวันนี้\n"
         "/news            — ดึงข่าว AI/Tech วันนี้\n"
         "/week            — รีวิว 7 วันที่ผ่านมา\n"
@@ -281,6 +290,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("code", cmd_code))
     app.add_handler(CommandHandler("ener", cmd_ener))
     app.add_handler(CommandHandler("content", cmd_content))
+    app.add_handler(CommandHandler("health", cmd_health))
     app.add_handler(CommandHandler("today", cmd_today))
     app.add_handler(CommandHandler("news", cmd_news))
     app.add_handler(CommandHandler("week", cmd_week))

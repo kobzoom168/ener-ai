@@ -17,6 +17,7 @@ from app.agents import (
 )
 from app.core.ai import chat_json
 from app.core.agents import COMMAND_AGENT_MAP, log_agent_run
+from app.core.event_log import log_event
 from app.core.policy import build_system_prompt
 
 INTENT_SYSTEM = build_system_prompt("""
@@ -97,6 +98,17 @@ class MainAgent:
         triggered_by: str = "user",
     ) -> str:
         normalized_agent = (agent or "chat").strip().lower()
+        try:
+            await log_event(
+                agent_name="MainAgent",
+                event_type="handoff",
+                summary=f"route '{text[:60]}' -> {normalized_agent}",
+                tags=["routing", normalized_agent],
+                triggered_by=triggered_by,
+                result="success",
+            )
+        except Exception:
+            pass
 
         if normalized_agent == "chat":
             return await chat_agent.run_chat(chat_id, text, _agent_triggered_by=triggered_by)

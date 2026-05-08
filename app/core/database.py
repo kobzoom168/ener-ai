@@ -158,6 +158,25 @@ async def init_db():
                 raw_summary TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS agent_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_type TEXT NOT NULL,
+                agent_name TEXT NOT NULL,
+                triggered_by TEXT DEFAULT 'user',
+                tags TEXT DEFAULT '[]',
+                summary TEXT NOT NULL,
+                context TEXT,
+                result TEXT DEFAULT 'success',
+                learned TEXT,
+                related_event_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_agent_events_agent
+                ON agent_events(agent_name, result, created_at);
+            CREATE INDEX IF NOT EXISTS idx_agent_events_tags
+                ON agent_events(tags);
         """)
         cursor = await db.execute("PRAGMA table_info(memories)")
         columns = await cursor.fetchall()
