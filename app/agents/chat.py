@@ -26,28 +26,18 @@ _TASK_EXTRACT_SYSTEM = AI_PERSONALITY + """
 
 _TASK_KEYWORDS = [
     "ต้อง",
-    "todo",
-    "to-do",
-    "task",
-    "เดี๋ยว",
-    "ไว้",
     "อย่าลืม",
-    "พรุ่งนี้",
-    "วันนี้",
-    "ภายใน",
+    "เตือน",
     "deadline",
     "นัด",
+    "ภายใน",
+    "พรุ่งนี้",
 ]
 
 
 def _looks_like_task_message(text: str) -> bool:
     lowered = text.lower()
     return any(keyword in text or keyword in lowered for keyword in _TASK_KEYWORDS)
-
-
-def _fallback_task_title(text: str) -> str:
-    cleaned = " ".join(text.strip().split())
-    return cleaned[:120]
 
 
 async def _extract_tasks(text: str, reply: str) -> list[str]:
@@ -94,10 +84,10 @@ async def _create_tasks(task_titles: list[str]) -> list[str]:
 def _render_reply(reply: str, created_tasks: list[str]) -> str:
     base_reply = reply.strip() or "ยังไม่มีคำตอบตอนนี้"
     if not created_tasks:
-        return f"📌 {base_reply}"
+        return base_reply
 
-    task_lines = "\n".join(f"📌 บันทึก task: {task_title}" for task_title in created_tasks)
-    return f"📌 {base_reply}\n{task_lines}"
+    task_lines = "\n".join(task_title for task_title in created_tasks)
+    return f"{base_reply}\n\n📌 บันทึก task:\n{task_lines}"
 
 
 @log_agent_run("MainChatAgent")
@@ -148,10 +138,6 @@ async def run_chat(chat_id: str, text: str) -> str:
     ).strip() or "ยังไม่มีคำตอบตอนนี้"
 
     extracted_tasks = await _extract_tasks(text, reply)
-    if _looks_like_task_message(text) and not extracted_tasks:
-        fallback_task = _fallback_task_title(text)
-        if fallback_task:
-            extracted_tasks = [fallback_task]
 
     async with get_db() as db:
         await db.execute(
