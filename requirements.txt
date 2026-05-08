@@ -10,3 +10,4 @@ feedparser==6.0.11
 anthropic
 groq
 google-generativeai
+psutil

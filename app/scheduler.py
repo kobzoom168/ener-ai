@@ -1,4 +1,5 @@
 import shutil
+import psutil
 from pathlib import Path
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -27,6 +28,12 @@ def _backup_dir() -> Path:
     if Path("/app").exists():
         return _APP_BACKUP_DIR
     return Path("backups")
+
+
+def _metrics_data_dir() -> Path:
+    if _APP_DATA_DIR.exists():
+        return _APP_DATA_DIR
+    return _database_file().parent
 
 
 async def _log_audit(action: str, details: str):
@@ -148,6 +155,32 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
         if issues:
             await _send_warning(bot, " | ".join(issues), "health_warning_sent")
 
+    async def record_server_metrics():
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage(_metrics_data_dir())
+        network = psutil.net_io_counters()
+        async with get_db() as db:
+            await db.execute(
+                """
+                INSERT INTO server_metrics (
+                    cpu_percent, ram_percent, ram_used_mb, ram_total_mb, disk_percent, net_in_bytes, net_out_bytes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    float(psutil.cpu_percent()),
+                    float(memory.percent),
+                    int(memory.used / 1024 / 1024),
+                    int(memory.total / 1024 / 1024),
+                    float(disk.percent),
+                    int(network.bytes_recv),
+                    int(network.bytes_sent),
+                ),
+            )
+            await db.execute(
+                "DELETE FROM server_metrics WHERE recorded_at < datetime('now', '-24 hours')",
+            )
+            await db.commit()
+
     scheduler.add_job(
         send_daily_news,
         CronTrigger(hour=8, minute=0, timezone=_BANGKOK),
@@ -176,6 +209,12 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
         run_health_check,
         CronTrigger(minute="*/30", timezone=_BANGKOK),
         id="health_check",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        record_server_metrics,
+        CronTrigger(minute="*/10", timezone=_BANGKOK),
+        id="server_metrics",
         replace_existing=True,
     )
     return scheduler

@@ -123,9 +123,22 @@ async def init_db():
                 model TEXT NOT NULL,
                 prompt_tokens INTEGER DEFAULT 0,
                 completion_tokens INTEGER DEFAULT 0,
+                response_time_ms INTEGER DEFAULT 0,
                 estimated_cost_thb REAL DEFAULT 0,
                 success BOOLEAN DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS server_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cpu_percent REAL,
+                ram_percent REAL,
+                ram_used_mb INTEGER,
+                ram_total_mb INTEGER,
+                disk_percent REAL,
+                net_in_bytes INTEGER DEFAULT 0,
+                net_out_bytes INTEGER DEFAULT 0,
+                recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
         cursor = await db.execute("PRAGMA table_info(memories)")
@@ -133,4 +146,8 @@ async def init_db():
         column_names = {row["name"] for row in columns}
         if "tag" not in column_names:
             await db.execute("ALTER TABLE memories ADD COLUMN tag TEXT DEFAULT 'general'")
+        cursor = await db.execute("PRAGMA table_info(ai_runs)")
+        ai_run_columns = {row["name"] for row in await cursor.fetchall()}
+        if "response_time_ms" not in ai_run_columns:
+            await db.execute("ALTER TABLE ai_runs ADD COLUMN response_time_ms INTEGER DEFAULT 0")
         await db.commit()

@@ -1,4 +1,5 @@
 import json
+import time
 import anthropic
 import httpx
 import google.generativeai as genai
@@ -55,20 +56,22 @@ async def _log_ai_run(
     model: str,
     prompt_tokens: int,
     completion_tokens: int,
+    response_time_ms: int,
     success: bool,
 ):
     async with get_db() as db:
         await db.execute(
             """
             INSERT INTO ai_runs (
-                agent, model, prompt_tokens, completion_tokens, estimated_cost_thb, success
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                agent, model, prompt_tokens, completion_tokens, response_time_ms, estimated_cost_thb, success
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 agent,
                 model,
                 prompt_tokens,
                 completion_tokens,
+                response_time_ms,
                 _estimate_cost_thb(model, prompt_tokens, completion_tokens),
                 1 if success else 0,
             ),
@@ -146,6 +149,7 @@ async def _call_anthropic(
     messages: list[dict[str, str]] | None,
     agent: str,
 ) -> str:
+    started_at = time.perf_counter()
     try:
         client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         response = await client.messages.create(
@@ -157,10 +161,12 @@ async def _call_anthropic(
         text = "".join(getattr(block, "text", "") for block in response.content)
         input_tokens = getattr(response.usage, "input_tokens", 0)
         output_tokens = getattr(response.usage, "output_tokens", 0)
-        await _log_ai_run(agent, "haiku", input_tokens, output_tokens, True)
+        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+        await _log_ai_run(agent, "haiku", input_tokens, output_tokens, elapsed_ms, True)
         return text
     except Exception:
-        await _log_ai_run(agent, "haiku", 0, 0, False)
+        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+        await _log_ai_run(agent, "haiku", 0, 0, elapsed_ms, False)
         raise
 
 
@@ -170,6 +176,7 @@ async def _call_groq(
     messages: list[dict[str, str]] | None,
     agent: str,
 ) -> str:
+    started_at = time.perf_counter()
     try:
         client = AsyncGroq(api_key=settings.groq_api_key)
         response = await client.chat.completions.create(
@@ -182,11 +189,19 @@ async def _call_groq(
             "groq",
             getattr(usage, "prompt_tokens", 0) or 0,
             getattr(usage, "completion_tokens", 0) or 0,
+            int((time.perf_counter() - started_at) * 1000),
             True,
         )
         return response.choices[0].message.content or ""
     except Exception:
-        await _log_ai_run(agent, "groq", 0, 0, False)
+        await _log_ai_run(
+            agent,
+            "groq",
+            0,
+            0,
+            int((time.perf_counter() - started_at) * 1000),
+            False,
+        )
         raise
 
 
@@ -196,6 +211,7 @@ async def _call_gemini(
     messages: list[dict[str, str]] | None,
     agent: str,
 ) -> str:
+    started_at = time.perf_counter()
     try:
         genai.configure(api_key=settings.gemini_api_key)
         model = genai.GenerativeModel(
@@ -209,11 +225,19 @@ async def _call_gemini(
             "gemini",
             getattr(usage, "prompt_token_count", 0) or 0,
             getattr(usage, "candidates_token_count", 0) or 0,
+            int((time.perf_counter() - started_at) * 1000),
             True,
         )
         return getattr(response, "text", "") or ""
     except Exception:
-        await _log_ai_run(agent, "gemini", 0, 0, False)
+        await _log_ai_run(
+            agent,
+            "gemini",
+            0,
+            0,
+            int((time.perf_counter() - started_at) * 1000),
+            False,
+        )
         raise
 
 
@@ -237,6 +261,7 @@ async def _call_ollama(
         "messages": payload_messages,
         "stream": False,
     }
+    started_at = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
@@ -244,10 +269,24 @@ async def _call_ollama(
                 json=payload,
             )
             response.raise_for_status()
-            await _log_ai_run(agent, model_key, 0, 0, True)
+            await _log_ai_run(
+                agent,
+                model_key,
+                0,
+                0,
+                int((time.perf_counter() - started_at) * 1000),
+                True,
+            )
             return response.json()["message"]["content"]
     except Exception:
-        await _log_ai_run(agent, model_key, 0, 0, False)
+        await _log_ai_run(
+            agent,
+            model_key,
+            0,
+            0,
+            int((time.perf_counter() - started_at) * 1000),
+            False,
+        )
         raise
 
 
