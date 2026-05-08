@@ -14,7 +14,7 @@ from app.core.database import init_db
 from app.core.config import settings
 from app.bot.router import build_application
 from app.scheduler import build_scheduler
-from app.core.ai import get_active_model, get_model_label
+from app.core.ai import get_active_model, get_model_availability, get_model_label
 
 telegram_app = build_application()
 scheduler = None
@@ -69,7 +69,8 @@ async def _require_admin(request: Request):
 async def _load_admin_status() -> dict:
     from app.core.database import get_db
 
-    active_model = await get_active_model()
+    active_model = await get_active_model() or "haiku"
+    availability = get_model_availability()
     today = datetime.now(_BANGKOK).date().isoformat()
     month_key = datetime.now(_BANGKOK).strftime("%Y-%m")
 
@@ -178,6 +179,7 @@ async def _load_admin_status() -> dict:
     return {
         "active_model": active_model,
         "active_model_label": get_model_label(active_model),
+        "model_availability": availability,
         "today_cost_thb": float(today_cost["total"]),
         "today_calls": int(today_cost["calls"]),
         "month_cost_thb": float(month_cost["total"]),
@@ -282,6 +284,16 @@ def build_admin_html(status: dict) -> HTMLResponse:
       border-color: #58d68d;
       box-shadow: inset 0 0 0 1px #58d68d;
     }}
+    button:disabled {{
+      cursor: not-allowed;
+      opacity: 0.55;
+      border-color: #4f536c;
+      background: #1a1b2b;
+    }}
+    .badge {{
+      color: #9aa0ba;
+      font-size: 12px;
+    }}
     ul {{
       list-style: none;
       padding: 0;
@@ -335,6 +347,14 @@ def build_admin_html(status: dict) -> HTMLResponse:
             <button id="btn-haiku" type="submit">Claude Haiku $</button>
           </form>
           <form class="button-form" method="post" action="/admin/switch-model">
+            <input type="hidden" name="model" value="groq">
+            <button id="btn-groq" type="submit">Groq ฟรี ⚡</button>
+          </form>
+          <form class="button-form" method="post" action="/admin/switch-model">
+            <input type="hidden" name="model" value="gemini">
+            <button id="btn-gemini" type="submit">Gemini Flash ฟรี</button>
+          </form>
+          <form class="button-form" method="post" action="/admin/switch-model">
             <input type="hidden" name="model" value="qwen3b">
             <button id="btn-qwen3b" type="submit">Qwen 3B ฟรี</button>
           </form>
@@ -369,6 +389,13 @@ def build_admin_html(status: dict) -> HTMLResponse:
   </div>
   <script>
     const initialStatus = {status_json};
+    const modelLabels = {{
+      haiku: "Claude Haiku $",
+      groq: "Groq ฟรี ⚡",
+      gemini: "Gemini Flash ฟรี",
+      qwen3b: "Qwen 3B ฟรี",
+      qwen7b: "Qwen 7B ฟรี"
+    }};
     function escapeHtml(text) {{
       return String(text)
         .replaceAll("&", "&amp;")
@@ -385,8 +412,14 @@ def build_admin_html(status: dict) -> HTMLResponse:
       document.getElementById("health-anthropic").innerHTML = `<span class="dot">●</span> ${{escapeHtml(status.health.anthropic)}}`;
       document.getElementById("health-disk").innerHTML = `<span class="dot">●</span> ${{status.health.disk_percent}}% ใช้งาน`;
       document.getElementById("health-uptime").textContent = status.health.uptime;
-      for (const id of ["haiku", "qwen3b", "qwen7b"]) {{
-        document.getElementById(`btn-${{id}}`).classList.toggle("active", status.active_model === id);
+      for (const id of ["haiku", "groq", "gemini", "qwen3b", "qwen7b"]) {{
+        const btn = document.getElementById(`btn-${{id}}`);
+        const available = !!status.model_availability[id];
+        btn.classList.toggle("active", status.active_model === id);
+        btn.disabled = !available;
+        btn.innerHTML = available
+          ? escapeHtml(modelLabels[id])
+          : `${{escapeHtml(modelLabels[id])}} <span class="badge">(ไม่มี key)</span>`;
       }}
       const recent = document.getElementById("recent-calls");
       recent.innerHTML = "";
@@ -477,8 +510,14 @@ async def admin_switch_model(request: Request):
     await _require_admin(request)
     form_data = parse_qs((await request.body()).decode("utf-8"))
     model = form_data.get("model", [""])[0].strip().lower()
-    if model not in {"haiku", "qwen3b", "qwen7b"}:
+    if model not in {"haiku", "groq", "gemini", "qwen3b", "qwen7b"}:
         raise HTTPException(status_code=400, detail="โมเดลไม่ถูกต้อง")
+    if model == "haiku" and not settings.anthropic_api_key:
+        raise HTTPException(status_code=400, detail="Claude Haiku ยังไม่มี key")
+    if model == "groq" and not settings.groq_api_key:
+        raise HTTPException(status_code=400, detail="Groq ยังไม่มี key")
+    if model == "gemini" and not settings.gemini_api_key:
+        raise HTTPException(status_code=400, detail="Gemini ยังไม่มี key")
     from app.core.database import get_db
 
     async with get_db() as db:

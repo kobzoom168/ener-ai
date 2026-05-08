@@ -11,6 +11,14 @@ ALLOWED_NEWS_SOURCES = [
 
 ALLOWED_CHAT_IDS = [7486743496]
 
+TASK_MODEL_MAP = {
+    "chat": "groq",
+    "news": "gemini",
+    "brainstorm": "haiku",
+    "summary": "groq",
+    "learn": "groq",
+}
+
 BLOCKED_DOMAINS: list[str] = []
 
 BLOCKED_ACTIONS = [

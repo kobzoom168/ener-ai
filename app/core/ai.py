@@ -1,14 +1,18 @@
 import json
 import anthropic
 import httpx
+import google.generativeai as genai
+from groq import AsyncGroq
 from app.core.database import get_db
 from app.core.config import settings
-from app.core.policy import AI_PERSONALITY
+from app.core.policy import AI_PERSONALITY, TASK_MODEL_MAP
 
 _PRIMARY_MODEL = "claude-haiku-4-5-20251001"
 _ACTIVE_MODEL_KEY = "active_model"
 _MODEL_LABELS = {
     "haiku": "Claude Haiku",
+    "groq": "Groq",
+    "gemini": "Gemini Flash",
     "qwen3b": "Qwen 3B",
     "qwen7b": "Qwen 7B",
 }
@@ -16,6 +20,8 @@ _OLLAMA_MODEL_MAP = {
     "qwen3b": "qwen2.5:3b",
     "qwen7b": "qwen2.5:7b",
 }
+_VALID_MODELS = {"haiku", "groq", "gemini", "qwen3b", "qwen7b"}
+_FALLBACK_SEQUENCE = ["groq", "haiku", "qwen3b"]
 
 
 def _estimate_cost_thb(model: str, prompt_tokens: int, completion_tokens: int) -> float:
@@ -37,11 +43,11 @@ async def get_active_model() -> str:
         )
         row = await cursor.fetchone()
     if not row:
-        return "haiku"
+        return ""
     model_key = str(row["value"]).strip().lower()
-    if model_key in {"haiku", "qwen3b", "qwen7b"}:
+    if model_key in _VALID_MODELS:
         return model_key
-    return "haiku"
+    return ""
 
 
 async def _log_ai_run(
@@ -81,24 +87,134 @@ def _anthropic_messages(prompt: str, messages: list[dict[str, str]] | None) -> l
     return payload_messages
 
 
+def _groq_messages(prompt: str, system: str, messages: list[dict[str, str]] | None) -> list[dict[str, str]]:
+    payload_messages = [{"role": "system", "content": system}]
+    if messages:
+        for message in messages:
+            role = message.get("role", "user")
+            if role in {"user", "assistant"}:
+                payload_messages.append({"role": role, "content": message.get("content", "")})
+    payload_messages.append({"role": "user", "content": prompt})
+    return payload_messages
+
+
+def _gemini_messages(prompt: str, messages: list[dict[str, str]] | None) -> list[dict[str, object]]:
+    payload_messages = []
+    if messages:
+        for message in messages:
+            role = message.get("role", "user")
+            if role == "user":
+                payload_messages.append({"role": "user", "parts": [message.get("content", "")]})
+            elif role == "assistant":
+                payload_messages.append({"role": "model", "parts": [message.get("content", "")]})
+    payload_messages.append({"role": "user", "parts": [prompt]})
+    return payload_messages
+
+
+def get_model_availability() -> dict[str, bool]:
+    return {
+        "haiku": bool(settings.anthropic_api_key),
+        "groq": bool(settings.groq_api_key),
+        "gemini": bool(settings.gemini_api_key),
+        "qwen3b": True,
+        "qwen7b": True,
+    }
+
+
+def _resolve_requested_model(agent: str, active_model: str) -> str:
+    if active_model in _VALID_MODELS:
+        return active_model
+    task_default = TASK_MODEL_MAP.get(agent)
+    if task_default in _VALID_MODELS:
+        return task_default
+    return "haiku"
+
+
+def _model_candidates(requested_model: str) -> list[str]:
+    candidates = [requested_model]
+    for model in _FALLBACK_SEQUENCE:
+        if model not in candidates:
+            candidates.append(model)
+    if "qwen3b" not in candidates:
+        candidates.append("qwen3b")
+    return candidates
+
+
 async def _call_anthropic(
     prompt: str,
     system: str,
     messages: list[dict[str, str]] | None,
     agent: str,
 ) -> str:
-    client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-    response = await client.messages.create(
-        model=_PRIMARY_MODEL,
-        max_tokens=2048,
-        system=system,
-        messages=_anthropic_messages(prompt, messages),
-    )
-    text = "".join(getattr(block, "text", "") for block in response.content)
-    input_tokens = getattr(response.usage, "input_tokens", 0)
-    output_tokens = getattr(response.usage, "output_tokens", 0)
-    await _log_ai_run(agent, "haiku", input_tokens, output_tokens, True)
-    return text
+    try:
+        client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        response = await client.messages.create(
+            model=_PRIMARY_MODEL,
+            max_tokens=2048,
+            system=system,
+            messages=_anthropic_messages(prompt, messages),
+        )
+        text = "".join(getattr(block, "text", "") for block in response.content)
+        input_tokens = getattr(response.usage, "input_tokens", 0)
+        output_tokens = getattr(response.usage, "output_tokens", 0)
+        await _log_ai_run(agent, "haiku", input_tokens, output_tokens, True)
+        return text
+    except Exception:
+        await _log_ai_run(agent, "haiku", 0, 0, False)
+        raise
+
+
+async def _call_groq(
+    prompt: str,
+    system: str,
+    messages: list[dict[str, str]] | None,
+    agent: str,
+) -> str:
+    try:
+        client = AsyncGroq(api_key=settings.groq_api_key)
+        response = await client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=_groq_messages(prompt, system, messages),
+        )
+        usage = response.usage
+        await _log_ai_run(
+            agent,
+            "groq",
+            getattr(usage, "prompt_tokens", 0) or 0,
+            getattr(usage, "completion_tokens", 0) or 0,
+            True,
+        )
+        return response.choices[0].message.content or ""
+    except Exception:
+        await _log_ai_run(agent, "groq", 0, 0, False)
+        raise
+
+
+async def _call_gemini(
+    prompt: str,
+    system: str,
+    messages: list[dict[str, str]] | None,
+    agent: str,
+) -> str:
+    try:
+        genai.configure(api_key=settings.gemini_api_key)
+        model = genai.GenerativeModel(
+            "gemini-1.5-flash",
+            system_instruction=system,
+        )
+        response = await model.generate_content_async(_gemini_messages(prompt, messages))
+        usage = getattr(response, "usage_metadata", None)
+        await _log_ai_run(
+            agent,
+            "gemini",
+            getattr(usage, "prompt_token_count", 0) or 0,
+            getattr(usage, "candidates_token_count", 0) or 0,
+            True,
+        )
+        return getattr(response, "text", "") or ""
+    except Exception:
+        await _log_ai_run(agent, "gemini", 0, 0, False)
+        raise
 
 
 async def _call_ollama(
@@ -142,14 +258,23 @@ async def chat(
     messages: list[dict[str, str]] | None = None,
 ) -> str:
     active_model = await get_active_model()
-    if active_model == "haiku":
-        if settings.anthropic_api_key:
-            try:
+    requested_model = _resolve_requested_model(agent, active_model)
+    availability = get_model_availability()
+    for candidate in _model_candidates(requested_model):
+        if candidate in {"haiku", "groq", "gemini"} and not availability.get(candidate, False):
+            continue
+        try:
+            if candidate == "haiku":
                 return await _call_anthropic(prompt, system, messages, agent)
-            except Exception:
-                await _log_ai_run(agent, "haiku", 0, 0, False)
-        return await _call_ollama(prompt, system, messages, agent, "qwen7b")
-    return await _call_ollama(prompt, system, messages, agent, active_model)
+            if candidate == "groq":
+                return await _call_groq(prompt, system, messages, agent)
+            if candidate == "gemini":
+                return await _call_gemini(prompt, system, messages, agent)
+            if candidate in {"qwen3b", "qwen7b"}:
+                return await _call_ollama(prompt, system, messages, agent, candidate)
+        except Exception:
+            continue
+    return await _call_ollama(prompt, system, messages, agent, "qwen3b")
 
 
 async def chat_json(
