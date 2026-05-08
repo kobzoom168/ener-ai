@@ -137,7 +137,9 @@ async def run_chat(chat_id: str, text: str) -> str:
         )
     ).strip() or "ยังไม่มีคำตอบตอนนี้"
 
-    extracted_tasks = await _extract_tasks(text, reply)
+    extracted_tasks = []
+    if _looks_like_task_message(text):
+        extracted_tasks = await _extract_tasks(text, reply)
 
     async with get_db() as db:
         await db.execute(
