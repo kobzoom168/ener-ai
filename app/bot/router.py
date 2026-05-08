@@ -7,6 +7,7 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
+from app.core.config import settings
 from app.core.policy import ALLOWED_CHAT_IDS
 from app.core.tts import is_voice_enabled, text_to_voice_bytes
 from app.agents import brain

@@ -1,8 +1,9 @@
+import asyncio
 import json
 import time
 import anthropic
 import httpx
-import google.generativeai as genai
+from google import genai
 from groq import AsyncGroq
 from app.core.database import get_db
 from app.core.config import settings
@@ -101,17 +102,21 @@ def _groq_messages(prompt: str, system: str, messages: list[dict[str, str]] | No
     return payload_messages
 
 
-def _gemini_messages(prompt: str, messages: list[dict[str, str]] | None) -> list[dict[str, object]]:
-    payload_messages = []
+def _gemini_contents(prompt: str, system: str, messages: list[dict[str, str]] | None) -> str:
+    sections = []
+    if system:
+        sections.append(f"System:\n{system}")
     if messages:
+        history_lines = []
         for message in messages:
-            role = message.get("role", "user")
-            if role == "user":
-                payload_messages.append({"role": "user", "parts": [message.get("content", "")]})
-            elif role == "assistant":
-                payload_messages.append({"role": "model", "parts": [message.get("content", "")]})
-    payload_messages.append({"role": "user", "parts": [prompt]})
-    return payload_messages
+            role = str(message.get("role", "user")).strip().lower()
+            if role not in {"user", "assistant"}:
+                continue
+            history_lines.append(f"{role}:\n{message.get('content', '')}")
+        if history_lines:
+            sections.append("Conversation history:\n" + "\n\n".join(history_lines))
+    sections.append(f"User:\n{prompt}")
+    return "\n\n".join(sections)
 
 
 def get_model_availability() -> dict[str, bool]:
@@ -240,12 +245,16 @@ async def _call_gemini(
 ) -> str:
     started_at = time.perf_counter()
     try:
-        genai.configure(api_key=settings.gemini_api_key)
-        model = genai.GenerativeModel(
-            "gemini-1.5-flash",
-            system_instruction=system,
-        )
-        response = await model.generate_content_async(_gemini_messages(prompt, messages))
+        client = genai.Client(api_key=settings.gemini_api_key)
+        contents = _gemini_contents(prompt, system, messages)
+
+        def _generate():
+            return client.models.generate_content(
+                model="gemini-1.5-flash",
+                contents=contents,
+            )
+
+        response = await asyncio.to_thread(_generate)
         usage = getattr(response, "usage_metadata", None)
         await _log_ai_run(
             agent,
