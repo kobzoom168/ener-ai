@@ -29,6 +29,7 @@ _BANGKOK = ZoneInfo("Asia/Bangkok")
 _APP_STARTED_AT = datetime.now(_BANGKOK)
 _LOG_DIR = Path("/var/log/ener-ai")
 _DOCKER_CONTAINER_NAME = "ener-ai-ener-ai-1"
+_RANGE_OPTIONS = ["1h", "3h", "10h", "24h", "7d"]
 
 
 def _data_dir() -> Path:
@@ -52,6 +53,34 @@ def _format_short_time(raw: str) -> str:
 
 def _format_full_time(raw: str) -> str:
     return str(raw)[11:19] if raw else "--:--:--"
+
+
+def _normalize_range_key(range_key: str) -> str:
+    return range_key if range_key in _RANGE_OPTIONS else "10h"
+
+
+def _range_delta(range_key: str) -> timedelta:
+    normalized = _normalize_range_key(range_key)
+    if normalized == "1h":
+        return timedelta(hours=1)
+    if normalized == "3h":
+        return timedelta(hours=3)
+    if normalized == "24h":
+        return timedelta(hours=24)
+    if normalized == "7d":
+        return timedelta(days=7)
+    return timedelta(hours=10)
+
+
+def _stats_for(values: list[float]) -> dict[str, float]:
+    if not values:
+        return {"last": 0.0, "min": 0.0, "max": 0.0, "mean": 0.0}
+    return {
+        "last": float(values[-1]),
+        "min": float(min(values)),
+        "max": float(max(values)),
+        "mean": float(sum(values) / len(values)),
+    }
 
 
 def _classify_log_level(text: str) -> str:
@@ -259,10 +288,15 @@ async def _load_admin_status() -> dict:
 
 
 async def _load_admin_metrics() -> dict:
+    return await _load_metrics_payload("10h")
+
+
+async def _load_metrics_payload(range_key: str) -> dict:
     now = datetime.now(_BANGKOK)
+    normalized_range = _normalize_range_key(range_key)
     today = now.date().isoformat()
     seven_days = [(now.date() - timedelta(days=offset)) for offset in range(6, -1, -1)]
-    history_cutoff = (now - timedelta(hours=10)).strftime("%Y-%m-%d %H:%M:%S")
+    history_cutoff = (now - _range_delta(normalized_range)).strftime("%Y-%m-%d %H:%M:%S")
     realtime = _realtime_metrics()
 
     async with get_db() as db:
@@ -285,11 +319,11 @@ async def _load_admin_metrics() -> dict:
             """
             SELECT model, COUNT(*) AS calls, COALESCE(SUM(estimated_cost_thb), 0) AS cost
             FROM ai_runs
-            WHERE date(created_at, '+7 hours') = ?
+            WHERE datetime(created_at, '+7 hours') >= ?
             GROUP BY model
             ORDER BY calls DESC, model
             """,
-            (today,),
+            (history_cutoff,),
         )
         today_calls_rows = await today_calls_cursor.fetchall()
 
@@ -297,11 +331,26 @@ async def _load_admin_metrics() -> dict:
             """
             SELECT COALESCE(AVG(response_time_ms), 0) AS avg_response_ms
             FROM ai_runs
-            WHERE date(created_at, '+7 hours') = ? AND success = 1
+            WHERE datetime(created_at, '+7 hours') >= ? AND success = 1
             """,
-            (today,),
+            (history_cutoff,),
         )
         avg_response_row = await avg_response_cursor.fetchone()
+
+        hourly_calls_cursor = await db.execute(
+            """
+            SELECT
+                strftime('%Y-%m-%d %H:00', datetime(created_at, '+7 hours')) AS hour_bucket,
+                model,
+                COUNT(*) AS calls
+            FROM ai_runs
+            WHERE datetime(created_at, '+7 hours') >= ?
+            GROUP BY hour_bucket, model
+            ORDER BY hour_bucket
+            """,
+            (history_cutoff,),
+        )
+        hourly_calls_rows = await hourly_calls_cursor.fetchall()
 
         cost_7d_cursor = await db.execute(
             """
@@ -342,6 +391,15 @@ async def _load_admin_metrics() -> dict:
     total_calls = sum(usage_counts)
     total_cost = sum(float(row["cost"]) for row in today_calls_rows)
     top_model_label = usage_labels[0] if usage_labels else "-"
+    ai_calls_hourly: dict[str, int] = {}
+    ai_calls_by_model: dict[str, dict[str, int]] = {}
+    for row in hourly_calls_rows:
+        hour_label = str(row["hour_bucket"])[11:16]
+        ai_calls_hourly[hour_label] = ai_calls_hourly.get(hour_label, 0) + int(row["calls"])
+        model_key = row["model"]
+        if model_key not in ai_calls_by_model:
+            ai_calls_by_model[model_key] = {}
+        ai_calls_by_model[model_key][hour_label] = int(row["calls"])
 
     cost_by_day = {row["local_day"]: float(row["total"]) for row in cost_7d_rows}
     cost_7d_labels = [day.strftime("%d/%m") for day in seven_days]
@@ -354,6 +412,7 @@ async def _load_admin_metrics() -> dict:
         network_out_mb = max(0.0, (network_rows[-1]["net_out_bytes"] - network_rows[0]["net_out_bytes"]) / 1024 / 1024)
 
     return {
+        "range": normalized_range,
         "realtime": {
             "cpu_percent": realtime["cpu_percent"],
             "ram_percent": realtime["ram_percent"],
@@ -368,6 +427,20 @@ async def _load_admin_metrics() -> dict:
             "cpu": history_cpu,
             "ram": history_ram,
             "disk": history_disk,
+        },
+        "labels": history_labels,
+        "cpu": history_cpu,
+        "ram": history_ram,
+        "disk": history_disk,
+        "ai_calls_hourly": ai_calls_hourly,
+        "ai_calls_by_model": ai_calls_by_model,
+        "cost_daily": {label: value for label, value in zip(cost_7d_labels, cost_7d_values)},
+        "stats": {
+            "cpu": _stats_for(history_cpu),
+            "ram": _stats_for(history_ram),
+            "disk": _stats_for(history_disk),
+            "calls": _stats_for([float(value) for value in ai_calls_hourly.values()]),
+            "cost": _stats_for(cost_7d_values),
         },
         "ai_usage": {
             "labels": usage_labels,
@@ -664,6 +737,7 @@ def build_admin_html(status: dict, metrics: dict) -> HTMLResponse:
     <div class="topbar">
       <div class="title">📌 Ener-AI Admin</div>
       <div class="top-actions">
+        <a class="link-btn" href="/admin/metrics">📊 Metrics</a>
         <a class="link-btn" href="/admin/logs">📜 ดู Logs</a>
       </div>
     </div>
@@ -905,7 +979,7 @@ def build_admin_html(status: dict, metrics: dict) -> HTMLResponse:
     }}
 
     async function refreshMetrics() {{
-      const response = await fetch("/admin/api/metrics", {{ cache: "no-store" }});
+      const response = await fetch("/admin/api/metrics?range=10h", {{ cache: "no-store" }});
       if (!response.ok) return;
       renderMetrics(await response.json());
     }}
@@ -914,6 +988,372 @@ def build_admin_html(status: dict, metrics: dict) -> HTMLResponse:
     renderMetrics(initialMetrics);
     setInterval(refreshStatus, 30000);
     setInterval(refreshMetrics, 60000);
+  </script>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
+
+def build_metrics_html(status: dict, metrics: dict) -> HTMLResponse:
+    status_json = json.dumps(status, ensure_ascii=False)
+    metrics_json = json.dumps(metrics, ensure_ascii=False)
+    html = f"""<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ener-AI Metrics</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <style>
+    body {{
+      margin: 0;
+      background: #0b0c0f;
+      color: #f2f3f7;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }}
+    .wrap {{
+      max-width: 1380px;
+      margin: 0 auto;
+      padding: 16px 14px 36px;
+    }}
+    .header {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      background: #111217;
+      border: 1px solid #252932;
+      border-radius: 16px;
+      padding: 12px 14px;
+      margin-bottom: 14px;
+    }}
+    .header-left {{
+      font-size: 22px;
+      font-weight: 700;
+    }}
+    .header-right {{
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }}
+    .nav-btn, select {{
+      background: #151820;
+      color: #f2f3f7;
+      border: 1px solid #2d3340;
+      border-radius: 10px;
+      padding: 9px 11px;
+      font-family: inherit;
+    }}
+    .stats-row {{
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 14px;
+    }}
+    .stat-card, .panel {{
+      background: #111217;
+      border: 1px solid #252932;
+      border-radius: 16px;
+      padding: 14px;
+    }}
+    .stat-label {{
+      color: #9aa0ba;
+      font-size: 12px;
+      margin-bottom: 6px;
+    }}
+    .stat-value {{
+      font-size: 30px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }}
+    .stat-meta {{
+      color: #9aa0ba;
+      font-size: 12px;
+    }}
+    .grid-2 {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-bottom: 14px;
+    }}
+    .panel h2 {{
+      margin: 0 0 12px;
+      font-size: 16px;
+    }}
+    .chart-wrap {{
+      position: relative;
+      height: 260px;
+    }}
+    .table {{
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 12px;
+      font-size: 12px;
+    }}
+    .table th, .table td {{
+      padding: 8px 6px;
+      border-top: 1px solid rgba(255, 255, 255, 0.07);
+      text-align: left;
+    }}
+    .conversation-panel {{
+      max-height: 420px;
+      overflow: auto;
+    }}
+    .conversation-item {{
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }}
+    .conversation-item:last-child {{
+      border-bottom: none;
+    }}
+    @media (max-width: 980px) {{
+      .stats-row {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }}
+      .grid-2 {{ grid-template-columns: 1fr; }}
+    }}
+    @media (max-width: 680px) {{
+      .stats-row {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="header">
+      <div class="header-left">📊 Ener-AI Metrics</div>
+      <div class="header-right">
+        <a class="nav-btn" href="/admin" style="text-decoration:none;">← Admin</a>
+        <button class="nav-btn" id="prev-range">◄</button>
+        <select id="range-select">
+          <option value="1h">Last 1h</option>
+          <option value="3h">Last 3h</option>
+          <option value="10h" selected>Last 10h</option>
+          <option value="24h">Last 24h</option>
+          <option value="7d">Last 7d</option>
+        </select>
+        <button class="nav-btn" id="next-range">►</button>
+        <select id="refresh-select">
+          <option value="10000">Refresh: 10s</option>
+          <option value="30000" selected>Refresh: 30s</option>
+          <option value="60000">Refresh: 1m</option>
+          <option value="300000">Refresh: 5m</option>
+          <option value="0">Refresh: off</option>
+        </select>
+      </div>
+    </div>
+
+    <section class="stats-row">
+      <div class="stat-card"><div class="stat-label">CPU</div><div class="stat-value" id="stat-cpu">0%</div><div class="stat-meta">Last 1m</div></div>
+      <div class="stat-card"><div class="stat-label">RAM</div><div class="stat-value" id="stat-ram">0%</div><div class="stat-meta" id="stat-ram-meta">0/0 MB</div></div>
+      <div class="stat-card"><div class="stat-label">DISK</div><div class="stat-value" id="stat-disk">0%</div><div class="stat-meta">ใช้งานปัจจุบัน</div></div>
+      <div class="stat-card"><div class="stat-label">AI Calls</div><div class="stat-value" id="stat-calls">0</div><div class="stat-meta">Today</div></div>
+      <div class="stat-card"><div class="stat-label">Cost</div><div class="stat-value" id="stat-cost">฿0.00</div><div class="stat-meta">Today</div></div>
+    </section>
+
+    <section class="grid-2">
+      <div class="panel">
+        <h2>CPU Usage (%)</h2>
+        <div class="chart-wrap"><canvas id="cpu-chart"></canvas></div>
+        <table class="table"><thead><tr><th>Name</th><th>Last</th><th>Min</th><th>Max</th><th>Mean</th></tr></thead><tbody id="cpu-table"></tbody></table>
+      </div>
+      <div class="panel">
+        <h2>Memory Usage (%)</h2>
+        <div class="chart-wrap"><canvas id="ram-chart"></canvas></div>
+        <table class="table"><thead><tr><th>Name</th><th>Last</th><th>Min</th><th>Max</th><th>Mean</th></tr></thead><tbody id="ram-table"></tbody></table>
+      </div>
+      <div class="panel">
+        <h2>AI Calls per hour</h2>
+        <div class="chart-wrap"><canvas id="calls-chart"></canvas></div>
+        <table class="table"><thead><tr><th>Name</th><th>Last</th><th>Min</th><th>Max</th><th>Mean</th></tr></thead><tbody id="calls-table"></tbody></table>
+      </div>
+      <div class="panel">
+        <h2>Cost per day (7d)</h2>
+        <div class="chart-wrap"><canvas id="cost-chart"></canvas></div>
+        <table class="table"><thead><tr><th>Name</th><th>Last</th><th>Min</th><th>Max</th><th>Mean</th></tr></thead><tbody id="cost-table"></tbody></table>
+      </div>
+    </section>
+
+    <section class="panel conversation-panel">
+      <h2>💬 บทสนทนาล่าสุด</h2>
+      <div id="conversation-list"></div>
+    </section>
+  </div>
+
+  <script>
+    const initialStatus = {status_json};
+    const initialMetrics = {metrics_json};
+    const rangeOptions = ["1h", "3h", "10h", "24h", "7d"];
+    let currentRange = initialMetrics.range || "10h";
+    let refreshHandle = null;
+    let cpuChart = null;
+    let ramChart = null;
+    let callsChart = null;
+    let costChart = null;
+
+    function statRow(name, data, suffix = "") {{
+      return `<tr><td>${{name}}</td><td>${{Number(data.last).toFixed(1)}}${{suffix}}</td><td>${{Number(data.min).toFixed(1)}}${{suffix}}</td><td>${{Number(data.max).toFixed(1)}}${{suffix}}</td><td>${{Number(data.mean).toFixed(1)}}${{suffix}}</td></tr>`;
+    }}
+
+    function graphOptions() {{
+      return {{
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {{
+          legend: {{ labels: {{ color: "#dbe1ea" }} }},
+          tooltip: {{
+            backgroundColor: "#111217",
+            borderColor: "#2d3340",
+            borderWidth: 1,
+            titleColor: "#f2f3f7",
+            bodyColor: "#f2f3f7",
+          }}
+        }},
+        scales: {{
+          x: {{ ticks: {{ color: "#98a2b3" }}, grid: {{ color: "rgba(255,255,255,0.07)" }} }},
+          y: {{ ticks: {{ color: "#98a2b3" }}, grid: {{ color: "rgba(255,255,255,0.07)" }} }}
+        }}
+      }};
+    }}
+
+    function makeLineChart(el, label, labels, values, color) {{
+      const ctx = document.getElementById(el).getContext("2d");
+      const gradient = ctx.createLinearGradient(0, 0, 0, 260);
+      gradient.addColorStop(0, color + "55");
+      gradient.addColorStop(1, color + "00");
+      return new Chart(ctx, {{
+        type: "line",
+        data: {{
+          labels,
+          datasets: [{{
+            label,
+            data: values,
+            borderColor: color,
+            backgroundColor: gradient,
+            fill: true,
+            pointRadius: 0,
+            tension: 0.3
+          }}]
+        }},
+        options: graphOptions()
+      }});
+    }}
+
+    function makeBarChart(el, labels, datasets) {{
+      return new Chart(document.getElementById(el), {{
+        type: "bar",
+        data: {{ labels, datasets }},
+        options: graphOptions()
+      }});
+    }}
+
+    function renderStatus(status) {{
+      document.getElementById("stat-calls").textContent = status.today_calls;
+      document.getElementById("stat-cost").textContent = `฿${{Number(status.today_cost_thb).toFixed(2)}}`;
+      const list = document.getElementById("conversation-list");
+      list.innerHTML = "";
+      if (!status.recent_conversations.length) {{
+        list.innerHTML = "<div class='conversation-item'>ยังไม่มีบทสนทนา</div>";
+      }} else {{
+        for (const item of status.recent_conversations) {{
+          const row = document.createElement("div");
+          row.className = "conversation-item";
+          row.textContent = `${{item.time}} [${{item.model_label}}] ${{item.user || "-"}} / ${{item.assistant || "-"}}`;
+          list.appendChild(row);
+        }}
+      }}
+    }}
+
+    function renderMetrics(metrics) {{
+      currentRange = metrics.range;
+      document.getElementById("range-select").value = currentRange;
+      document.getElementById("stat-cpu").textContent = `${{Number(metrics.realtime.cpu_percent).toFixed(0)}}%`;
+      document.getElementById("stat-ram").textContent = `${{Number(metrics.realtime.ram_percent).toFixed(0)}}%`;
+      document.getElementById("stat-ram-meta").textContent = `${{metrics.realtime.ram_used_mb}}/${{metrics.realtime.ram_total_mb}} MB`;
+      document.getElementById("stat-disk").textContent = `${{Number(metrics.realtime.disk_percent).toFixed(0)}}%`;
+
+      if (!cpuChart) {{
+        cpuChart = makeLineChart("cpu-chart", "CPU", metrics.labels, metrics.cpu, "#73bf69");
+        ramChart = makeLineChart("ram-chart", "RAM", metrics.labels, metrics.ram, "#5794f2");
+        callsChart = makeBarChart("calls-chart", Object.keys(metrics.ai_calls_hourly), Object.keys(metrics.ai_calls_by_model).map((model, idx) => ({{
+          label: model,
+          data: Object.keys(metrics.ai_calls_hourly).map((label) => metrics.ai_calls_by_model[model][label] || 0),
+          backgroundColor: ["#73bf69", "#5794f2", "#fade2a", "#ff9830", "#e24d42"][idx % 5]
+        }})));
+        costChart = makeBarChart("cost-chart", Object.keys(metrics.cost_daily), [{{
+          label: "Cost",
+          data: Object.values(metrics.cost_daily),
+          backgroundColor: "#fade2a"
+        }}]);
+      }} else {{
+        cpuChart.data.labels = metrics.labels;
+        cpuChart.data.datasets[0].data = metrics.cpu;
+        cpuChart.update();
+        ramChart.data.labels = metrics.labels;
+        ramChart.data.datasets[0].data = metrics.ram;
+        ramChart.update();
+        const callLabels = Object.keys(metrics.ai_calls_hourly);
+        callsChart.data.labels = callLabels;
+        callsChart.data.datasets = Object.keys(metrics.ai_calls_by_model).map((model, idx) => ({{
+          label: model,
+          data: callLabels.map((label) => metrics.ai_calls_by_model[model][label] || 0),
+          backgroundColor: ["#73bf69", "#5794f2", "#fade2a", "#ff9830", "#e24d42"][idx % 5]
+        }}));
+        callsChart.update();
+        costChart.data.labels = Object.keys(metrics.cost_daily);
+        costChart.data.datasets[0].data = Object.values(metrics.cost_daily);
+        costChart.update();
+      }}
+
+      document.getElementById("cpu-table").innerHTML = statRow("CPU", metrics.stats.cpu, "%");
+      document.getElementById("ram-table").innerHTML = statRow("RAM", metrics.stats.ram, "%");
+      document.getElementById("calls-table").innerHTML = statRow("Calls", metrics.stats.calls, "");
+      document.getElementById("cost-table").innerHTML = statRow("Cost", metrics.stats.cost, "฿");
+    }}
+
+    async function loadStatus() {{
+      const response = await fetch("/admin/api/status", {{ cache: "no-store" }});
+      if (!response.ok) return;
+      renderStatus(await response.json());
+    }}
+
+    async function loadMetrics() {{
+      const response = await fetch(`/admin/api/metrics?range=${{encodeURIComponent(currentRange)}}`, {{ cache: "no-store" }});
+      if (!response.ok) return;
+      renderMetrics(await response.json());
+    }}
+
+    function applyRefreshInterval() {{
+      if (refreshHandle) clearInterval(refreshHandle);
+      const value = Number(document.getElementById("refresh-select").value);
+      if (value > 0) {{
+        refreshHandle = setInterval(() => {{
+          loadStatus();
+          loadMetrics();
+        }}, value);
+      }}
+    }}
+
+    document.getElementById("range-select").addEventListener("change", async (event) => {{
+      currentRange = event.target.value;
+      await loadMetrics();
+    }});
+    document.getElementById("refresh-select").addEventListener("change", applyRefreshInterval);
+    document.getElementById("prev-range").addEventListener("click", async () => {{
+      const idx = rangeOptions.indexOf(currentRange);
+      currentRange = rangeOptions[(idx - 1 + rangeOptions.length) % rangeOptions.length];
+      await loadMetrics();
+    }});
+    document.getElementById("next-range").addEventListener("click", async () => {{
+      const idx = rangeOptions.indexOf(currentRange);
+      currentRange = rangeOptions[(idx + 1) % rangeOptions.length];
+      await loadMetrics();
+    }});
+
+    renderStatus(initialStatus);
+    renderMetrics(initialMetrics);
+    applyRefreshInterval();
   </script>
 </body>
 </html>"""
@@ -1053,6 +1493,13 @@ async def admin_dashboard(request: Request):
     return build_admin_html(status, metrics)
 
 
+@app.get("/admin/metrics")
+async def admin_metrics_dashboard(request: Request):
+    await _require_admin(request)
+    status, metrics = await asyncio.gather(_load_admin_status(), _load_metrics_payload("10h"))
+    return build_metrics_html(status, metrics)
+
+
 @app.get("/admin/logs")
 async def admin_logs(request: Request):
     await _require_admin(request)
@@ -1102,7 +1549,7 @@ async def admin_status(request: Request):
 @app.get("/admin/api/metrics")
 async def admin_metrics(request: Request):
     await _require_admin(request)
-    return JSONResponse(await _load_admin_metrics())
+    return JSONResponse(await _load_metrics_payload(request.query_params.get("range", "10h")))
 
 
 @app.get("/admin/api/logs")
