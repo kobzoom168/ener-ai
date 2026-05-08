@@ -7,7 +7,7 @@ from google import genai
 from groq import AsyncGroq
 from app.core.database import get_db
 from app.core.config import settings
-from app.core.policy import AI_PERSONALITY, TASK_MODEL_MAP
+from app.core.policy import BASE_SYSTEM_PROMPT, TASK_MODEL_MAP
 
 _PRIMARY_MODEL = "claude-haiku-4-5-20251001"
 _ACTIVE_MODEL_KEY = "active_model"
@@ -328,7 +328,7 @@ async def _call_ollama(
 
 async def chat(
     prompt: str,
-    system: str = AI_PERSONALITY,
+    system: str = BASE_SYSTEM_PROMPT,
     agent: str = "general",
     messages: list[dict[str, str]] | None = None,
 ) -> str:
@@ -354,7 +354,7 @@ async def chat(
 
 async def chat_json(
     prompt: str,
-    system: str = AI_PERSONALITY,
+    system: str = BASE_SYSTEM_PROMPT,
     agent: str = "general",
     messages: list[dict[str, str]] | None = None,
 ) -> dict:

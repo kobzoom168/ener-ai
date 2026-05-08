@@ -2,13 +2,37 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from app.core.ai import chat_json
 from app.core.database import get_db
-from app.core.policy import AI_PERSONALITY
+from app.core.policy import BASE_SYSTEM_PROMPT
 
 _BANGKOK = ZoneInfo("Asia/Bangkok")
 _MAX_CONTEXT_CHARS = 1800
 _SUMMARY_CHAR_LIMIT = 100
+_THAI_WEEKDAYS = [
+    "วันจันทร์",
+    "วันอังคาร",
+    "วันพุธ",
+    "วันพฤหัสบดี",
+    "วันศุกร์",
+    "วันเสาร์",
+    "วันอาทิตย์",
+]
+_THAI_MONTHS = [
+    "",
+    "มกราคม",
+    "กุมภาพันธ์",
+    "มีนาคม",
+    "เมษายน",
+    "พฤษภาคม",
+    "มิถุนายน",
+    "กรกฎาคม",
+    "สิงหาคม",
+    "กันยายน",
+    "ตุลาคม",
+    "พฤศจิกายน",
+    "ธันวาคม",
+]
 
-_MEMORY_EXTRACT_SYSTEM = AI_PERSONALITY + """
+_MEMORY_EXTRACT_SYSTEM = BASE_SYSTEM_PROMPT + """
 
 งานของคุณ: อ่านข้อความผู้ใช้และคำตอบของผู้ช่วย แล้วดึงเฉพาะข้อมูลระยะยาวที่ควรจำเกี่ยวกับกบ
 
@@ -48,7 +72,9 @@ def _append_with_budget(lines: list[str], entry: str, used_chars: int) -> int:
 
 def get_time_context() -> str:
     now = datetime.now(_BANGKOK)
-    return f"วันและเวลาปัจจุบัน (Bangkok): {now.strftime('%A %d %B %Y เวลา %H:%M น.')}"
+    weekday = _THAI_WEEKDAYS[now.weekday()]
+    month = _THAI_MONTHS[now.month]
+    return f"{weekday}ที่ {now.day} {month} {now.year} เวลา {now.hour:02d}:{now.minute:02d} น."
 
 
 async def get_long_term_context() -> str:

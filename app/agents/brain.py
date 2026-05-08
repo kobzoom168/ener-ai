@@ -3,11 +3,11 @@ import re
 from app.core.ai import chat_json
 from app.core.agents import log_agent_run
 from app.core.database import get_db
-from app.core.policy import AI_PERSONALITY
+from app.core.policy import BASE_SYSTEM_PROMPT
 from app.agents import task as task_agent
 
 
-_CLASSIFY_SYSTEM = AI_PERSONALITY + """
+_CLASSIFY_SYSTEM = BASE_SYSTEM_PROMPT + """
 
 งานของคุณ: วิเคราะห์ข้อความที่กบส่งมา แล้วตอบ JSON รูปแบบนี้:
 {
