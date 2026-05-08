@@ -599,6 +599,7 @@ def build_admin_html(status: dict, metrics: dict) -> HTMLResponse:
       grid-template-columns: repeat(6, minmax(0, 1fr));
       gap: 12px;
       margin-bottom: 14px;
+      align-items: stretch;
     }}
     .main-grid {{
       display: grid;
@@ -613,6 +614,12 @@ def build_admin_html(status: dict, metrics: dict) -> HTMLResponse:
       padding: 14px;
       box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
       min-height: 0;
+    }}
+    .summary-grid .card {{
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      min-height: 108px;
     }}
     .card h2 {{
       margin: 0 0 10px;
@@ -650,12 +657,15 @@ def build_admin_html(status: dict, metrics: dict) -> HTMLResponse:
       background: linear-gradient(90deg, #58d68d, #ffd166);
     }}
     .model-buttons {{
-      display: grid;
-      gap: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
       margin-top: 8px;
+      align-items: flex-start;
     }}
     .model-buttons form {{
       margin: 0;
+      flex: 0 0 auto;
     }}
     button {{
       width: 100%;
@@ -680,6 +690,18 @@ def build_admin_html(status: dict, metrics: dict) -> HTMLResponse:
     .badge {{
       color: #9aa0ba;
       font-size: 11px;
+    }}
+    #current-model {{
+      font-size: 20px;
+      line-height: 1.15;
+      margin-bottom: 2px;
+    }}
+    .model-buttons button {{
+      width: auto;
+      padding: 3px 8px;
+      font-size: 11px;
+      border-radius: 10px;
+      line-height: 1.25;
     }}
     .health-list, .stats-list {{
       display: grid;
@@ -1003,98 +1025,34 @@ def build_metrics_html(status: dict, metrics: dict) -> HTMLResponse:
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Ener-AI Metrics</title>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0-beta20/dist/css/tabler.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0-beta20/dist/js/tabler.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
   <style>
     body {{
-      margin: 0;
       background: #0b0c0f;
-      color: #f2f3f7;
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     }}
-    .wrap {{
-      max-width: 1380px;
-      margin: 0 auto;
-      padding: 16px 14px 36px;
+    .navbar,
+    .card {{
+      background: #111217 !important;
+      border-color: #252932 !important;
     }}
-    .header {{
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      flex-wrap: wrap;
-      background: #111217;
-      border: 1px solid #252932;
-      border-radius: 16px;
-      padding: 12px 14px;
-      margin-bottom: 14px;
-    }}
-    .header-left {{
-      font-size: 22px;
-      font-weight: 700;
-    }}
-    .header-right {{
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-    }}
-    .nav-btn, select {{
-      background: #151820;
-      color: #f2f3f7;
-      border: 1px solid #2d3340;
-      border-radius: 10px;
-      padding: 9px 11px;
+    .grafana-select,
+    .grafana-btn {{
+      background: #151820 !important;
+      color: #f2f3f7 !important;
+      border: 1px solid #2d3340 !important;
       font-family: inherit;
     }}
-    .stats-row {{
-      display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 12px;
-      margin-bottom: 14px;
-    }}
-    .stat-card, .panel {{
-      background: #111217;
-      border: 1px solid #252932;
-      border-radius: 16px;
-      padding: 14px;
-    }}
-    .stat-label {{
-      color: #9aa0ba;
-      font-size: 12px;
-      margin-bottom: 6px;
-    }}
-    .stat-value {{
-      font-size: 30px;
-      font-weight: 700;
-      margin-bottom: 4px;
-    }}
-    .stat-meta {{
-      color: #9aa0ba;
-      font-size: 12px;
-    }}
-    .grid-2 {{
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 14px;
-      margin-bottom: 14px;
-    }}
-    .panel h2 {{
-      margin: 0 0 12px;
-      font-size: 16px;
+    .grafana-btn {{
+      border-radius: 10px;
+      padding: 9px 11px;
+      text-decoration: none;
     }}
     .chart-wrap {{
       position: relative;
       height: 260px;
-    }}
-    .table {{
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 12px;
-      font-size: 12px;
-    }}
-    .table th, .table td {{
-      padding: 8px 6px;
-      border-top: 1px solid rgba(255, 255, 255, 0.07);
-      text-align: left;
     }}
     .conversation-panel {{
       max-height: 420px;
@@ -1110,75 +1068,173 @@ def build_metrics_html(status: dict, metrics: dict) -> HTMLResponse:
     .conversation-item:last-child {{
       border-bottom: none;
     }}
-    @media (max-width: 980px) {{
-      .stats-row {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }}
-      .grid-2 {{ grid-template-columns: 1fr; }}
+    .table thead th,
+    .table tbody td,
+    .card-title,
+    .subheader,
+    .text-muted,
+    .navbar-brand,
+    .navbar-nav .nav-link {{
+      color: #dbe1ea !important;
     }}
-    @media (max-width: 680px) {{
-      .stats-row {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+    .table tbody td {{
+      border-color: rgba(255, 255, 255, 0.07) !important;
     }}
   </style>
 </head>
-<body>
-  <div class="wrap">
-    <div class="header">
-      <div class="header-left">📊 Ener-AI Metrics</div>
-      <div class="header-right">
-        <a class="nav-btn" href="/admin" style="text-decoration:none;">← Admin</a>
-        <button class="nav-btn" id="prev-range">◄</button>
-        <select id="range-select">
-          <option value="1h">Last 1h</option>
-          <option value="3h">Last 3h</option>
-          <option value="10h" selected>Last 10h</option>
-          <option value="24h">Last 24h</option>
-          <option value="7d">Last 7d</option>
-        </select>
-        <button class="nav-btn" id="next-range">►</button>
-        <select id="refresh-select">
-          <option value="10000">Refresh: 10s</option>
-          <option value="30000" selected>Refresh: 30s</option>
-          <option value="60000">Refresh: 1m</option>
-          <option value="300000">Refresh: 5m</option>
-          <option value="0">Refresh: off</option>
-        </select>
+<body class="antialiased theme-dark">
+  <div class="page">
+    <div class="navbar navbar-expand-md d-print-none">
+      <div class="container-xl">
+        <div class="navbar-brand navbar-brand-autodark">📊 Ener-AI Metrics</div>
+        <div class="navbar-nav flex-row order-md-last gap-2">
+          <a class="grafana-btn" href="/admin">← Admin</a>
+          <button class="grafana-btn" id="prev-range" type="button">◄</button>
+          <select id="range-select" class="form-select grafana-select">
+            <option value="1h">Last 1h</option>
+            <option value="3h">Last 3h</option>
+            <option value="10h" selected>Last 10h</option>
+            <option value="24h">Last 24h</option>
+            <option value="7d">Last 7d</option>
+          </select>
+          <button class="grafana-btn" id="next-range" type="button">►</button>
+          <select id="refresh-select" class="form-select grafana-select">
+            <option value="10000">Refresh: 10s</option>
+            <option value="30000" selected>Refresh: 30s</option>
+            <option value="60000">Refresh: 1m</option>
+            <option value="300000">Refresh: 5m</option>
+            <option value="0">Refresh: off</option>
+          </select>
+        </div>
       </div>
     </div>
 
-    <section class="stats-row">
-      <div class="stat-card"><div class="stat-label">CPU</div><div class="stat-value" id="stat-cpu">0%</div><div class="stat-meta">Last 1m</div></div>
-      <div class="stat-card"><div class="stat-label">RAM</div><div class="stat-value" id="stat-ram">0%</div><div class="stat-meta" id="stat-ram-meta">0/0 MB</div></div>
-      <div class="stat-card"><div class="stat-label">DISK</div><div class="stat-value" id="stat-disk">0%</div><div class="stat-meta">ใช้งานปัจจุบัน</div></div>
-      <div class="stat-card"><div class="stat-label">AI Calls</div><div class="stat-value" id="stat-calls">0</div><div class="stat-meta">Today</div></div>
-      <div class="stat-card"><div class="stat-label">Cost</div><div class="stat-value" id="stat-cost">฿0.00</div><div class="stat-meta">Today</div></div>
-    </section>
+    <div class="page-wrapper">
+      <div class="container-xl py-3">
+        <div class="row row-cards mb-3">
+          <div class="col-6 col-md-4 col-xl">
+            <div class="card card-sm">
+              <div class="card-body">
+                <div class="subheader">CPU</div>
+                <div class="h1 mb-2" id="stat-cpu">0%</div>
+                <div class="text-muted">Last 1m</div>
+              </div>
+            </div>
+          </div>
+          <div class="col-6 col-md-4 col-xl">
+            <div class="card card-sm">
+              <div class="card-body">
+                <div class="subheader">RAM</div>
+                <div class="h1 mb-2" id="stat-ram">0%</div>
+                <div class="text-muted" id="stat-ram-meta">0/0 MB</div>
+              </div>
+            </div>
+          </div>
+          <div class="col-6 col-md-4 col-xl">
+            <div class="card card-sm">
+              <div class="card-body">
+                <div class="subheader">DISK</div>
+                <div class="h1 mb-2" id="stat-disk">0%</div>
+                <div class="text-muted">ใช้งานปัจจุบัน</div>
+              </div>
+            </div>
+          </div>
+          <div class="col-6 col-md-4 col-xl">
+            <div class="card card-sm">
+              <div class="card-body">
+                <div class="subheader">AI Calls</div>
+                <div class="h1 mb-2" id="stat-calls">0</div>
+                <div class="text-muted">Today</div>
+              </div>
+            </div>
+          </div>
+          <div class="col-6 col-md-4 col-xl">
+            <div class="card card-sm">
+              <div class="card-body">
+                <div class="subheader">Cost</div>
+                <div class="h1 mb-2" id="stat-cost">฿0.00</div>
+                <div class="text-muted">Today</div>
+              </div>
+            </div>
+          </div>
+        </div>
 
-    <section class="grid-2">
-      <div class="panel">
-        <h2>CPU Usage (%)</h2>
-        <div class="chart-wrap"><canvas id="cpu-chart"></canvas></div>
-        <table class="table"><thead><tr><th>Name</th><th>Last</th><th>Min</th><th>Max</th><th>Mean</th></tr></thead><tbody id="cpu-table"></tbody></table>
+        <div class="row row-cards">
+          <div class="col-lg-6">
+            <div class="card">
+              <div class="card-header">
+                <h3 class="card-title">CPU Usage (%)</h3>
+              </div>
+              <div class="card-body">
+                <div class="chart-wrap"><canvas id="cpuChart" height="120"></canvas></div>
+              </div>
+              <div class="card-table">
+                <table class="table table-vcenter">
+                  <thead><tr><th>Name</th><th>Last</th><th>Min</th><th>Max</th><th>Mean</th></tr></thead>
+                  <tbody id="cpu-table"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <div class="col-lg-6">
+            <div class="card">
+              <div class="card-header">
+                <h3 class="card-title">Memory Usage (%)</h3>
+              </div>
+              <div class="card-body">
+                <div class="chart-wrap"><canvas id="ramChart" height="120"></canvas></div>
+              </div>
+              <div class="card-table">
+                <table class="table table-vcenter">
+                  <thead><tr><th>Name</th><th>Last</th><th>Min</th><th>Max</th><th>Mean</th></tr></thead>
+                  <tbody id="ram-table"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <div class="col-lg-6">
+            <div class="card">
+              <div class="card-header">
+                <h3 class="card-title">AI Calls per hour</h3>
+              </div>
+              <div class="card-body">
+                <div class="chart-wrap"><canvas id="callsChart" height="120"></canvas></div>
+              </div>
+              <div class="card-table">
+                <table class="table table-vcenter">
+                  <thead><tr><th>Name</th><th>Last</th><th>Min</th><th>Max</th><th>Mean</th></tr></thead>
+                  <tbody id="calls-table"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <div class="col-lg-6">
+            <div class="card">
+              <div class="card-header">
+                <h3 class="card-title">Cost per day (7d)</h3>
+              </div>
+              <div class="card-body">
+                <div class="chart-wrap"><canvas id="costChart" height="120"></canvas></div>
+              </div>
+              <div class="card-table">
+                <table class="table table-vcenter">
+                  <thead><tr><th>Name</th><th>Last</th><th>Min</th><th>Max</th><th>Mean</th></tr></thead>
+                  <tbody id="cost-table"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <div class="col-12">
+            <div class="card">
+              <div class="card-header">
+                <h3 class="card-title">💬 บทสนทนาล่าสุด</h3>
+              </div>
+              <div class="card-body conversation-panel" id="conversation-list"></div>
+            </div>
+          </div>
+        </div>
       </div>
-      <div class="panel">
-        <h2>Memory Usage (%)</h2>
-        <div class="chart-wrap"><canvas id="ram-chart"></canvas></div>
-        <table class="table"><thead><tr><th>Name</th><th>Last</th><th>Min</th><th>Max</th><th>Mean</th></tr></thead><tbody id="ram-table"></tbody></table>
-      </div>
-      <div class="panel">
-        <h2>AI Calls per hour</h2>
-        <div class="chart-wrap"><canvas id="calls-chart"></canvas></div>
-        <table class="table"><thead><tr><th>Name</th><th>Last</th><th>Min</th><th>Max</th><th>Mean</th></tr></thead><tbody id="calls-table"></tbody></table>
-      </div>
-      <div class="panel">
-        <h2>Cost per day (7d)</h2>
-        <div class="chart-wrap"><canvas id="cost-chart"></canvas></div>
-        <table class="table"><thead><tr><th>Name</th><th>Last</th><th>Min</th><th>Max</th><th>Mean</th></tr></thead><tbody id="cost-table"></tbody></table>
-      </div>
-    </section>
-
-    <section class="panel conversation-panel">
-      <h2>💬 บทสนทนาล่าสุด</h2>
-      <div id="conversation-list"></div>
-    </section>
+    </div>
   </div>
 
   <script>
@@ -1270,18 +1326,18 @@ def build_metrics_html(status: dict, metrics: dict) -> HTMLResponse:
       document.getElementById("range-select").value = currentRange;
       document.getElementById("stat-cpu").textContent = `${{Number(metrics.realtime.cpu_percent).toFixed(0)}}%`;
       document.getElementById("stat-ram").textContent = `${{Number(metrics.realtime.ram_percent).toFixed(0)}}%`;
-      document.getElementById("stat-ram-meta").textContent = `${{metrics.realtime.ram_used_mb}}/${{metrics.realtime.ram_total_mb}} MB`;
+      document.getElementById("stat-ram-meta").textContent = `${{metrics.realtime.ram_used_mb}}/${{metrics.realtime.ram_total_mb}}`;
       document.getElementById("stat-disk").textContent = `${{Number(metrics.realtime.disk_percent).toFixed(0)}}%`;
 
       if (!cpuChart) {{
-        cpuChart = makeLineChart("cpu-chart", "CPU", metrics.labels, metrics.cpu, "#73bf69");
-        ramChart = makeLineChart("ram-chart", "RAM", metrics.labels, metrics.ram, "#5794f2");
-        callsChart = makeBarChart("calls-chart", Object.keys(metrics.ai_calls_hourly), Object.keys(metrics.ai_calls_by_model).map((model, idx) => ({{
+        cpuChart = makeLineChart("cpuChart", "CPU", metrics.labels, metrics.cpu, "#73bf69");
+        ramChart = makeLineChart("ramChart", "RAM", metrics.labels, metrics.ram, "#5794f2");
+        callsChart = makeBarChart("callsChart", Object.keys(metrics.ai_calls_hourly), Object.keys(metrics.ai_calls_by_model).map((model, idx) => ({{
           label: model,
           data: Object.keys(metrics.ai_calls_hourly).map((label) => metrics.ai_calls_by_model[model][label] || 0),
           backgroundColor: ["#73bf69", "#5794f2", "#fade2a", "#ff9830", "#e24d42"][idx % 5]
         }})));
-        costChart = makeBarChart("cost-chart", Object.keys(metrics.cost_daily), [{{
+        costChart = makeBarChart("costChart", Object.keys(metrics.cost_daily), [{{
           label: "Cost",
           data: Object.values(metrics.cost_daily),
           backgroundColor: "#fade2a"
