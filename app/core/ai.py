@@ -143,6 +143,33 @@ def _model_candidates(requested_model: str) -> list[str]:
     return candidates
 
 
+def _extract_json_payload(raw: str) -> str:
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        for block in cleaned.split("```"):
+            candidate = block.strip()
+            if not candidate:
+                continue
+            if candidate.startswith("json"):
+                candidate = candidate[4:].strip()
+            if candidate.startswith("{") or candidate.startswith("["):
+                return candidate
+    if cleaned.startswith("{") or cleaned.startswith("["):
+        return cleaned
+
+    object_start = cleaned.find("{")
+    object_end = cleaned.rfind("}")
+    if object_start != -1 and object_end != -1 and object_end > object_start:
+        return cleaned[object_start : object_end + 1]
+
+    array_start = cleaned.find("[")
+    array_end = cleaned.rfind("]")
+    if array_start != -1 and array_end != -1 and array_end > array_start:
+        return cleaned[array_start : array_end + 1]
+
+    return cleaned
+
+
 async def _call_anthropic(
     prompt: str,
     system: str,
@@ -324,9 +351,4 @@ async def chat_json(
 ) -> dict:
     full_system = system + "\n\nตอบเป็น JSON เท่านั้น ไม่มีข้อความอื่น"
     raw = await chat(prompt, system=full_system, agent=agent, messages=messages)
-    raw = raw.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    return json.loads(raw.strip())
+    return json.loads(_extract_json_payload(raw))

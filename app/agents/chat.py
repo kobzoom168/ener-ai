@@ -1,4 +1,5 @@
-from app.core.ai import chat
+from datetime import date
+from app.core.ai import chat, chat_json
 from app.core.database import get_db
 from app.core.policy import AI_PERSONALITY
 
@@ -9,6 +10,68 @@ _CHAT_SYSTEM = AI_PERSONALITY + """
 - ตอบเป็นภาษาไทย กระชับ ตรงประเด็น
 - พูดเหมือนคุยกับกบตรงๆ แบบ GPT/Claude ที่เป็นผู้ช่วยส่วนตัว
 - ตอบเป็นข้อความธรรมดาเท่านั้น ไม่ต้องตอบเป็น JSON"""
+
+_TASK_EXTRACT_SYSTEM = AI_PERSONALITY + """
+
+งานของคุณ: อ่านข้อความผู้ใช้และคำตอบของผู้ช่วย แล้วดึงเฉพาะ task ที่ควรสร้างจริง
+
+กฎ:
+- สร้าง task เฉพาะสิ่งที่เป็น action item ชัดเจน
+- ถ้าไม่มี task ให้ตอบ tasks เป็น []
+- ตอบเป็น JSON เท่านั้น
+
+รูปแบบ:
+{
+  "tasks": ["task 1", "task 2"]
+}"""
+
+
+async def _extract_tasks(text: str, reply: str) -> list[str]:
+    try:
+        result = await chat_json(
+            f"ข้อความผู้ใช้:\n{text}\n\nคำตอบผู้ช่วย:\n{reply}",
+            system=_TASK_EXTRACT_SYSTEM,
+            agent="chat",
+        )
+    except Exception:
+        return []
+
+    tasks = []
+    seen = set()
+    for item in result.get("tasks", []):
+        task_text = str(item).strip()
+        if not task_text:
+            continue
+        if task_text in seen:
+            continue
+        seen.add(task_text)
+        tasks.append(task_text)
+    return tasks
+
+
+async def _create_tasks(task_titles: list[str]) -> list[str]:
+    created = []
+    if not task_titles:
+        return created
+
+    async with get_db() as db:
+        today = date.today().isoformat()
+        for task_title in task_titles:
+            await db.execute(
+                "INSERT INTO tasks (title) VALUES (?)",
+                (task_title,),
+            )
+            await db.execute(
+                "INSERT INTO daily_logs (log_date, category, content) VALUES (?, ?, ?)",
+                (today, "task", f"สร้าง task จาก chat: {task_title}"),
+            )
+            created.append(task_title)
+        await db.execute(
+            "INSERT INTO audit_logs (action, details) VALUES (?, ?)",
+            ("chat_tasks_created", f"count={len(created)}"),
+        )
+        await db.commit()
+    return created
 
 
 async def run_chat(chat_id: str, text: str) -> str:
@@ -31,11 +94,11 @@ async def run_chat(chat_id: str, text: str) -> str:
     ]
     reply = (
         await chat(
-        text,
-        system=_CHAT_SYSTEM,
-        agent="chat",
-        messages=history,
-    )
+            text,
+            system=_CHAT_SYSTEM,
+            agent="chat",
+            messages=history,
+        )
     ).strip() or "ยังไม่มีคำตอบตอนนี้"
 
     async with get_db() as db:
@@ -53,4 +116,11 @@ async def run_chat(chat_id: str, text: str) -> str:
         )
         await db.commit()
 
-    return f"📌 {reply}"
+    created_tasks = await _create_tasks(await _extract_tasks(text, reply))
+    if not created_tasks:
+        return f"📌 {reply}"
+
+    lines = [f"📌 {reply}", "", "🎯 Task ที่สร้างจากบทสนทนา:"]
+    for task_title in created_tasks:
+        lines.append(f"· {task_title}")
+    return "\n".join(lines)
