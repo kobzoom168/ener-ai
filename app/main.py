@@ -594,12 +594,15 @@ def build_admin_html(status: dict, metrics: dict) -> HTMLResponse:
       color: #f2f3f7;
       text-decoration: none;
     }}
-    .summary-grid {{
+    .stats-row {{
       display: grid;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
+      grid-template-columns: repeat(5, minmax(0, 1fr));
       gap: 12px;
       margin-bottom: 14px;
-      align-items: stretch;
+      align-items: start;
+    }}
+    .model-row {{
+      margin-bottom: 14px;
     }}
     .main-grid {{
       display: grid;
@@ -614,12 +617,7 @@ def build_admin_html(status: dict, metrics: dict) -> HTMLResponse:
       padding: 14px;
       box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
       min-height: 0;
-    }}
-    .summary-grid .card {{
-      display: flex;
-      flex-direction: column;
-      justify-content: flex-start;
-      min-height: 108px;
+      height: auto;
     }}
     .card h2 {{
       margin: 0 0 10px;
@@ -638,11 +636,6 @@ def build_admin_html(status: dict, metrics: dict) -> HTMLResponse:
     .muted {{
       color: #a5aac5;
       font-size: 12px;
-    }}
-    .summary-canvas {{
-      width: 100%;
-      height: 44px;
-      margin-top: 8px;
     }}
     .disk-bar {{
       height: 10px;
@@ -694,7 +687,13 @@ def build_admin_html(status: dict, metrics: dict) -> HTMLResponse:
     #current-model {{
       font-size: 20px;
       line-height: 1.15;
-      margin-bottom: 2px;
+      margin-bottom: 0;
+    }}
+    .model-current {{
+      color: #f2f3f7;
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 10px;
     }}
     .model-buttons button {{
       width: auto;
@@ -745,11 +744,16 @@ def build_admin_html(status: dict, metrics: dict) -> HTMLResponse:
       text-overflow: ellipsis;
     }}
     @media (max-width: 1100px) {{
-      .summary-grid {{
+      .stats-row {{
         grid-template-columns: repeat(3, minmax(0, 1fr));
       }}
       .main-grid {{
         grid-template-columns: 1fr;
+      }}
+    }}
+    @media (max-width: 700px) {{
+      .stats-row {{
+        grid-template-columns: repeat(2, minmax(0, 1fr));
       }}
     }}
   </style>
@@ -764,35 +768,22 @@ def build_admin_html(status: dict, metrics: dict) -> HTMLResponse:
       </div>
     </div>
 
-    <section class="summary-grid">
+    <section class="stats-row">
       <div class="card">
         <div class="summary-label">CPU</div>
         <div class="summary-value" id="cpu-value">0%</div>
         <div class="muted">โหลดระบบตอนนี้</div>
-        <canvas id="cpu-spark" class="summary-canvas"></canvas>
       </div>
       <div class="card">
         <div class="summary-label">RAM</div>
         <div class="summary-value" id="ram-value">0%</div>
         <div class="muted" id="ram-detail">0 / 0 MB</div>
-        <canvas id="ram-spark" class="summary-canvas"></canvas>
       </div>
       <div class="card">
         <div class="summary-label">DISK</div>
         <div class="summary-value" id="disk-value">0%</div>
         <div class="muted">พื้นที่เก็บข้อมูล</div>
         <div class="disk-bar"><div id="disk-fill" class="disk-fill"></div></div>
-      </div>
-      <div class="card">
-        <div class="summary-label">MODEL</div>
-        <div class="summary-value" id="current-model">-</div>
-        <div class="model-buttons">
-          <form method="post" action="/admin/switch-model"><input type="hidden" name="model" value="haiku"><button id="btn-haiku" type="submit">Claude Haiku $</button></form>
-          <form method="post" action="/admin/switch-model"><input type="hidden" name="model" value="groq"><button id="btn-groq" type="submit">Groq ฟรี ⚡</button></form>
-          <form method="post" action="/admin/switch-model"><input type="hidden" name="model" value="gemini"><button id="btn-gemini" type="submit">Gemini Flash ฟรี</button></form>
-          <form method="post" action="/admin/switch-model"><input type="hidden" name="model" value="qwen3b"><button id="btn-qwen3b" type="submit">Qwen 3B ฟรี</button></form>
-          <form method="post" action="/admin/switch-model"><input type="hidden" name="model" value="qwen7b"><button id="btn-qwen7b" type="submit">Qwen 7B ฟรี</button></form>
-        </div>
       </div>
       <div class="card">
         <div class="summary-label">COST</div>
@@ -809,6 +800,20 @@ def build_admin_html(status: dict, metrics: dict) -> HTMLResponse:
           <div id="health-disk">Disk: -</div>
           <div id="health-webhook">Webhook: -</div>
           <div id="health-ollama">Ollama: -</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="model-row">
+      <div class="card">
+        <div class="summary-label">MODEL SWITCHER</div>
+        <div class="model-current">🤖 ปัจจุบัน: <span id="current-model">-</span></div>
+        <div class="model-buttons">
+          <form method="post" action="/admin/switch-model"><input type="hidden" name="model" value="haiku"><button id="btn-haiku" type="submit">Claude Haiku $</button></form>
+          <form method="post" action="/admin/switch-model"><input type="hidden" name="model" value="groq"><button id="btn-groq" type="submit">Groq ฟรี ⚡</button></form>
+          <form method="post" action="/admin/switch-model"><input type="hidden" name="model" value="gemini"><button id="btn-gemini" type="submit">Gemini Flash ฟรี</button></form>
+          <form method="post" action="/admin/switch-model"><input type="hidden" name="model" value="qwen3b"><button id="btn-qwen3b" type="submit">Qwen 3B ฟรี</button></form>
+          <form method="post" action="/admin/switch-model"><input type="hidden" name="model" value="qwen7b"><button id="btn-qwen7b" type="submit">Qwen 7B ฟรี</button></form>
         </div>
       </div>
     </section>
@@ -853,31 +858,12 @@ def build_admin_html(status: dict, metrics: dict) -> HTMLResponse:
     let timelineChart = null;
     let callsChart = null;
     let costChart = null;
-    let cpuSpark = null;
-    let ramSpark = null;
-
     function escapeHtml(text) {{
       return String(text)
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;");
-    }}
-
-    function createSparkline(el, color, labels, values) {{
-      return new Chart(el, {{
-        type: "line",
-        data: {{
-          labels,
-          datasets: [{{ data: values, borderColor: color, borderWidth: 2, fill: false, tension: 0.35, pointRadius: 0 }}]
-        }},
-        options: {{
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {{ legend: {{ display: false }}, tooltip: {{ enabled: false }} }},
-          scales: {{ x: {{ display: false }}, y: {{ display: false }} }}
-        }}
-      }});
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
     }}
 
     function renderStatus(status) {{
@@ -931,18 +917,6 @@ def build_admin_html(status: dict, metrics: dict) -> HTMLResponse:
       document.getElementById("ai-response").textContent = `response time เฉลี่ย: ${{Number(metrics.ai_usage.avg_response_ms).toFixed(0)}} ms`;
       document.getElementById("ai-top-model").textContent = `model ที่ใช้บ่อยสุด: ${{metrics.ai_usage.top_model_label}}`;
       document.getElementById("network-detail").textContent = `Network วันนี้: ↓${{Number(metrics.realtime.network_in_mb).toFixed(2)}} MB / ↑${{Number(metrics.realtime.network_out_mb).toFixed(2)}} MB`;
-
-      if (!cpuSpark) {{
-        cpuSpark = createSparkline(document.getElementById("cpu-spark"), "#7bdff2", metrics.history.labels, metrics.history.cpu);
-        ramSpark = createSparkline(document.getElementById("ram-spark"), "#f7b267", metrics.history.labels, metrics.history.ram);
-      }} else {{
-        cpuSpark.data.labels = metrics.history.labels;
-        cpuSpark.data.datasets[0].data = metrics.history.cpu;
-        cpuSpark.update();
-        ramSpark.data.labels = metrics.history.labels;
-        ramSpark.data.datasets[0].data = metrics.history.ram;
-        ramSpark.update();
-      }}
 
       if (!timelineChart) {{
         timelineChart = new Chart(document.getElementById("timeline-chart"), {{
@@ -1049,6 +1023,15 @@ def build_metrics_html(status: dict, metrics: dict) -> HTMLResponse:
       border-radius: 10px;
       padding: 9px 11px;
       text-decoration: none;
+    }}
+    .card.card-sm .subheader {{
+      color: #ffffff !important;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }}
+    .card.card-sm .h1 {{
+      font-size: 1.8rem;
+      line-height: 1.2;
     }}
     .chart-wrap {{
       position: relative;
@@ -1463,10 +1446,10 @@ def build_logs_html() -> HTMLResponse:
     let allLogs = [];
     function escapeHtml(text) {
       return String(text)
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;");
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
     }
     function renderLogs() {
       const logBox = document.getElementById("log-box");
