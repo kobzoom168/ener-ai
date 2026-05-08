@@ -146,6 +146,18 @@ async def init_db():
                 cost_thb REAL DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS session_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                log_date DATE NOT NULL UNIQUE,
+                key_insights TEXT,
+                decisions_made TEXT,
+                things_failed TEXT,
+                open_questions TEXT,
+                next_focus TEXT,
+                raw_summary TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
         """)
         cursor = await db.execute("PRAGMA table_info(memories)")
         columns = await cursor.fetchall()

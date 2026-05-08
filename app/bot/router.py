@@ -166,6 +166,39 @@ async def cmd_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await _reply(update, result)
 
 
+async def cmd_code(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+    text = " ".join(ctx.args) if ctx.args else ""
+    if not text:
+        await _reply(update, "📌 พิมพ์โจทย์หลัง /code เช่น /code เขียน FastAPI health check")
+        return
+    result = await MAIN_AGENT.handle("code", text, str(update.effective_chat.id))
+    await _reply(update, result)
+
+
+async def cmd_ener(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+    text = " ".join(ctx.args) if ctx.args else ""
+    if not text:
+        await _reply(update, "📌 พิมพ์รายละเอียดหลัง /ener เช่น /ener วิเคราะห์พระสมเด็จรุ่นนี้")
+        return
+    result = await MAIN_AGENT.handle("ener", text, str(update.effective_chat.id))
+    await _reply(update, result)
+
+
+async def cmd_content(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+    text = " ".join(ctx.args) if ctx.args else ""
+    if not text:
+        await _reply(update, "📌 พิมพ์โจทย์หลัง /content เช่น /content เขียน caption ขายพระลง TikTok")
+        return
+    result = await MAIN_AGENT.handle("content", text, str(update.effective_chat.id))
+    await _reply(update, result)
+
+
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
@@ -185,6 +218,9 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/forget <คำค้น>  — ลบ long-term memory ที่ตรงคำค้น\n"
         "/memory          — ดู long-term memory ทั้งหมด\n"
         "/voice           — เปิด/ปิดตอบเป็นเสียง\n"
+        "/code <ข้อความ>  — ช่วยเขียน/review/debug code\n"
+        "/ener <ข้อความ>  — วิเคราะห์พระ/ener report\n"
+        "/content <ข้อความ> — สร้าง caption/script ขายของ\n"
         "/today           — สรุปวันนี้\n"
         "/news            — ดึงข่าว AI/Tech วันนี้\n"
         "/week            — รีวิว 7 วันที่ผ่านมา\n"
@@ -222,7 +258,7 @@ async def msg_fallback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not text.strip():
         return
     chat_id = str(update.effective_chat.id)
-    result = await MAIN_AGENT.route_free_text(chat_id, text)
+    result = await MAIN_AGENT.run(chat_id, text)
     await _reply_smart(update, result)
 
 
@@ -242,6 +278,9 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("forget", cmd_forget))
     app.add_handler(CommandHandler("memory", cmd_memory))
     app.add_handler(CommandHandler("voice", cmd_voice))
+    app.add_handler(CommandHandler("code", cmd_code))
+    app.add_handler(CommandHandler("ener", cmd_ener))
+    app.add_handler(CommandHandler("content", cmd_content))
     app.add_handler(CommandHandler("today", cmd_today))
     app.add_handler(CommandHandler("news", cmd_news))
     app.add_handler(CommandHandler("week", cmd_week))

@@ -2,7 +2,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from app.core.ai import chat_json
 from app.core.database import get_db
-from app.core.policy import BASE_SYSTEM_PROMPT
+from app.core.policy import build_system_prompt
 
 _BANGKOK = ZoneInfo("Asia/Bangkok")
 _MAX_CONTEXT_CHARS = 1800
@@ -32,7 +32,7 @@ _THAI_MONTHS = [
     "ธันวาคม",
 ]
 
-_MEMORY_EXTRACT_SYSTEM = BASE_SYSTEM_PROMPT + """
+_MEMORY_EXTRACT_SYSTEM = build_system_prompt("""
 
 งานของคุณ: อ่านข้อความผู้ใช้และคำตอบของผู้ช่วย แล้วดึงเฉพาะข้อมูลระยะยาวที่ควรจำเกี่ยวกับกบ
 
@@ -53,7 +53,7 @@ _MEMORY_EXTRACT_SYSTEM = BASE_SYSTEM_PROMPT + """
   "memories": [
     {"content": "กบทำงานที่ Bumrungrad เป็น IT PM", "memory_type": "profile"}
   ]
-}"""
+}""")
 
 
 def _compact(text: str, limit: int) -> str:
@@ -74,7 +74,7 @@ def get_time_context() -> str:
     now = datetime.now(_BANGKOK)
     weekday = _THAI_WEEKDAYS[now.weekday()]
     month = _THAI_MONTHS[now.month]
-    return f"{weekday}ที่ {now.day} {month} {now.year} เวลา {now.hour:02d}:{now.minute:02d} น."
+    return f"วันและเวลาปัจจุบัน: {weekday} {now.day} {month} {now.year} เวลา {now.hour:02d}:{now.minute:02d} น."
 
 
 async def get_long_term_context() -> str:
@@ -145,7 +145,7 @@ async def get_long_term_context() -> str:
 
 async def get_recent_summaries() -> str:
     async with get_db() as db:
-        rows = await (
+        digest_rows = await (
             await db.execute(
                 """
                 SELECT period_start, content
@@ -156,13 +156,40 @@ async def get_recent_summaries() -> str:
                 """
             )
         ).fetchall()
+        session_rows = await (
+            await db.execute(
+                """
+                SELECT log_date, key_insights, decisions_made, next_focus, raw_summary
+                FROM session_logs
+                ORDER BY log_date DESC
+                LIMIT 7
+                """
+            )
+        ).fetchall()
 
-    if not rows:
-        return "- ยังไม่มี daily summary"
+    if not digest_rows and not session_rows:
+        return "- ยังไม่มี daily summary หรือ session log"
 
     lines = []
-    for row in rows:
-        lines.append(f"- {row['period_start']}: {_compact(row['content'], _SUMMARY_CHAR_LIMIT)}")
+    if digest_rows:
+        lines.append("=== Daily Summaries ===")
+        for row in digest_rows:
+            lines.append(f"- {row['period_start']}: {_compact(row['content'], _SUMMARY_CHAR_LIMIT)}")
+
+    if session_rows:
+        if lines:
+            lines.append("")
+        lines.append("=== Session Logs ===")
+        for row in session_rows:
+            parts = [
+                _compact(row["key_insights"], 60),
+                _compact(row["decisions_made"], 50),
+                _compact(row["next_focus"], 50),
+                _compact(row["raw_summary"], _SUMMARY_CHAR_LIMIT),
+            ]
+            summary = " | ".join(part for part in parts if part)
+            lines.append(f"- {row['log_date']}: {summary or 'มี session log'}")
+
     return "\n".join(lines)
 
 

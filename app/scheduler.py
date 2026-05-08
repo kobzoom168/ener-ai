@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from telegram import Bot
-from app.agents import news, summary
+from app.agents import news, session_agent, summary
 from app.core.agents import log_agent_run
 from app.core.config import settings
 from app.core.database import get_db
@@ -74,6 +74,8 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
     async def send_daily_summary():
         message = await summary.generate_daily_summary(_agent_triggered_by="scheduler")
         await _send_scheduled_message(bot, message, "scheduled_daily_summary_sent")
+        session_message = await session_agent.generate_session_log(_agent_triggered_by="scheduler")
+        await _send_scheduled_message(bot, session_message, "scheduled_session_log_sent")
 
     async def send_weekly_review():
         message = await summary.generate_weekly_summary(_agent_triggered_by="scheduler")

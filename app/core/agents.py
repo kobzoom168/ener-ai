@@ -8,6 +8,9 @@ COMMAND_AGENT_MAP = {
     "task": "TaskAgent",
     "tasks": "TaskAgent",
     "done": "TaskAgent",
+    "code": "CodeAgent",
+    "ener": "EnerAgent",
+    "content": "ContentAgent",
     "today": "DigestAgent",
     "week": "DigestAgent",
     "news": "NewsAgent",
@@ -32,16 +35,22 @@ SCHEDULER_AGENTS = {
     "health_check": "HealthAgent",
     "backup": "BackupAgent",
     "metrics": "MetricsAgent",
+    "session": "SessionAgent",
 }
 
 _AGENT_AI_MAP = {
     "NoteAgent": "brain",
     "MainChatAgent": "chat",
+    "MainAgent": "mainagent",
     "NewsAgent": "news",
     "DigestAgent": "summary",
     "LessonAgent": "learn",
     "ThinkTeam": "brainstorm",
     "MemoryAgent": "memory",
+    "SessionAgent": "session",
+    "CodeAgent": "code",
+    "ContentAgent": "content",
+    "EnerAgent": "ener",
 }
 
 
