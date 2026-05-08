@@ -1517,7 +1517,10 @@ def _render_sidebar_items() -> str:
         if exists:
             items.append(f'<a class="sidebar-link" href="{escape(href, quote=True)}" data-nav="{item_id}">{escape(label)}</a>')
         else:
-            items.append(f'<a class="sidebar-link muted-link" href="{escape(href, quote=True)}" data-nav="{item_id}">{escape(label)}</a>')
+            items.append(
+                f'<a class="sidebar-link muted-link" href="{escape(href, quote=True)}" data-nav="{item_id}">'
+                f'<span>{escape(label)}</span><span class="sidebar-badge">soon</span></a>'
+            )
     return "\n".join(items)
 
 
@@ -1841,10 +1844,22 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       background: rgba(124, 156, 255, 0.14);
       border-color: rgba(124, 156, 255, 0.35);
     }}
-    .muted-link::after {{
-      content: "soon";
+    .muted-link {{
+      color: #c2cce6;
+    }}
+    .sidebar-badge {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 40px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(127, 140, 168, 0.32);
+      background: rgba(127, 140, 168, 0.12);
       color: var(--muted);
-      font-size: 11px;
+      font-size: 10px;
+      line-height: 1.4;
+      text-transform: lowercase;
     }}
     .sidebar-footer {{
       margin-top: 18px;
@@ -2320,7 +2335,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
           <div class="topbar-chip"><span>Server</span><strong>{escape(topbar.get("server", "Unknown"))}</strong></div>
           <div class="topbar-chip"><span>Time</span><strong>{escape(topbar.get("timezone", "Unknown"))}</strong></div>
           <div class="topbar-chip"><span>Model</span><strong>{escape(topbar.get("active_model", "Unknown"))}</strong></div>
-          <div class="topbar-chip"><span>Voice</span><strong>{escape(topbar.get("voice", "Unknown"))}</strong></div>
+          <div class="topbar-chip"><strong>{escape(topbar.get("voice", "Unknown"))}</strong></div>
           <div class="topbar-chip"><span>Health</span><strong>{escape(topbar.get("health", "Unknown"))}</strong></div>
           <div class="topbar-chip"><span>Cost Today</span><strong>{escape(topbar.get("cost_today", "฿0.00"))}</strong></div>
           <div class="topbar-chip"><span>Last Refresh</span><strong>{escape(topbar.get("last_refresh", "Unknown"))}</strong></div>
@@ -2504,14 +2519,19 @@ def build_metrics_html(status: dict, metrics: dict) -> HTMLResponse:
       overflow: auto;
     }}
     .conversation-item {{
-      padding: 10px 0;
+      padding: 12px 14px;
       border-bottom: 1px solid rgba(255, 255, 255, 0.07);
-      white-space: nowrap;
+      color: #F5F5FF;
+      background: rgba(255, 255, 255, 0.03);
+      border-radius: 12px;
+      margin-bottom: 8px;
+      line-height: 1.55;
       overflow: hidden;
       text-overflow: ellipsis;
     }}
     .conversation-item:last-child {{
       border-bottom: none;
+      margin-bottom: 0;
     }}
     .table thead th,
     .table tbody td,
@@ -2693,8 +2713,15 @@ def build_metrics_html(status: dict, metrics: dict) -> HTMLResponse:
     let callsChart = null;
     let costChart = null;
 
+    function formatMetricValue(value, suffix = "") {{
+      const amount = Number(value || 0);
+      if (suffix === "฿") return `฿${{amount.toFixed(2)}}`;
+      if (!suffix) return `${{amount.toFixed(1)}}`;
+      return `${{amount.toFixed(1)}}${{suffix}}`;
+    }}
+
     function statRow(name, data, suffix = "") {{
-      return `<tr><td>${{name}}</td><td>${{Number(data.last).toFixed(1)}}${{suffix}}</td><td>${{Number(data.min).toFixed(1)}}${{suffix}}</td><td>${{Number(data.max).toFixed(1)}}${{suffix}}</td><td>${{Number(data.mean).toFixed(1)}}${{suffix}}</td></tr>`;
+      return `<tr><td>${{name}}</td><td>${{formatMetricValue(data.last, suffix)}}</td><td>${{formatMetricValue(data.min, suffix)}}</td><td>${{formatMetricValue(data.max, suffix)}}</td><td>${{formatMetricValue(data.mean, suffix)}}</td></tr>`;
     }}
 
     function graphOptions() {{
