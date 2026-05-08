@@ -1,5 +1,4 @@
 import io
-import re
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -8,11 +7,10 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
-from app.core.config import settings
-from app.core.database import get_db
 from app.core.policy import ALLOWED_CHAT_IDS
-from app.core.tts import is_voice_enabled, set_voice_mode, text_to_voice_bytes
-from app.agents import brain, brainstorm, chat, learn, memory, news, summary, task
+from app.core.tts import is_voice_enabled, text_to_voice_bytes
+from app.agents import brain
+from app.agents.main_agent import MAIN_AGENT
 
 
 async def _reply(update: Update, text: str):
@@ -48,7 +46,7 @@ async def cmd_note(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await _reply(update, "📌 พิมพ์ข้อความหลัง /note เช่น /note ไอเดีย X")
         return
     chat_id = str(update.effective_chat.id)
-    result = await brain.process_note(text, chat_id)
+    result = await MAIN_AGENT.handle("note", text, chat_id)
     await _reply_smart(update, result)
 
 
@@ -59,30 +57,14 @@ async def cmd_task(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await _reply(update, "📌 พิมพ์ชื่อ task เช่น /task ซื้อของ")
         return
     raw = " ".join(ctx.args)
-
-    priority = "medium"
-    deadline_hint = ""
-
-    if "!!" in raw:
-        priority = "high"
-        raw = raw.replace("!!", "").strip()
-    elif "!" in raw:
-        priority = "medium"
-        raw = raw.replace("!", "").strip()
-
-    deadline_match = re.search(r"deadline[:\s]+(.+?)(?:\s|$)", raw, re.IGNORECASE)
-    if deadline_match:
-        deadline_hint = deadline_match.group(1).strip()
-        raw = raw[: deadline_match.start()].strip()
-
-    result = await task.create_task(raw, priority=priority, deadline_hint=deadline_hint)
+    result = await MAIN_AGENT.handle("task", raw, str(update.effective_chat.id))
     await _reply(update, result)
 
 
 async def cmd_tasks(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
-    result = await task.list_tasks()
+    result = await MAIN_AGENT.handle("tasks", "", str(update.effective_chat.id))
     await _reply(update, result)
 
 
@@ -92,7 +74,7 @@ async def cmd_done(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not ctx.args or not ctx.args[0].isdigit():
         await _reply(update, "📌 ระบุ ID task เช่น /done 3")
         return
-    result = await task.complete_task(int(ctx.args[0]))
+    result = await MAIN_AGENT.handle("done", ctx.args[0], str(update.effective_chat.id))
     await _reply(update, result)
 
 
@@ -103,7 +85,7 @@ async def cmd_learn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not text:
         await _reply(update, "📌 พิมพ์ข้อความหลัง /learn เช่น /learn พลาดเรื่อง X เพราะ Y")
         return
-    result = await learn.record_lesson(text)
+    result = await MAIN_AGENT.handle("learn", text, str(update.effective_chat.id))
     await _reply(update, result)
 
 
@@ -114,7 +96,7 @@ async def cmd_think(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not text:
         await _reply(update, "📌 พิมพ์หัวข้อหลัง /think เช่น /think ทำโปรดักต์ AI ตัวนี้ดีไหม")
         return
-    result = await brainstorm.run_brainstorm(text)
+    result = await MAIN_AGENT.handle("think", text, str(update.effective_chat.id))
     await _reply_smart(update, result)
 
 
@@ -125,7 +107,7 @@ async def cmd_park(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not text:
         await _reply(update, "📌 พิมพ์ไอเดียหลัง /park เช่น /park ระบบแจ้งเตือนแบบใหม่")
         return
-    result = await memory.park_idea(text)
+    result = await MAIN_AGENT.handle("park", text, str(update.effective_chat.id))
     await _reply(update, result)
 
 
@@ -136,7 +118,7 @@ async def cmd_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not text:
         await _reply(update, "📌 พิมพ์คำค้นหลัง /search เช่น /search โปรเจกต์ AI")
         return
-    result = await memory.search_memory(text)
+    result = await MAIN_AGENT.handle("search", text, str(update.effective_chat.id))
     await _reply(update, result)
 
 
@@ -147,7 +129,7 @@ async def cmd_remember(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not text:
         await _reply(update, "📌 พิมพ์ข้อความหลัง /remember เช่น /remember ผมชอบกาแฟดำไม่ใส่น้ำตาล")
         return
-    result = await memory.remember_memory(text)
+    result = await MAIN_AGENT.handle("remember", text, str(update.effective_chat.id))
     await _reply(update, result)
 
 
@@ -158,14 +140,14 @@ async def cmd_forget(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not text:
         await _reply(update, "📌 พิมพ์ keyword หลัง /forget เช่น /forget Bumrungrad")
         return
-    result = await memory.forget_memory(text)
+    result = await MAIN_AGENT.handle("forget", text, str(update.effective_chat.id))
     await _reply(update, result)
 
 
 async def cmd_memory(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
-    result = await memory.list_memory()
+    result = await MAIN_AGENT.handle("memory", "", str(update.effective_chat.id))
     await _reply(update, result)
 
 
@@ -173,85 +155,15 @@ async def cmd_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
     chat_id = str(update.effective_chat.id)
-    if not ctx.args:
-        enabled = await is_voice_enabled(chat_id)
-        status = "🔊 เปิดอยู่" if enabled else "🔇 ปิดอยู่"
-        await _reply(
-            update,
-            f"📌 Voice Mode: {status}\n\n"
-            f"🔊 /voice on  — เปิด (ส่งเสียง + ข้อความ)\n"
-            f"🔇 /voice off — ปิด (ข้อความอย่างเดียว)\n\n"
-            f"เสียง: ภาษาไทย หญิง (PremwadeeNeural)",
-        )
-        return
-
-    cmd = ctx.args[0].lower()
-    if cmd == "on":
-        await set_voice_mode(chat_id, True)
-        await _reply(
-            update,
-            "🔊 เปิด Voice Mode แล้วครับ\n"
-            "AI จะส่งเสียงภาษาไทยหญิง + ข้อความเต็มพร้อมกัน",
-        )
-    elif cmd == "off":
-        await set_voice_mode(chat_id, False)
-        await _reply(
-            update,
-            "🔇 ปิด Voice Mode แล้วครับ\n"
-            "กลับเป็นข้อความปกติ",
-        )
-    else:
-        await _reply(update, "📌 พิมพ์ /voice on หรือ /voice off ครับ")
+    result = await MAIN_AGENT.handle("voice", " ".join(ctx.args), chat_id)
+    await _reply(update, result)
 
 
 async def cmd_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
-    async with get_db() as db:
-        today_cursor = await db.execute(
-            "SELECT COALESCE(SUM(estimated_cost_thb), 0) AS total FROM ai_runs WHERE date(created_at) = date('now', 'localtime')",
-        )
-        today_row = await today_cursor.fetchone()
-        month_cursor = await db.execute(
-            """
-            SELECT COALESCE(SUM(estimated_cost_thb), 0) AS total
-            FROM ai_runs
-            WHERE strftime('%Y-%m', created_at, 'localtime') = strftime('%Y-%m', 'now', 'localtime')
-            """,
-        )
-        month_row = await month_cursor.fetchone()
-        model_cursor = await db.execute(
-            """
-            SELECT model, COALESCE(SUM(estimated_cost_thb), 0) AS total
-            FROM ai_runs
-            WHERE strftime('%Y-%m', created_at, 'localtime') = strftime('%Y-%m', 'now', 'localtime')
-            GROUP BY model
-            ORDER BY total DESC, model
-            """,
-        )
-        model_rows = await model_cursor.fetchall()
-        await db.execute(
-            "INSERT INTO audit_logs (action, details) VALUES (?, ?)",
-            ("cost_viewed", f"chat_id={update.effective_chat.id}"),
-        )
-        await db.commit()
-
-    lines = [
-        "📌 สรุปค่าใช้จ่าย AI",
-        "",
-        "📊 ค่าใช้จ่าย AI",
-        "",
-        f"วันนี้: {float(today_row['total']):.2f} บาท",
-        f"เดือนนี้: {float(month_row['total']):.2f} บาท",
-        "",
-        "แยกตาม model:",
-    ]
-    if model_rows:
-        for row in model_rows:
-            lines.append(f"· {row['model']}: {float(row['total']):.2f} บาท")
-    else:
-        lines.append("· ยังไม่มี")
-    await _reply(update, "\n".join(lines))
+    result = await MAIN_AGENT.handle("cost", "", str(update.effective_chat.id))
+    await _reply(update, result)
 
 
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -285,21 +197,21 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_today(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
-    result = await summary.generate_daily_summary()
+    result = await MAIN_AGENT.handle("today", "", str(update.effective_chat.id))
     await _reply_smart(update, result)
 
 
 async def cmd_news(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
-    result = await news.fetch_and_summarize()
+    result = await MAIN_AGENT.handle("news", "", str(update.effective_chat.id))
     await _reply_smart(update, result)
 
 
 async def cmd_week(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
-    result = await summary.generate_weekly_summary()
+    result = await MAIN_AGENT.handle("week", "", str(update.effective_chat.id))
     await _reply_smart(update, result)
 
 
@@ -320,7 +232,7 @@ async def msg_fallback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 return
         else:
             await brain.clear_pending_clarification(chat_id)
-    result = await chat.run_chat(chat_id, text)
+    result = await MAIN_AGENT.route_free_text(chat_id, text)
     await _reply_smart(update, result)
 
 

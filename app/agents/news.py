@@ -5,6 +5,7 @@ import feedparser
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from app.core.ai import chat_json
+from app.core.agents import log_agent_run
 from app.core.database import get_db
 from app.core.policy import ALLOWED_NEWS_SOURCES
 
@@ -59,6 +60,7 @@ def _matches_topic(topic_text: str) -> bool:
     return False
 
 
+@log_agent_run("NewsAgent", triggered_by="scheduler")
 async def fetch_and_summarize() -> str:
     items: list[dict[str, str]] = []
     seen_links: set[str] = set()

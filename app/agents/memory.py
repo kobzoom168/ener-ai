@@ -1,5 +1,6 @@
 from datetime import date
 from uuid import uuid4
+from app.core.agents import log_agent_run
 from app.core.database import get_db
 from app.core.memory import (
     forget_long_term_memory,
@@ -8,6 +9,7 @@ from app.core.memory import (
 )
 
 
+@log_agent_run("MemoryAgent")
 async def search_memory(query: str) -> str:
     like_query = f"%{query}%"
 
@@ -103,6 +105,7 @@ async def search_memory(query: str) -> str:
     return "\n".join(lines)
 
 
+@log_agent_run("MemoryAgent")
 async def park_idea(text: str) -> str:
     memory_key = str(uuid4())
 
@@ -124,13 +127,16 @@ async def park_idea(text: str) -> str:
     return f"📌 เก็บไอเดียไว้แล้ว\n\n💾 key: {memory_key}\n💡 {text}"
 
 
+@log_agent_run("MemoryAgent")
 async def remember_memory(text: str) -> str:
     return await remember_long_term_memory(text, memory_type="manual")
 
 
+@log_agent_run("MemoryAgent")
 async def forget_memory(keyword: str) -> str:
     return await forget_long_term_memory(keyword)
 
 
+@log_agent_run("MemoryAgent")
 async def list_memory() -> str:
     return await list_long_term_memories()

@@ -1,5 +1,5 @@
-from datetime import date
 from app.core.ai import chat, chat_json
+from app.core.agents import log_agent_run
 from app.core.database import get_db
 from app.core.memory import (
     extract_and_store_long_term_memories,
@@ -8,6 +8,7 @@ from app.core.memory import (
     get_time_context,
 )
 from app.core.policy import AI_PERSONALITY
+from app.agents import task as task_agent
 
 _TASK_EXTRACT_SYSTEM = AI_PERSONALITY + """
 
@@ -52,18 +53,11 @@ async def _create_tasks(task_titles: list[str]) -> list[str]:
     if not task_titles:
         return created
 
+    for task_title in task_titles:
+        await task_agent.create_task(task_title, _agent_triggered_by="agent")
+        created.append(task_title)
+
     async with get_db() as db:
-        today = date.today().isoformat()
-        for task_title in task_titles:
-            await db.execute(
-                "INSERT INTO tasks (title) VALUES (?)",
-                (task_title,),
-            )
-            await db.execute(
-                "INSERT INTO daily_logs (log_date, category, content) VALUES (?, ?, ?)",
-                (today, "task", f"สร้าง task จาก chat: {task_title}"),
-            )
-            created.append(task_title)
         await db.execute(
             "INSERT INTO audit_logs (action, details) VALUES (?, ?)",
             ("chat_tasks_created", f"count={len(created)}"),
@@ -72,6 +66,7 @@ async def _create_tasks(task_titles: list[str]) -> list[str]:
     return created
 
 
+@log_agent_run("MainChatAgent")
 async def run_chat(chat_id: str, text: str) -> str:
     async with get_db() as db:
         cursor = await db.execute(

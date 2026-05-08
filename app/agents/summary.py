@@ -1,12 +1,14 @@
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from app.core.ai import chat
+from app.core.agents import log_agent_run
 from app.core.database import get_db
 
 _BANGKOK = ZoneInfo("Asia/Bangkok")
 _PRIORITY_EMOJI = {"high": "🔴", "medium": "🟡", "low": "🟢"}
 
 
+@log_agent_run("DigestAgent", triggered_by="scheduler")
 async def generate_daily_summary() -> str:
     today = datetime.now(_BANGKOK).date()
     today_text = today.strftime("%d/%m/%Y")
@@ -163,6 +165,7 @@ async def generate_daily_summary() -> str:
     return summary_text
 
 
+@log_agent_run("DigestAgent", triggered_by="scheduler")
 async def generate_weekly_summary() -> str:
     today = datetime.now(_BANGKOK).date()
     start_date = today - timedelta(days=6)

@@ -140,6 +140,20 @@ async def init_db():
                 net_out_bytes INTEGER DEFAULT 0,
                 recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS agent_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_name TEXT NOT NULL,
+                triggered_by TEXT DEFAULT 'user',
+                input_summary TEXT,
+                output_summary TEXT,
+                model_used TEXT,
+                duration_ms INTEGER DEFAULT 0,
+                success BOOLEAN DEFAULT 1,
+                error_msg TEXT,
+                cost_thb REAL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
         """)
         cursor = await db.execute("PRAGMA table_info(memories)")
         columns = await cursor.fetchall()

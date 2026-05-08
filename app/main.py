@@ -20,6 +20,7 @@ from telegram import Update
 
 from app.bot.router import build_application
 from app.core.ai import get_active_model, get_model_availability, get_model_label
+from app.core.agents import COMMAND_AGENT_MAP, SCHEDULER_AGENTS
 from app.core.config import settings
 from app.core.database import get_db, init_db
 from app.scheduler import build_scheduler
@@ -31,6 +32,21 @@ _APP_STARTED_AT = datetime.now(_BANGKOK)
 _LOG_DIR = Path("/var/log/ener-ai")
 _DOCKER_CONTAINER_NAME = "ener-ai-ener-ai-1"
 _RANGE_OPTIONS = ["1h", "3h", "10h", "24h", "7d"]
+_AGENT_ORDER = [
+    "MainChatAgent",
+    "NoteAgent",
+    "TaskAgent",
+    "MemoryAgent",
+    "LessonAgent",
+    "ThinkTeam",
+    "NewsAgent",
+    "DigestAgent",
+    "HealthAgent",
+    "BackupAgent",
+    "MetricsAgent",
+    "VoiceAgent",
+    "CostAgent",
+]
 _ADMIN_SIDEBAR_ITEMS = [
     ("Overview", "/admin", "overview", True),
     ("Conversations", "#timeline-panel", "conversations", False),
@@ -570,6 +586,92 @@ async def _load_metrics_payload(range_key: str) -> dict:
     }
 
 
+async def _load_agent_stats_payload() -> dict:
+    today = datetime.now(_BANGKOK).date().isoformat()
+    known_agents = list(dict.fromkeys(_AGENT_ORDER + list(COMMAND_AGENT_MAP.values()) + list(SCHEDULER_AGENTS.values())))
+    uptime_delta = datetime.now(_BANGKOK) - _APP_STARTED_AT
+    uptime_minutes = int(uptime_delta.total_seconds() // 60)
+    uptime_text = f"{uptime_minutes // 60}h {uptime_minutes % 60}m"
+
+    async with get_db() as db:
+        stats_cursor = await db.execute(
+            """
+            SELECT
+              agent_name,
+              COUNT(*) AS total_runs,
+              SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) AS success_count,
+              SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) AS fail_count,
+              ROUND(AVG(duration_ms)) AS avg_ms,
+              ROUND(SUM(cost_thb), 4) AS total_cost
+            FROM agent_runs
+            WHERE date(created_at, '+7 hours') = date('now', '+7 hours')
+            GROUP BY agent_name
+            ORDER BY total_runs DESC
+            """
+        )
+        stats_rows = await stats_cursor.fetchall()
+
+        failures_cursor = await db.execute(
+            """
+            SELECT
+                agent_name,
+                error_msg,
+                datetime(created_at, '+7 hours') AS local_created_at
+            FROM agent_runs
+            WHERE date(created_at, '+7 hours') = ? AND success = 0
+            ORDER BY id DESC
+            LIMIT 10
+            """,
+            (today,),
+        )
+        failure_rows = await failures_cursor.fetchall()
+
+    stats_by_name = {str(row["agent_name"]): row for row in stats_rows}
+    stats = []
+    for agent_name in known_agents:
+        row = stats_by_name.get(agent_name)
+        total_runs = int(row["total_runs"]) if row else 0
+        success_count = int(row["success_count"]) if row and row["success_count"] is not None else 0
+        fail_count = int(row["fail_count"]) if row and row["fail_count"] is not None else 0
+        avg_ms = int(row["avg_ms"]) if row and row["avg_ms"] is not None else 0
+        total_cost = float(row["total_cost"] or 0.0) if row else 0.0
+        stats.append(
+            {
+                "agent_name": agent_name,
+                "total_runs": total_runs,
+                "success_count": success_count,
+                "fail_count": fail_count,
+                "avg_ms": avg_ms,
+                "total_cost": round(total_cost, 4),
+                "status": "ok" if total_runs > 0 and fail_count == 0 else ("warning" if fail_count > 0 else "unknown"),
+            }
+        )
+
+    failures = [
+        {
+            "agent_name": row["agent_name"],
+            "error_msg": _truncate_text(_sanitize_admin_text(row["error_msg"] or "Unknown error"), 120),
+            "time": _format_short_time(row["local_created_at"]),
+        }
+        for row in failure_rows
+    ]
+
+    return {
+        "main_agent": {
+            "name": "Main Agent",
+            "status": "ONLINE",
+            "uptime": uptime_text,
+        },
+        "stats": stats,
+        "failures": failures,
+        "costs": [
+            {"agent_name": row["agent_name"], "total_cost": row["total_cost"], "total_runs": row["total_runs"]}
+            for row in sorted(stats, key=lambda item: item["total_cost"], reverse=True)
+            if int(row["total_runs"]) > 0 or float(row["total_cost"]) > 0
+        ],
+    }
+
+
 def _read_file_logs(lines: int) -> list[dict]:
     if not _LOG_DIR.exists():
         return []
@@ -766,6 +868,7 @@ async def _load_admin_overview() -> dict:
     today = now.date().isoformat()
     status: dict
     metrics: dict
+    agent_payload: dict
 
     try:
         status = await _load_admin_status()
@@ -811,6 +914,16 @@ async def _load_admin_overview() -> dict:
             },
         }
 
+    try:
+        agent_payload = await _load_agent_stats_payload()
+    except Exception:
+        agent_payload = {
+            "main_agent": {"name": "Main Agent", "status": "ONLINE", "uptime": "Unknown"},
+            "stats": [],
+            "failures": [],
+            "costs": [],
+        }
+
     overview = {
         "topbar": {
             "title": "Ener-AI Admin",
@@ -832,6 +945,7 @@ async def _load_admin_overview() -> dict:
         "scheduler_health": [],
         "server_health": {},
         "recent_logs": [],
+        "agent_os": agent_payload,
     }
 
     async with get_db() as db:
@@ -1637,6 +1751,74 @@ def _render_agent_usage(rows: list[dict]) -> str:
     return "\n".join(bars)
 
 
+def _render_agent_status_panel(agent_payload: dict) -> str:
+    main_agent = agent_payload.get("main_agent", {})
+    stats = agent_payload.get("stats", [])
+    rows = [
+        f"""
+        <div class="agent-summary-row">
+          <div class="agent-summary-title">🤖 {escape(main_agent.get('name', 'Main Agent'))}</div>
+          <div class="agent-summary-meta">
+            <span class="status-badge tone-ok">{escape(main_agent.get('status', 'ONLINE'))}</span>
+            <span>{escape(main_agent.get('uptime', 'Unknown'))}</span>
+          </div>
+        </div>
+        """
+    ]
+    for row in stats:
+        status_badge = "✅" if row["total_runs"] > 0 and row["fail_count"] == 0 else ("⚠️" if row["fail_count"] > 0 else "—")
+        avg_text = f"{row['avg_ms']} ms" if row["total_runs"] > 0 else "—"
+        rows.append(
+            f"""
+            <div class="agent-status-row">
+              <div class="agent-status-name">{escape(row['agent_name'])}</div>
+              <div class="agent-status-metrics">{row['total_runs']} runs · avg {escape(avg_text)}</div>
+              <div class="agent-status-ok">{status_badge}</div>
+            </div>
+            """
+        )
+    return "\n".join(rows)
+
+
+def _render_agent_failures_panel(agent_payload: dict) -> str:
+    failures = agent_payload.get("failures", [])
+    if not failures:
+        return '<div class="empty-state">✅ ไม่มี failure วันนี้</div>'
+
+    rows = []
+    for row in failures:
+        rows.append(
+            f"""
+            <div class="failure-row">
+              <div class="failure-time">{escape(row['time'])}</div>
+              <div class="failure-main">
+                <div class="failure-agent">{escape(row['agent_name'])}</div>
+                <div class="failure-msg">{escape(row['error_msg'])}</div>
+              </div>
+            </div>
+            """
+        )
+    return "\n".join(rows)
+
+
+def _render_agent_costs_panel(agent_payload: dict) -> str:
+    cost_rows = agent_payload.get("costs", [])
+    if not cost_rows:
+        return '<div class="empty-state">ยังไม่มี cost ต่อ agent วันนี้</div>'
+
+    rows = []
+    for row in cost_rows:
+        rows.append(
+            f"""
+            <div class="cost-row">
+              <span>{escape(row['agent_name'])}</span>
+              <strong>฿{float(row['total_cost']):.2f}</strong>
+            </div>
+            """
+        )
+    return "\n".join(rows)
+
+
 def _render_scheduler_health(rows: list[dict]) -> str:
     items = []
     for row in rows:
@@ -1739,6 +1921,9 @@ def build_admin_html(overview: dict) -> HTMLResponse:
     timeline_html = _render_timeline(overview.get("timeline", []))
     model_html = _render_model_panel(overview.get("model_panel", {}))
     usage_html = _render_agent_usage(overview.get("agent_usage", []))
+    agent_status_html = _render_agent_status_panel(overview.get("agent_os", {}))
+    agent_failures_html = _render_agent_failures_panel(overview.get("agent_os", {}))
+    agent_costs_html = _render_agent_costs_panel(overview.get("agent_os", {}))
     scheduler_html = _render_scheduler_health(overview.get("scheduler_health", []))
     server_html = _render_server_health(overview.get("server_health", {}))
     logs_html = _render_recent_logs(overview.get("recent_logs", []))
@@ -2160,6 +2345,57 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       grid-template-columns: 140px minmax(0, 1fr) 46px;
       align-items: center;
     }}
+    .agent-summary-row,
+    .agent-status-row,
+    .failure-row,
+    .cost-row {{
+      display: grid;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid rgba(36, 48, 74, 0.88);
+      border-radius: 14px;
+      background: rgba(9, 15, 28, 0.62);
+      padding: 12px;
+    }}
+    .agent-summary-row {{
+      grid-template-columns: minmax(0, 1fr) auto;
+    }}
+    .agent-summary-title,
+    .agent-status-name,
+    .failure-agent {{
+      font-size: 14px;
+      font-weight: 700;
+    }}
+    .agent-summary-meta,
+    .agent-status-metrics,
+    .failure-msg {{
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }}
+    .agent-summary-meta {{
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }}
+    .agent-status-row {{
+      grid-template-columns: minmax(0, 1fr) auto auto;
+    }}
+    .agent-status-ok {{
+      font-size: 14px;
+    }}
+    .failure-row {{
+      grid-template-columns: 52px minmax(0, 1fr);
+    }}
+    .failure-time {{
+      color: var(--muted);
+      font-size: 12px;
+    }}
+    .cost-row {{
+      grid-template-columns: minmax(0, 1fr) auto;
+    }}
     .agent-bar-label,
     .agent-bar-count {{
       font-size: 13px;
@@ -2388,6 +2624,17 @@ def build_admin_html(overview: dict) -> HTMLResponse:
             <div class="stack">{usage_html}</div>
           </section>
 
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <div class="panel-title">Agent Status</div>
+                <div class="panel-copy">Main Agent online status plus sub-agent runs today.</div>
+              </div>
+              <a class="panel-link" href="/admin/api/agents">API</a>
+            </div>
+            <div class="stack">{agent_status_html}</div>
+          </section>
+
           <section class="panel" id="workspace-panel">
             <div class="panel-header">
               <div>
@@ -2418,6 +2665,26 @@ def build_admin_html(overview: dict) -> HTMLResponse:
               </div>
             </div>
             <div class="stack">{scheduler_html}</div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <div class="panel-title">Agent Failures Today</div>
+                <div class="panel-copy">ถ้าไม่มี failure ระบบจะแสดงว่าไม่มี failure วันนี้</div>
+              </div>
+            </div>
+            <div class="stack">{agent_failures_html}</div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <div class="panel-title">Cost Per Agent</div>
+                <div class="panel-copy">สรุปค่าใช้จ่ายของแต่ละ agent วันนี้</div>
+              </div>
+            </div>
+            <div class="stack">{agent_costs_html}</div>
           </section>
 
           <section class="panel">
@@ -3077,6 +3344,12 @@ async def admin_status(request: Request):
 async def admin_metrics(request: Request):
     await _require_admin(request)
     return JSONResponse(await _load_metrics_payload(request.query_params.get("range", "10h")))
+
+
+@app.get("/admin/api/agents")
+async def admin_agents(request: Request):
+    await _require_admin(request)
+    return JSONResponse(await _load_agent_stats_payload())
 
 
 @app.get("/admin/api/logs")

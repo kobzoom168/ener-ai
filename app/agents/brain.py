@@ -1,7 +1,10 @@
 from datetime import date
+import re
 from app.core.ai import chat_json
+from app.core.agents import log_agent_run
 from app.core.database import get_db
 from app.core.policy import AI_PERSONALITY
+from app.agents import task as task_agent
 
 
 _CLASSIFY_SYSTEM = AI_PERSONALITY + """
@@ -67,6 +70,12 @@ def _parse_clarification_reply(text: str) -> str | None:
     return mapping.get(normalized)
 
 
+def _extract_task_meta(result_text: str, fallback_title: str) -> tuple[str, str]:
+    task_id_match = re.search(r"\[(\d+)\]", result_text)
+    task_id = task_id_match.group(1) if task_id_match else "?"
+    return task_id, fallback_title
+
+
 async def get_pending_clarification(chat_id: str):
     async with get_db() as db:
         cursor = await db.execute(
@@ -112,23 +121,17 @@ async def _save_note(text: str, category: str, summary: str, extracted_tasks: li
             (today, "note", f"[{category}] {summary}"),
         )
 
-        task_ids = []
-        for task_title in task_titles:
-            cursor = await db.execute(
-                "INSERT INTO tasks (title) VALUES (?)",
-                (task_title,),
-            )
-            task_ids.append(cursor.lastrowid)
-            await db.execute(
-                "INSERT INTO daily_logs (log_date, category, content) VALUES (?, ?, ?)",
-                (today, "task", f"สร้าง task: {task_title}"),
-            )
-
         await db.execute(
             "INSERT INTO audit_logs (action, details) VALUES (?, ?)",
             ("note_saved", f"category={category}"),
         )
         await db.commit()
+
+    created_task_rows = []
+    for task_title in task_titles:
+        task_result = await task_agent.create_task(task_title, _agent_triggered_by="agent")
+        task_id, parsed_title = _extract_task_meta(task_result, task_title)
+        created_task_rows.append((task_id, parsed_title))
 
     category_emoji = {
         "task": "✅",
@@ -140,10 +143,10 @@ async def _save_note(text: str, category: str, summary: str, extracted_tasks: li
 
     lines = [f"📌 {summary}", "", f"{category_emoji} หมวด: {category}"]
 
-    if task_titles:
+    if created_task_rows:
         lines.append("")
         lines.append("🎯 Task ที่สร้างแล้ว:")
-        for i, (tid, title) in enumerate(zip(task_ids, task_titles), 1):
+        for i, (tid, title) in enumerate(created_task_rows, 1):
             lines.append(f"  {i}. [{tid}] {title} 🟢")
 
     return "\n".join(lines)
@@ -167,6 +170,7 @@ async def _create_pending_clarification(chat_id: str, text: str, detected_catego
     return _format_clarification(summary)
 
 
+@log_agent_run("NoteAgent")
 async def process_note(text: str, chat_id: str) -> str:
     try:
         result = await chat_json(text, system=_CLASSIFY_SYSTEM, agent="brain")

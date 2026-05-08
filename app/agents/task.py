@@ -1,10 +1,12 @@
 from datetime import date
+from app.core.agents import log_agent_run
 from app.core.database import get_db
 
 
 _PRIORITY_EMOJI = {"high": "🔴", "medium": "🟡", "low": "🟢"}
 
 
+@log_agent_run("TaskAgent")
 async def create_task(title: str, priority: str = "medium", deadline_hint: str = "") -> str:
     async with get_db() as db:
         cursor = await db.execute(
@@ -35,6 +37,7 @@ async def create_task(title: str, priority: str = "medium", deadline_hint: str =
     return "\n".join(lines)
 
 
+@log_agent_run("TaskAgent")
 async def list_tasks() -> str:
     async with get_db() as db:
         cursor = await db.execute(
@@ -54,6 +57,7 @@ async def list_tasks() -> str:
     return "\n".join(lines)
 
 
+@log_agent_run("TaskAgent")
 async def complete_task(task_id: int) -> str:
     async with get_db() as db:
         cursor = await db.execute(

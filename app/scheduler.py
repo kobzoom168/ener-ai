@@ -7,6 +7,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from telegram import Bot
 from app.agents import news, summary
+from app.core.agents import log_agent_run
 from app.core.config import settings
 from app.core.database import get_db
 
@@ -67,15 +68,15 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=_BANGKOK)
 
     async def send_daily_news():
-        message = await news.fetch_and_summarize()
+        message = await news.fetch_and_summarize(_agent_triggered_by="scheduler")
         await _send_scheduled_message(bot, message, "scheduled_news_sent")
 
     async def send_daily_summary():
-        message = await summary.generate_daily_summary()
+        message = await summary.generate_daily_summary(_agent_triggered_by="scheduler")
         await _send_scheduled_message(bot, message, "scheduled_daily_summary_sent")
 
     async def send_weekly_review():
-        message = await summary.generate_weekly_summary()
+        message = await summary.generate_weekly_summary(_agent_triggered_by="scheduler")
         today = datetime.now(_BANGKOK).date()
         start_date = today - timedelta(days=6)
         async with get_db() as db:
@@ -98,6 +99,7 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
         message = message + "\n" + "\n".join(lesson_lines)
         await _send_scheduled_message(bot, message, "scheduled_weekly_review_sent")
 
+    @log_agent_run("BackupAgent", triggered_by="scheduler")
     async def run_daily_backup():
         db_file = _database_file()
         backup_dir = _backup_dir()
@@ -119,6 +121,7 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
         except Exception as exc:
             await _send_alert(bot, f"📌 backup ล้มเหลว: {exc}", "daily_backup_failed")
 
+    @log_agent_run("HealthAgent", triggered_by="scheduler")
     async def run_health_check():
         issues = []
         try:
@@ -155,6 +158,7 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
         if issues:
             await _send_warning(bot, " | ".join(issues), "health_warning_sent")
 
+    @log_agent_run("MetricsAgent", triggered_by="scheduler")
     async def record_server_metrics():
         memory = psutil.virtual_memory()
         disk = psutil.disk_usage(_metrics_data_dir())
