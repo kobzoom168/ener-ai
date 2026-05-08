@@ -1,7 +1,10 @@
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from app.core.ai import chat_json
 from app.core.database import get_db
 from app.core.policy import AI_PERSONALITY
 
+_BANGKOK = ZoneInfo("Asia/Bangkok")
 _MAX_CONTEXT_CHARS = 1800
 _SUMMARY_CHAR_LIMIT = 100
 
@@ -43,6 +46,11 @@ def _append_with_budget(lines: list[str], entry: str, used_chars: int) -> int:
     return used_chars + len(entry) + 1
 
 
+def get_time_context() -> str:
+    now = datetime.now(_BANGKOK)
+    return f"วันและเวลาปัจจุบัน (Bangkok): {now.strftime('%A %d %B %Y เวลา %H:%M น.')}"
+
+
 async def get_long_term_context() -> str:
     async with get_db() as db:
         belief_rows = await (
@@ -75,6 +83,8 @@ async def get_long_term_context() -> str:
         ).fetchall()
 
     lines = [
+        get_time_context(),
+        "",
         "=== สิ่งที่รู้เกี่ยวกับกบ ===",
     ]
     used_chars = len("\n".join(lines))

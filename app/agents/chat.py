@@ -5,6 +5,7 @@ from app.core.memory import (
     extract_and_store_long_term_memories,
     get_long_term_context,
     get_recent_summaries,
+    get_time_context,
 )
 from app.core.policy import AI_PERSONALITY
 
@@ -89,9 +90,12 @@ async def run_chat(chat_id: str, text: str) -> str:
         {"role": row["role"], "content": row["content"]}
         for row in reversed(rows)
     ]
+    time_context = get_time_context()
     long_term = await get_long_term_context()
     summaries = await get_recent_summaries()
     system_prompt = AI_PERSONALITY + f"""
+
+{time_context}
 
 {long_term}
 
