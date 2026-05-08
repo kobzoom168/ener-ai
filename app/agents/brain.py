@@ -34,74 +34,10 @@ def _looks_like_task(text: str) -> bool:
     lowered = text.lower()
     return any(keyword in text or keyword in lowered for keyword in _TASK_KEYWORDS)
 
-
-def _format_clarification(summary: str) -> str:
-    return (
-        f"📌 {summary}\n\n"
-        "นี่คืออะไรครับ?\n"
-        "1️⃣ task — ต้องทำ\n"
-        "2️⃣ idea — ไอเดีย\n"
-        "3️⃣ note — จดไว้เฉยๆ\n"
-        "4️⃣ ไม่สำคัญ ข้ามได้"
-    )
-
-
-def _parse_clarification_reply(text: str) -> str | None:
-    normalized = text.strip().lower()
-    mapping = {
-        "1": "task",
-        "1️⃣": "task",
-        "task": "task",
-        "ต้องทำ": "task",
-        "2": "idea",
-        "2️⃣": "idea",
-        "idea": "idea",
-        "ไอเดีย": "idea",
-        "3": "note",
-        "3️⃣": "note",
-        "note": "note",
-        "จดไว้": "note",
-        "จดไว้เฉยๆ": "note",
-        "4": "skip",
-        "4️⃣": "skip",
-        "ข้าม": "skip",
-        "ไม่สำคัญ": "skip",
-    }
-    return mapping.get(normalized)
-
-
 def _extract_task_meta(result_text: str, fallback_title: str) -> tuple[str, str]:
     task_id_match = re.search(r"\[(\d+)\]", result_text)
     task_id = task_id_match.group(1) if task_id_match else "?"
     return task_id, fallback_title
-
-
-async def get_pending_clarification(chat_id: str):
-    async with get_db() as db:
-        cursor = await db.execute(
-            """
-            SELECT id, raw_text, detected_category
-            FROM pending_clarification
-            WHERE chat_id = ?
-            ORDER BY id DESC
-            LIMIT 1
-            """,
-            (chat_id,),
-        )
-        return await cursor.fetchone()
-
-
-async def clear_pending_clarification(chat_id: str) -> None:
-    async with get_db() as db:
-        await db.execute(
-            "DELETE FROM pending_clarification WHERE chat_id = ?",
-            (chat_id,),
-        )
-        await db.execute(
-            "INSERT INTO audit_logs (action, details) VALUES (?, ?)",
-            ("clarification_cleared", f"chat_id={chat_id}"),
-        )
-        await db.commit()
 
 
 async def _save_note(text: str, category: str, summary: str, extracted_tasks: list[str]) -> str:
@@ -152,24 +88,6 @@ async def _save_note(text: str, category: str, summary: str, extracted_tasks: li
     return "\n".join(lines)
 
 
-async def _create_pending_clarification(chat_id: str, text: str, detected_category: str, summary: str) -> str:
-    async with get_db() as db:
-        await db.execute("DELETE FROM pending_clarification WHERE chat_id = ?", (chat_id,))
-        await db.execute(
-            """
-            INSERT INTO pending_clarification (chat_id, raw_text, detected_category)
-            VALUES (?, ?, ?)
-            """,
-            (chat_id, text, detected_category),
-        )
-        await db.execute(
-            "INSERT INTO audit_logs (action, details) VALUES (?, ?)",
-            ("clarification_requested", f"chat_id={chat_id} detected={detected_category}"),
-        )
-        await db.commit()
-    return _format_clarification(summary)
-
-
 @log_agent_run("NoteAgent")
 async def process_note(text: str, chat_id: str) -> str:
     try:
@@ -190,40 +108,9 @@ async def process_note(text: str, chat_id: str) -> str:
         if not extracted_tasks:
             extracted_tasks = [summary]
 
-    if category in {"task", "idea", "question", "feeling"} and is_confident:
-        return await _save_note(text, category, summary, extracted_tasks)
+    if category not in {"task", "idea", "question", "feeling", "note"}:
+        category = "note"
+    elif not is_confident and category != "task":
+        category = "note"
 
-    return await _create_pending_clarification(chat_id, text, category, summary)
-
-
-async def handle_pending_reply(chat_id: str, reply_text: str) -> str | None:
-    row = await get_pending_clarification(chat_id)
-    if not row:
-        return None
-
-    action = _parse_clarification_reply(reply_text)
-    if not action:
-        return "📌 ตอบ 1, 2, 3 หรือ 4 ได้เลย\n\n1️⃣ task\n2️⃣ idea\n3️⃣ note\n4️⃣ ข้าม"
-
-    if action == "skip":
-        async with get_db() as db:
-            await db.execute("DELETE FROM pending_clarification WHERE id = ?", (row["id"],))
-            await db.execute(
-                "INSERT INTO audit_logs (action, details) VALUES (?, ?)",
-                ("clarification_skipped", f"chat_id={chat_id}"),
-            )
-            await db.commit()
-        return "📌 โอเค ข้ามข้อความนี้ให้แล้ว"
-
-    summary = row["raw_text"][:80]
-    result = await _save_note(row["raw_text"], action, summary, [summary] if action == "task" else [])
-
-    async with get_db() as db:
-        await db.execute("DELETE FROM pending_clarification WHERE id = ?", (row["id"],))
-        await db.execute(
-            "INSERT INTO audit_logs (action, details) VALUES (?, ?)",
-            ("clarification_resolved", f"chat_id={chat_id} category={action}"),
-        )
-        await db.commit()
-
-    return result
+    return await _save_note(text, category, summary, extracted_tasks)

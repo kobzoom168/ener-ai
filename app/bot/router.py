@@ -10,7 +10,6 @@ from telegram.ext import (
 from app.core.config import settings
 from app.core.policy import ALLOWED_CHAT_IDS
 from app.core.tts import is_voice_enabled, text_to_voice_bytes
-from app.agents import brain
 from app.agents.main_agent import MAIN_AGENT
 
 
@@ -223,16 +222,6 @@ async def msg_fallback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not text.strip():
         return
     chat_id = str(update.effective_chat.id)
-    pending = await brain.get_pending_clarification(chat_id)
-    if pending is not None:
-        normalized = text.strip()
-        if normalized in {"1", "2", "3", "4", "1️⃣", "2️⃣", "3️⃣", "4️⃣"}:
-            pending_result = await brain.handle_pending_reply(chat_id, text)
-            if pending_result is not None:
-                await _reply_smart(update, pending_result)
-                return
-        else:
-            await brain.clear_pending_clarification(chat_id)
     result = await MAIN_AGENT.route_free_text(chat_id, text)
     await _reply_smart(update, result)
 

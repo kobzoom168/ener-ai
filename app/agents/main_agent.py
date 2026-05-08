@@ -11,17 +11,6 @@ class MainAgent:
     """
 
     async def route_free_text(self, chat_id: str, text: str) -> str:
-        text_lower = text.lower()
-
-        task_keywords = ["ต้อง", "เดี๋ยว", "วันนี้", "พรุ่งนี้", "deadline", "จะ", "plan"]
-        question_keywords = ["ช่วย", "แนะนำ", "คิด", "วิเคราะห์", "brainstorm", "ไอเดีย"]
-
-        if any(keyword in text or keyword in text_lower for keyword in task_keywords):
-            return await brain.process_note(text, chat_id, _agent_triggered_by="user")
-
-        if any(keyword in text or keyword in text_lower for keyword in question_keywords):
-            return await chat.run_chat(chat_id, text, _agent_triggered_by="user")
-
         return await chat.run_chat(chat_id, text, _agent_triggered_by="user")
 
     def _parse_task_input(self, raw: str) -> tuple[str, str, str]:
