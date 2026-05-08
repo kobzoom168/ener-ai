@@ -122,6 +122,35 @@ async def cmd_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await _reply(update, result)
 
 
+async def cmd_remember(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+    text = " ".join(ctx.args) if ctx.args else ""
+    if not text:
+        await _reply(update, "📌 พิมพ์ข้อความหลัง /remember เช่น /remember ผมชอบกาแฟดำไม่ใส่น้ำตาล")
+        return
+    result = await memory.remember_memory(text)
+    await _reply(update, result)
+
+
+async def cmd_forget(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+    text = " ".join(ctx.args) if ctx.args else ""
+    if not text:
+        await _reply(update, "📌 พิมพ์ keyword หลัง /forget เช่น /forget Bumrungrad")
+        return
+    result = await memory.forget_memory(text)
+    await _reply(update, result)
+
+
+async def cmd_memory(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+    result = await memory.list_memory()
+    await _reply(update, result)
+
+
 async def cmd_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
@@ -187,6 +216,9 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/brainstorm <หัวข้อ> — เหมือน /think\n"
         "/park <ข้อความ>  — เก็บไอเดียไว้ก่อน\n"
         "/search <คำค้น>  — ค้น memory เดิม\n"
+        "/remember <ข้อความ> — บันทึก long-term memory ทันที\n"
+        "/forget <คำค้น>  — ลบ long-term memory ที่ตรงคำค้น\n"
+        "/memory          — ดู long-term memory ทั้งหมด\n"
         "/today           — สรุปวันนี้\n"
         "/news            — ดึงข่าว AI/Tech วันนี้\n"
         "/week            — รีวิว 7 วันที่ผ่านมา\n"
@@ -250,6 +282,9 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("brainstorm", cmd_think))
     app.add_handler(CommandHandler("park", cmd_park))
     app.add_handler(CommandHandler("search", cmd_search))
+    app.add_handler(CommandHandler("remember", cmd_remember))
+    app.add_handler(CommandHandler("forget", cmd_forget))
+    app.add_handler(CommandHandler("memory", cmd_memory))
     app.add_handler(CommandHandler("today", cmd_today))
     app.add_handler(CommandHandler("news", cmd_news))
     app.add_handler(CommandHandler("week", cmd_week))

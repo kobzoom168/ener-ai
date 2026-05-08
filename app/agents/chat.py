@@ -1,15 +1,12 @@
 from datetime import date
 from app.core.ai import chat, chat_json
 from app.core.database import get_db
+from app.core.memory import (
+    extract_and_store_long_term_memories,
+    get_long_term_context,
+    get_recent_summaries,
+)
 from app.core.policy import AI_PERSONALITY
-
-_CHAT_SYSTEM = AI_PERSONALITY + """
-
-หน้าที่:
-- คุยกับกบเหมือนผู้ช่วยส่วนตัวแบบ conversational
-- ตอบเป็นภาษาไทย กระชับ ตรงประเด็น
-- พูดเหมือนคุยกับกบตรงๆ แบบ GPT/Claude ที่เป็นผู้ช่วยส่วนตัว
-- ตอบเป็นข้อความธรรมดาเท่านั้น ไม่ต้องตอบเป็น JSON"""
 
 _TASK_EXTRACT_SYSTEM = AI_PERSONALITY + """
 
@@ -92,10 +89,26 @@ async def run_chat(chat_id: str, text: str) -> str:
         {"role": row["role"], "content": row["content"]}
         for row in reversed(rows)
     ]
+    long_term = await get_long_term_context()
+    summaries = await get_recent_summaries()
+    system_prompt = AI_PERSONALITY + f"""
+
+{long_term}
+
+=== สรุปบทสนทนาล่าสุด 7 วัน ===
+{summaries}
+
+หมายเหตุ: ข้อมูลเหล่านี้คือสิ่งที่กบบอกไว้ก่อนหน้า จำและใช้ตอบได้เลย
+
+หน้าที่:
+- คุยกับกบเหมือนผู้ช่วยส่วนตัวแบบ conversational
+- ตอบเป็นภาษาไทย กระชับ ตรงประเด็น
+- พูดเหมือนคุยกับกบตรงๆ แบบ GPT/Claude ที่เป็นผู้ช่วยส่วนตัว
+- ตอบเป็นข้อความธรรมดาเท่านั้น ไม่ต้องตอบเป็น JSON"""
     reply = (
         await chat(
             text,
-            system=_CHAT_SYSTEM,
+            system=system_prompt,
             agent="chat",
             messages=history,
         )
@@ -116,6 +129,7 @@ async def run_chat(chat_id: str, text: str) -> str:
         )
         await db.commit()
 
+    await extract_and_store_long_term_memories(text, reply)
     created_tasks = await _create_tasks(await _extract_tasks(text, reply))
     if not created_tasks:
         return f"📌 {reply}"

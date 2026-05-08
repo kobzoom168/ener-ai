@@ -20,6 +20,18 @@ async def generate_daily_summary() -> str:
 
         cursor = await db.execute(
             """
+            SELECT role, content
+            FROM messages
+            WHERE date(created_at, 'localtime') = ?
+            ORDER BY id DESC
+            LIMIT 20
+            """,
+            (today.isoformat(),),
+        )
+        message_rows = await cursor.fetchall()
+
+        cursor = await db.execute(
+            """
             SELECT id, title, priority, deadline_hint
             FROM tasks
             WHERE status = 'open'
@@ -58,6 +70,20 @@ async def generate_daily_summary() -> str:
                     created_tasks += 1
                 if content.startswith("ปิด task"):
                     closed_tasks += 1
+
+        chat_summary = "ยังไม่มีบทสนทนาสำคัญวันนี้"
+        if message_rows:
+            transcript_lines = [
+                f"- {row['role']}: {' '.join(str(row['content']).split())[:180]}"
+                for row in reversed(message_rows)
+            ]
+            prompt = (
+                f"สรุปบทสนทนาของกบในวันที่ {today.isoformat()} แบบสั้นมาก ไม่เกิน 4 บรรทัด\n\n"
+                + "\n".join(transcript_lines)
+                + "\n\n"
+                + "เน้นเรื่องที่กบพูดถึงจริง งานค้าง ความกังวล แผน หรือข้อมูลสำคัญ"
+            )
+            chat_summary = (await chat(prompt, agent="summary")).strip() or chat_summary
 
         lines = [
             f"📌 สรุปวันนี้ {today_text}",
@@ -107,6 +133,8 @@ async def generate_daily_summary() -> str:
                 lines.append(f"· {item}")
         else:
             lines.append("· ไม่มี")
+
+        lines.extend(["", "💬 CHAT วันนี้", chat_summary])
 
         lines.extend(["", "🎯 พรุ่งนี้ top 3:"])
         if open_tasks:
