@@ -23,9 +23,13 @@ async def _reply_smart(update: Update, text: str):
     if await is_voice_enabled(chat_id):
         try:
             audio_bytes = await text_to_voice_bytes(text)
-            voice_file = io.BytesIO(audio_bytes)
-            voice_file.name = "ener-ai-voice.mp3"
-            await update.message.reply_voice(voice=voice_file)
+            audio_file = io.BytesIO(audio_bytes)
+            audio_file.name = "ener-ai.mp3"
+            await update.message.reply_audio(
+                audio=audio_file,
+                title="Ener-AI",
+                performer="🤖",
+            )
             await update.message.reply_text(text, parse_mode=None)
             return
         except Exception:
