@@ -2,6 +2,7 @@ import hashlib
 import io
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.constants import ParseMode
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -20,6 +21,25 @@ from app.core.tts import text_to_audio_bytes, text_to_voice_bytes
 from app.agents.main_agent import MAIN_AGENT
 
 logger = logging.getLogger(__name__)
+
+
+async def _reply_text_with_markdown_fallback(
+    message,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None = None,
+):
+    try:
+        await message.reply_text(
+            text,
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.MARKDOWN,
+        )
+    except Exception:
+        await message.reply_text(
+            text,
+            reply_markup=reply_markup,
+            parse_mode=None,
+        )
 
 
 def _merge_voice_button(
@@ -49,7 +69,7 @@ async def _reply(
     if enable_tts:
         await _reply_smart(update, text, reply_markup=reply_markup)
         return
-    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode=None)
+    await _reply_text_with_markdown_fallback(update.message, text, reply_markup=reply_markup)
 
 
 async def _cache_tts_text(chat_id: str, text_hash: str, text: str):
@@ -91,11 +111,7 @@ async def _reply_smart(
     keyboard = _merge_voice_button(text_hash, reply_markup=reply_markup)
     chat_id = str(update.effective_chat.id)
     await _cache_tts_text(chat_id, text_hash, text)
-    await update.message.reply_text(
-        text,
-        reply_markup=keyboard,
-        parse_mode=None,
-    )
+    await _reply_text_with_markdown_fallback(update.message, text, reply_markup=keyboard)
 
 
 async def handle_tts_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
