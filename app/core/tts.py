@@ -1,6 +1,7 @@
 import asyncio
 import io
 import os
+import re
 import subprocess
 import tempfile
 
@@ -17,8 +18,26 @@ def _build_tts_text(text: str) -> str:
     return tts_text
 
 
+def clean_text_for_tts(text: str) -> str:
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+    text = re.sub(r"\*(.+?)\*", r"\1", text)
+    text = re.sub(r"__(.+?)__", r"\1", text)
+    text = re.sub(r"#+\s*", "", text)
+    text = re.sub(r"`{1,3}[^`]*`{1,3}", "", text)
+    text = re.sub(r"\b[0-9a-f]{8,}\b", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"https?://\S+", "", text)
+    text = re.sub(r"www\.\S+", "", text)
+    text = re.sub(r"\S+@\S+\.\S+", "", text)
+    text = re.sub(r"[🔴🟡🟢✅❌⚠️📌🎯💡❓💭📝🔊🎧📧]", "", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 def _generate_mp3_bytes(tts_text: str) -> bytes:
-    tts = gTTS(text=tts_text, lang="th", slow=False)
+    cleaned = clean_text_for_tts(tts_text)
+    if not cleaned.strip():
+        cleaned = "ไม่มีข้อความที่อ่านได้"
+    tts = gTTS(text=cleaned, lang="th", slow=False)
     mp3_buffer = io.BytesIO()
     tts.write_to_fp(mp3_buffer)
     return mp3_buffer.getvalue()
