@@ -241,7 +241,7 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
     )
     scheduler.add_job(
         monitor_check,
-        CronTrigger(minute="*/30", timezone=_BANGKOK),
+        CronTrigger(minute="*/10", timezone=_BANGKOK),
         id="monitor_check",
         replace_existing=True,
     )
