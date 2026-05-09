@@ -16,6 +16,7 @@ COMMAND_AGENT_MAP = {
     "errors": "MonitorAgent",
     "server": "MonitorAgent",
     "status": "MonitorAgent",
+    "email": "GmailAgent",
     "approve_source": "NewsDiscoveryAgent",
     "pending_sources": "NewsDiscoveryAgent",
     "list_sources": "NewsDiscoveryAgent",
@@ -38,6 +39,7 @@ COMMAND_AGENT_MAP = {
 
 SCHEDULER_AGENTS = {
     "news_fetch": "NewsAgent",
+    "gmail_fetch": "GmailAgent",
     "daily_digest": "DigestAgent",
     "weekly_review": "DigestAgent",
     "health_check": "HealthAgent",
@@ -64,6 +66,7 @@ _AGENT_AI_MAP = {
     "EnerAgent": "ener",
     "LogKeeper": "logkeeper",
     "MonitorAgent": "monitor",
+    "GmailAgent": "gmail",
     "NewsDiscoveryAgent": "newsdiscovery",
 }
 

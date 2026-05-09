@@ -38,6 +38,7 @@ TASK_MODEL_MAP = {
     "chat": "groq",
     "news": "gemini",
     "newsdiscovery": "haiku",
+    "gmail": "groq",
     "brainstorm": "haiku",
     "summary": "groq",
     "learn": "groq",

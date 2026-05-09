@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from telegram import Bot
-from app.agents import log_keeper, monitor_agent, news, news_discovery, session_agent, summary
+from app.agents import gmail_agent, log_keeper, monitor_agent, news, news_discovery, session_agent, summary
 from app.core.agents import log_agent_run
 from app.core.config import settings
 from app.core.database import get_db
@@ -71,6 +71,10 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
     async def send_daily_news():
         message = await news.fetch_and_summarize(_agent_triggered_by="scheduler")
         await _send_scheduled_message(bot, message, "scheduled_news_sent")
+
+    async def send_daily_email_summary():
+        message = await gmail_agent.summarize_emails(_agent_triggered_by="scheduler")
+        await _send_scheduled_message(bot, message, "scheduled_email_summary_sent")
 
     async def send_daily_summary():
         message = await summary.generate_daily_summary(_agent_triggered_by="scheduler")
@@ -205,6 +209,12 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
             )
             await db.commit()
 
+    scheduler.add_job(
+        send_daily_email_summary,
+        CronTrigger(hour=8, minute=0, timezone=_BANGKOK),
+        id="daily_email_summary",
+        replace_existing=True,
+    )
     scheduler.add_job(
         send_daily_news,
         CronTrigger(hour=8, minute=0, timezone=_BANGKOK),

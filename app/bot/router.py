@@ -11,6 +11,7 @@ from telegram.ext import (
     ContextTypes,
 )
 from app.agents import log_keeper
+from app.agents.gmail_agent import draft_reply, reply_email, summarize_emails
 from app.agents.monitor_agent import cmd_errors, cmd_logs, cmd_server, cmd_status
 from app.agents.news_discovery import approve_source, list_active_sources, list_pending_sources
 from app.core.config import settings
@@ -323,6 +324,38 @@ async def handle_list_sources(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await _reply(update, result)
 
 
+async def cmd_email(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+
+    if not ctx.args:
+        result = await summarize_emails(_agent_triggered_by="user")
+        await _reply_smart(update, result)
+        return
+
+    subcommand = str(ctx.args[0]).strip().lower()
+    if subcommand == "reply":
+        if len(ctx.args) < 3:
+            await _reply(update, "📌 ใช้แบบนี้: /email reply <id> <ข้อความตอบกลับ>")
+            return
+        email_id = ctx.args[1].strip()
+        reply_text = " ".join(ctx.args[2:]).strip()
+        result = await reply_email(email_id, reply_text, _agent_triggered_by="user")
+        await _reply(update, result)
+        return
+
+    if subcommand == "draft":
+        if len(ctx.args) < 2:
+            await _reply(update, "📌 ใช้แบบนี้: /email draft <id>")
+            return
+        email_id = ctx.args[1].strip()
+        result = await draft_reply(email_id, _agent_triggered_by="user")
+        await _reply_smart(update, result)
+        return
+
+    await _reply(update, "📌 ใช้ /email, /email draft <id>, หรือ /email reply <id> <ข้อความ>")
+
+
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
@@ -349,6 +382,9 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/errors          — ดู errors อย่างเดียว\n"
         "/server          — CPU/RAM/Disk + processes\n"
         "/status          — สรุปสถานะทั้งหมด + AI วิเคราะห์\n"
+        "/email           — สรุป email ใหม่\n"
+        "/email draft <id> — ร่างคำตอบ email\n"
+        "/email reply <id> <ข้อความ> — ตอบ email ทันที\n"
         "/approve_source <domain> — อนุมัติแหล่งข่าวใหม่\n"
         "/pending_sources — ดูแหล่งข่าวที่รอ approve\n"
         "/list_sources    — ดูแหล่งข่าวที่ใช้อยู่\n"
@@ -416,6 +452,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("errors", handle_errors))
     app.add_handler(CommandHandler("server", handle_server))
     app.add_handler(CommandHandler("status", handle_status))
+    app.add_handler(CommandHandler("email", cmd_email))
     app.add_handler(CommandHandler("approve_source", handle_approve_source))
     app.add_handler(CommandHandler("pending_sources", handle_pending_sources))
     app.add_handler(CommandHandler("list_sources", handle_list_sources))
