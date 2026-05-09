@@ -1,7 +1,9 @@
 import asyncio
 import base64
 from email.mime.text import MIMEText
+from email.utils import parsedate_to_datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -20,6 +22,7 @@ SCOPES = [
 
 _TOKEN_PATH = Path("/app/data/gmail_token.json")
 _CREDENTIALS_PATH = Path("/tmp/credentials.json")
+_BANGKOK = ZoneInfo("Asia/Bangkok")
 _SUMMARY_SYSTEM = build_system_prompt(
     """สรุป email เป็นภาษาไทย แยกตามความสำคัญ high/medium/low
 บอกสั้น กระชับ ว่าฉบับไหนควรรีบตอบก่อน"""
@@ -77,6 +80,15 @@ def _headers_map(payload: dict) -> dict[str, str]:
     }
 
 
+def _parse_email_date(date_str: str) -> str:
+    try:
+        dt = parsedate_to_datetime(date_str)
+        bangkok = dt.astimezone(_BANGKOK)
+        return bangkok.strftime("%d/%m %H:%M")
+    except Exception:
+        return str(date_str or "")[:16]
+
+
 @log_agent_run("GmailAgent")
 async def fetch_unread_emails(max_results: int = 10) -> list[dict]:
     service = await get_gmail_service()
@@ -98,6 +110,7 @@ async def fetch_unread_emails(max_results: int = 10) -> list[dict]:
                 "from": headers.get("From", ""),
                 "subject": headers.get("Subject", ""),
                 "date": headers.get("Date", ""),
+                "date_bangkok": _parse_email_date(headers.get("Date", "")),
                 "snippet": snippet[:200],
                 "thread_id": str(detail.get("threadId") or ""),
                 "message_id": headers.get("Message-ID", ""),
@@ -130,9 +143,10 @@ async def summarize_emails() -> str:
     lines = [f"📧 Email ใหม่ {len(emails)} ฉบับ", "", summary, ""]
     for index, email in enumerate(emails[:5], start=1):
         lines.append(
-            f"{index}. {email['subject'][:70]}\n"
-            f"   ID: {email['id']}\n"
-            f"   จาก: {email['from'][:60]}"
+            f"{index}. {email['subject'][:50]}\n"
+            f"   จาก: {email['from'][:30]}\n"
+            f"   🕐 {email.get('date_bangkok', email.get('date', '')[:16])}\n"
+            f"   ID: {email['id']}"
         )
 
     result_text = "\n".join(lines)

@@ -10,8 +10,7 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
-from app.agents import log_keeper
-from app.agents.gmail_agent import draft_reply, reply_email, summarize_emails
+from app.agents import gmail_agent, log_keeper
 from app.agents.monitor_agent import cmd_errors, cmd_logs, cmd_server, cmd_status
 from app.agents.news_discovery import approve_source, list_active_sources, list_pending_sources
 from app.core.config import settings
@@ -101,6 +100,21 @@ async def handle_tts_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 await query.answer("ส่งเสียงไม่ได้ตอนนี้", show_alert=True)
             except Exception:
                 pass
+
+
+async def handle_email_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not query:
+        return
+
+    data = query.data or ""
+    if data.startswith("email_draft:"):
+        await query.answer()
+        email_id = data.split(":", 1)[1]
+        draft = await gmail_agent.draft_reply(email_id, _agent_triggered_by="user")
+        await query.message.reply_text(draft, parse_mode=None)
+    elif data.startswith("email_skip:"):
+        await query.answer("ข้ามแล้วครับ", show_alert=False)
 
 
 def _is_allowed(update: Update) -> bool:
@@ -329,8 +343,30 @@ async def cmd_email(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     if not ctx.args:
-        result = await summarize_emails(_agent_triggered_by="user")
-        await _reply_smart(update, result)
+        emails = await gmail_agent.fetch_unread_emails(_agent_triggered_by="user")
+        result = await gmail_agent.summarize_emails(_agent_triggered_by="user")
+        if not emails:
+            await _reply_smart(update, result)
+            return
+
+        buttons = []
+        for email in emails[:5]:
+            subject_short = email["subject"][:20]
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        f"✍️ Draft: {subject_short}",
+                        callback_data=f"email_draft:{email['id']}",
+                    ),
+                    InlineKeyboardButton(
+                        "🗑️ Skip",
+                        callback_data=f"email_skip:{email['id']}",
+                    ),
+                ]
+            )
+
+        keyboard = InlineKeyboardMarkup(buttons)
+        await update.message.reply_text(result, reply_markup=keyboard, parse_mode=None)
         return
 
     subcommand = str(ctx.args[0]).strip().lower()
@@ -340,7 +376,7 @@ async def cmd_email(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return
         email_id = ctx.args[1].strip()
         reply_text = " ".join(ctx.args[2:]).strip()
-        result = await reply_email(email_id, reply_text, _agent_triggered_by="user")
+        result = await gmail_agent.reply_email(email_id, reply_text, _agent_triggered_by="user")
         await _reply(update, result)
         return
 
@@ -349,7 +385,7 @@ async def cmd_email(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await _reply(update, "📌 ใช้แบบนี้: /email draft <id>")
             return
         email_id = ctx.args[1].strip()
-        result = await draft_reply(email_id, _agent_triggered_by="user")
+        result = await gmail_agent.draft_reply(email_id, _agent_triggered_by="user")
         await _reply_smart(update, result)
         return
 
@@ -462,6 +498,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("cost", cmd_cost))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("start", cmd_help))
+    app.add_handler(CallbackQueryHandler(handle_email_callback, pattern="^email_"))
     app.add_handler(CallbackQueryHandler(handle_tts_callback, pattern="^tts:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, msg_fallback))
     return app
