@@ -9,9 +9,13 @@ DB_PATH = Path(settings.database_path)
 @asynccontextmanager
 async def get_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    async with aiosqlite.connect(str(DB_PATH)) as db:
+    async with aiosqlite.connect(
+        str(DB_PATH),
+        timeout=30.0,
+    ) as db:
         db.row_factory = aiosqlite.Row
         await db.execute("PRAGMA journal_mode=WAL")
+        await db.execute("PRAGMA busy_timeout=10000")
         yield db
 
 

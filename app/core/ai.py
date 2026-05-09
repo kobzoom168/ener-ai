@@ -129,13 +129,24 @@ def get_model_availability() -> dict[str, bool]:
     }
 
 
+def _default_model(availability: dict[str, bool] | None = None) -> str:
+    available = availability or get_model_availability()
+    if available.get("groq"):
+        return "groq"
+    if available.get("haiku"):
+        return "haiku"
+    if available.get("gemini"):
+        return "gemini"
+    return "qwen3b"
+
+
 def _resolve_requested_model(agent: str, active_model: str) -> str:
     if active_model in _VALID_MODELS:
         return active_model
     task_default = TASK_MODEL_MAP.get(agent)
     if task_default in _VALID_MODELS:
         return task_default
-    return "haiku"
+    return _default_model()
 
 
 def _model_candidates(requested_model: str) -> list[str]:
@@ -332,10 +343,15 @@ async def chat(
     agent: str = "general",
     messages: list[dict[str, str]] | None = None,
 ) -> str:
-    active_model = await get_active_model()
-    requested_model = _resolve_requested_model(agent, active_model)
     availability = get_model_availability()
-    for candidate in _model_candidates(requested_model):
+    active_model = (await get_active_model()) or _default_model(availability)
+    requested_model = _resolve_requested_model(agent, active_model)
+    candidates = _model_candidates(requested_model)
+    if active_model in _VALID_MODELS and active_model in candidates:
+        candidates.remove(active_model)
+        candidates.insert(0, active_model)
+
+    for candidate in candidates:
         if candidate in {"haiku", "groq", "gemini"} and not availability.get(candidate, False):
             continue
         try:
@@ -349,7 +365,15 @@ async def chat(
                 return await _call_ollama(prompt, system, messages, agent, candidate)
         except Exception:
             continue
-    return await _call_ollama(prompt, system, messages, agent, "qwen3b")
+
+    default_candidate = _default_model(availability)
+    if default_candidate == "haiku":
+        return await _call_anthropic(prompt, system, messages, agent)
+    if default_candidate == "groq":
+        return await _call_groq(prompt, system, messages, agent)
+    if default_candidate == "gemini":
+        return await _call_gemini(prompt, system, messages, agent)
+    return await _call_ollama(prompt, system, messages, agent, default_candidate)
 
 
 async def chat_json(
