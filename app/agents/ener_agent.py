@@ -3,7 +3,7 @@ from app.core.agents import log_agent_run
 from app.core.event_log import get_agent_context, log_event
 from app.core.policy import build_system_prompt
 
-SYSTEM = build_system_prompt("""ผู้เชี่ยวชาญพระเครื่องและพลังงานจิตวิญญาณ
+SYSTEM = build_system_prompt("""งานของพี่ตอนนี้: ช่วยกบวิเคราะห์พระเครื่องและพลังงานจิตวิญญาณ
 วิเคราะห์:
 - ประวัติวัด/อาจารย์ผู้สร้าง
 - ปีที่สร้าง รุ่น

@@ -3,9 +3,28 @@ from zoneinfo import ZoneInfo
 from app.core.ai import chat
 from app.core.agents import log_agent_run
 from app.core.database import get_db
+from app.core.policy import build_system_prompt
 
 _BANGKOK = ZoneInfo("Asia/Bangkok")
 _PRIORITY_EMOJI = {"high": "🔴", "medium": "🟡", "low": "🟢"}
+_DAILY_CHAT_SUMMARY_SYSTEM = build_system_prompt("""
+งานของพี่ตอนนี้: สรุปบทสนทนาของกบแบบสั้นมาก
+- ตอบเป็นภาษาไทย
+- ไม่เกิน 4 บรรทัด
+- เน้นเรื่องที่กบพูดถึงจริง งานค้าง ความกังวล แผน หรือข้อมูลสำคัญ
+- ไม่ต้องเกริ่นนำยาว
+""")
+_WEEKLY_SUMMARY_SYSTEM = build_system_prompt("""
+งานของพี่ตอนนี้: ทำ weekly review ให้กบจาก log ที่ให้มา
+- ตอบภาษาไทยแบบกระชับ
+- มีหัวข้อดังนี้:
+1) ภาพรวมสัปดาห์
+2) งานที่เดินหน้า/งานที่ค้าง
+3) ไอเดียหรือบทเรียนสำคัญ
+4) โฟกัสที่ควรทำต่อสัปดาห์หน้า
+- ห้ามเกริ่นนำยาว
+- ไม่ต้องใส่ markdown code block
+""")
 
 
 @log_agent_run("DigestAgent", triggered_by="scheduler")
@@ -85,7 +104,13 @@ async def generate_daily_summary() -> str:
                 + "\n\n"
                 + "เน้นเรื่องที่กบพูดถึงจริง งานค้าง ความกังวล แผน หรือข้อมูลสำคัญ"
             )
-            chat_summary = (await chat(prompt, agent="summary")).strip() or chat_summary
+            chat_summary = (
+                await chat(
+                    prompt,
+                    system=_DAILY_CHAT_SUMMARY_SYSTEM,
+                    agent="summary",
+                )
+            ).strip() or chat_summary
 
         lines = [
             f"📌 สรุปวันนี้ {today_text}",
@@ -200,7 +225,13 @@ async def generate_weekly_summary() -> str:
         + "4) โฟกัสที่ควรทำต่อสัปดาห์หน้า\n"
         + "ห้ามเกริ่นนำยาว และไม่ต้องใส่ markdown code block"
     )
-    weekly_body = (await chat(prompt, agent="summary")).strip()
+    weekly_body = (
+        await chat(
+            prompt,
+            system=_WEEKLY_SUMMARY_SYSTEM,
+            agent="summary",
+        )
+    ).strip()
     result = f"📌 รีวิว 7 วันที่ผ่านมา\n\n{weekly_body}"
 
     async with get_db() as db:

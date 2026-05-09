@@ -11,7 +11,7 @@ from app.core.event_log import log_event
 from app.core.policy import build_system_prompt
 
 _BANGKOK = ZoneInfo("Asia/Bangkok")
-MONITOR_SYSTEM = build_system_prompt("""คุณเป็น DevOps AI Monitor สำหรับ Ener-AI
+MONITOR_SYSTEM = build_system_prompt("""งานของพี่ตอนนี้: ช่วยกบมอนิเตอร์ระบบ Ener-AI ในมุม DevOps
 
 สถาปัตยกรรมระบบ:
 - FastAPI + Python 3.11 ใน Docker container

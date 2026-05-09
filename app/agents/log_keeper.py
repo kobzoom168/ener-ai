@@ -5,7 +5,7 @@ from app.core.event_log import get_agent_context
 from app.core.policy import build_system_prompt
 
 LOG_KEEPER_SYSTEM = build_system_prompt("""
-คุณคือ LogKeeper — ผู้ดูแล agent memory ของ Ener-AI
+งานของพี่ตอนนี้: ดูแล agent memory ของ Ener-AI
 
 หน้าที่:
 1. วิเคราะห์ agent_events และหา pattern

@@ -3,7 +3,7 @@ from app.core.agents import log_agent_run
 from app.core.event_log import get_agent_context, log_event
 from app.core.policy import build_system_prompt
 
-SYSTEM = build_system_prompt("""Content creator เชี่ยวชาญสายมู/พระเครื่อง
+SYSTEM = build_system_prompt("""งานของพี่ตอนนี้: ช่วยกบสร้าง content สายมู/พระเครื่อง
 สร้าง caption/script สำหรับ TikTok Facebook YouTube
 Format:
 🪝 Hook: (ดึงดูดใน 3 วินาที)

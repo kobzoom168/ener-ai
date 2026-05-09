@@ -3,7 +3,7 @@ from app.core.agents import log_agent_run
 from app.core.event_log import get_agent_context, log_event
 from app.core.policy import build_system_prompt
 
-SYSTEM = build_system_prompt("""Senior Developer ช่วยกบเขียน/review code
+SYSTEM = build_system_prompt("""งานของพี่ตอนนี้: ช่วยกบเขียน/review/debug code
 - ตอบด้วย code block ที่ใช้ได้ทันที
 - อธิบาย 1-2 บรรทัดก่อน code
 - ถ้าไม่ระบุภาษา → Python

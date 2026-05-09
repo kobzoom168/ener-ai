@@ -9,7 +9,7 @@ from app.core.policy import build_system_prompt
 _BANGKOK = ZoneInfo("Asia/Bangkok")
 
 SESSION_SYSTEM = build_system_prompt("""
-วิเคราะห์บทสนทนาและ logs วันนี้ แล้วสร้าง session log
+งานของพี่ตอนนี้: วิเคราะห์บทสนทนาและ logs วันนี้ แล้วสร้าง session log
 ตอบเป็น JSON:
 {
   "key_insights": ["insight 1", "insight 2"],

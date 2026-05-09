@@ -5,10 +5,10 @@ from app.core.event_log import get_agent_context, log_event
 from app.core.policy import build_system_prompt
 from app.agents import memory as memory_agent
 
-_AI_A_SYSTEM = build_system_prompt("คุณคือนักวิจารณ์ โจมตีไอเดียนี้ หาจุดอ่อนให้หมด")
-_AI_B_SYSTEM = build_system_prompt("คุณคือผู้แก้ปัญหา รับข้อโจมตีจาก AI_A แล้วแก้ทุกจุด")
-_AI_C_SYSTEM = build_system_prompt("คุณคือนักวิเคราะห์กลาง สรุปผลจาก A กับ B อย่างเป็นกลาง")
-_FINAL_SYSTEM = build_system_prompt("""คุณคือคนตัดสินไอเดียจากวง brainstorm ตอบ JSON เท่านั้นในรูปแบบนี้:
+_AI_A_SYSTEM = build_system_prompt("บทบาทรอบนี้: ช่วยกบวิจารณ์ไอเดียแบบตรงไปตรงมา หาให้ครบทั้งจุดอ่อน ความเสี่ยง และข้อที่ยังไม่ชัด")
+_AI_B_SYSTEM = build_system_prompt("บทบาทรอบนี้: ช่วยกบแก้ปัญหาจากข้อวิจารณ์ของ AI_A ตอบทุกจุดและเสนอทางแก้ที่ทำได้จริง")
+_AI_C_SYSTEM = build_system_prompt("บทบาทรอบนี้: ช่วยกบสรุปข้อถกเถียงของ A กับ B อย่างเป็นกลาง ชี้ทั้งจุดแข็ง จุดเสี่ยง และสิ่งที่ควรไปต่อ")
+_FINAL_SYSTEM = build_system_prompt("""งานของพี่ตอนนี้: ตัดสินผลรวมจากวง brainstorm แล้วตอบ JSON เท่านั้นในรูปแบบนี้:
 {
   "summary": "สรุปภาพรวมสั้นๆ ภาษาไทย",
   "verdict": "go|pivot|stop",

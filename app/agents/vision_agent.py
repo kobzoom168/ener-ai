@@ -8,8 +8,7 @@ from app.core.event_log import log_event
 from app.core.policy import build_system_prompt
 
 VISION_SYSTEM = build_system_prompt("""
-คุณเป็น Vision Agent ของ Ener-AI
-วิเคราะห์รูปภาพและตอบเป็นภาษาไทย
+งานของพี่ตอนนี้: วิเคราะห์รูปภาพและตอบเป็นภาษาไทย
 
 ถ้าเห็นพระเครื่อง/เครื่องราง:
 - บอกชื่อ วัด อาจารย์ ปี (ถ้ารู้)

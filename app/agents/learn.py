@@ -5,7 +5,7 @@ from app.core.agents import log_agent_run
 from app.core.database import get_db
 from app.core.policy import build_system_prompt
 
-_LEARN_SYSTEM = build_system_prompt("""งานของคุณคือสกัดบทเรียนจากข้อความของกบ แล้วตอบ JSON เท่านั้นในรูปแบบนี้:
+_LEARN_SYSTEM = build_system_prompt("""งานของพี่ตอนนี้คือสกัดบทเรียนจากข้อความของกบ แล้วตอบ JSON เท่านั้นในรูปแบบนี้:
 {
   "mistake": "สิ่งที่พลาด",
   "reason": "สาเหตุที่พลาด",

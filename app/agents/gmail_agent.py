@@ -24,11 +24,11 @@ _TOKEN_PATH = Path("/app/data/gmail_token.json")
 _CREDENTIALS_PATH = Path("/tmp/credentials.json")
 _BANGKOK = ZoneInfo("Asia/Bangkok")
 _SUMMARY_SYSTEM = build_system_prompt(
-    """สรุป email เป็นภาษาไทย แยกตามความสำคัญ high/medium/low
+    """งานของพี่ตอนนี้: สรุป email เป็นภาษาไทย แยกตามความสำคัญ high/medium/low
 บอกสั้น กระชับ ว่าฉบับไหนควรรีบตอบก่อน"""
 )
 _DRAFT_SYSTEM = build_system_prompt(
-    """คุณช่วยร่าง reply email ภาษาไทยแบบสุภาพ กระชับ ใช้งานได้จริง
+    """งานของพี่ตอนนี้: ช่วยกบร่าง reply email แบบสุภาพ กระชับ ใช้งานได้จริง
 ถ้า email เป็นภาษาอังกฤษ ให้ร่าง reply ภาษาอังกฤษที่สุภาพ"""
 )
 

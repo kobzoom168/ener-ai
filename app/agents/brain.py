@@ -3,13 +3,13 @@ import re
 from app.core.ai import chat_json
 from app.core.agents import log_agent_run
 from app.core.database import get_db
-from app.core.policy import BASE_SYSTEM_PROMPT
+from app.core.policy import build_system_prompt
 from app.agents import task as task_agent
 
 
-_CLASSIFY_SYSTEM = BASE_SYSTEM_PROMPT + """
+_CLASSIFY_SYSTEM = build_system_prompt("""
 
-งานของคุณ: วิเคราะห์ข้อความที่กบส่งมา แล้วตอบ JSON รูปแบบนี้:
+งานของพี่ตอนนี้: วิเคราะห์ข้อความที่กบส่งมา แล้วตอบ JSON รูปแบบนี้:
 {
   "category": "task|idea|question|feeling|random",
   "summary": "สรุป 1 ประโยค",
@@ -25,7 +25,7 @@ _CLASSIFY_SYSTEM = BASE_SYSTEM_PROMPT + """
 - category = random ถ้าไม่เข้าพวกไหน
 - extracted_tasks = list ของสิ่งที่ต้องทำ (ถ้าไม่มีให้เป็น [])
 - is_confident = true เมื่อจัดหมวดได้ชัดเจนจริงๆ
-- is_confident = false เมื่อไม่แน่ใจ หรือข้อความก้ำกึ่ง"""
+- is_confident = false เมื่อไม่แน่ใจ หรือข้อความก้ำกึ่ง""")
 
 _TASK_KEYWORDS = ["ต้อง", "เดี๋ยว", "วันนี้", "พรุ่งนี้", "deadline"]
 

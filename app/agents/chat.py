@@ -8,7 +8,7 @@ from app.core.memory import (
     get_recent_summaries,
     get_time_context,
 )
-from app.core.policy import BASE_SYSTEM_PROMPT
+from app.core.policy import build_system_prompt
 from app.core.tools import TOOLS, execute_tool
 
 
@@ -36,7 +36,7 @@ async def _build_system_prompt() -> str:
     time_context = get_time_context()
     long_term = await get_long_term_context()
     summaries = await get_recent_summaries()
-    return BASE_SYSTEM_PROMPT + f"""
+    return build_system_prompt(f"""
 
 {time_context}
 
@@ -55,7 +55,7 @@ async def _build_system_prompt() -> str:
 - ถ้าต้องบันทึก task, note, memory หรือเรียกความสามารถอื่น ให้ใช้ tools ตามความจำเป็น
 - ถ้าไม่จำเป็นต้องใช้ tool ให้ตอบข้อความธรรมดาได้เลย
 - ตอบเป็นข้อความธรรมดาเท่านั้น ไม่ต้องตอบเป็น JSON
-"""
+""")
 
 
 async def _save_messages(chat_id: str, text: str, reply: str) -> None:

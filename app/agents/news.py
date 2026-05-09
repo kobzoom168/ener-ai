@@ -218,7 +218,7 @@ _WORLD_KEYWORDS = [
     "solar flare",
     "apocalypse",
 ]
-SUMMARY_SYSTEM = build_system_prompt("""สรุปข่าวเป็นภาษาไทย ตอบ JSON เท่านั้น:
+SUMMARY_SYSTEM = build_system_prompt("""งานของพี่ตอนนี้: สรุปข่าวเป็นภาษาไทย แล้วตอบ JSON เท่านั้น:
 {
   "title_th": "หัวข้อไทยสั้นๆ",
   "summary_th": "อธิบาย 1 ประโยคว่าข่าวนี้คืออะไร",
