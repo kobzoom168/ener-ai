@@ -11,6 +11,8 @@ from app.core.memory import (
 from app.core.policy import build_system_prompt
 from app.core.tools import TOOLS, execute_tool
 
+SAVE_KEYWORDS = ["บันทึก", "จำไว้", "save นี่", "จดไว้", "อย่าลืมว่า"]
+
 
 async def _get_history(chat_id: str) -> list[dict[str, str]]:
     async with get_db() as db:
@@ -141,6 +143,12 @@ async def run_chat(chat_id: str, text: str) -> str:
     await _save_messages(chat_id, text, reply)
     await extract_and_store_long_term_memories(text, reply)
     final_reply = reply if not tool_results else reply + "\n\n" + "\n".join(tool_results)
+    lowered_text = text.lower()
+    if any(keyword in lowered_text for keyword in SAVE_KEYWORDS):
+        from app.agents.memory_keeper import extract_from_recent_messages
+
+        saved = await extract_from_recent_messages(chat_id, limit=20)
+        final_reply += f"\n\n📝 บันทึกแล้ว {saved} ความจำครับกบ"
     try:
         await log_event(
             agent_name="MainChatAgent",

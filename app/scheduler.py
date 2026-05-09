@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from telegram import Bot
-from app.agents import gmail_agent, log_keeper, monitor_agent, news, news_discovery, session_agent, summary
+from app.agents import gmail_agent, log_keeper, memory_keeper, monitor_agent, news, news_discovery, session_agent, summary
 from app.core.agents import log_agent_run
 from app.core.config import settings
 from app.core.database import get_db
@@ -113,6 +113,17 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
     async def send_news_discovery():
         message = await news_discovery.discover_new_sources(_agent_triggered_by="scheduler")
         await _send_scheduled_message(bot, message, "scheduled_news_discovery_sent")
+
+    async def run_memory_keeper_sync():
+        chat_id = str(settings.telegram_chat_id or "").strip()
+        if not chat_id:
+            await _log_audit("memory_keeper_skipped", "missing telegram_chat_id")
+            return
+        result = await memory_keeper.run_memory_keeper(
+            chat_id,
+            _agent_triggered_by="scheduler",
+        )
+        await _log_audit("scheduled_memory_keeper_run", result)
 
     @log_agent_run("MonitorAgent", triggered_by="scheduler")
     async def monitor_check():
@@ -237,6 +248,12 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
         send_agent_health_report,
         CronTrigger(hour=22, minute=0, timezone=_BANGKOK),
         id="agent_health_report",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        run_memory_keeper_sync,
+        CronTrigger(hour=22, minute=30, timezone=_BANGKOK),
+        id="memory_keeper_sync",
         replace_existing=True,
     )
     scheduler.add_job(

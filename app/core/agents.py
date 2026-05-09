@@ -61,6 +61,7 @@ _AGENT_AI_MAP = {
     "LessonAgent": "learn",
     "ThinkTeam": "brainstorm",
     "MemoryAgent": "memory",
+    "MemoryKeeper": "memorykeeper",
     "SessionAgent": "session",
     "CodeAgent": "code",
     "ContentAgent": "content",

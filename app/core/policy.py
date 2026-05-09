@@ -52,6 +52,7 @@ TASK_MODEL_MAP = {
     "learn": "groq",
     "session": "haiku",
     "logkeeper": "haiku",
+    "memorykeeper": "groq",
     "code": "groq",
     "content": "groq",
     "ener": "haiku",
