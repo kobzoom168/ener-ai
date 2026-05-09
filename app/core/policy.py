@@ -11,6 +11,11 @@ ALLOWED_NEWS_SOURCES = [
     "bleepingcomputer.com",
     "therecord.media",
     "darkreading.com",
+    "thedebrief.org",
+    "mysteriousuniverse.org",
+    "ancient-origins.net",
+    "unexplained-mysteries.com",
+    "theblackvault.com",
 ]
 
 ALLOWED_CHAT_IDS = [7486743496]

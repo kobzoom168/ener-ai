@@ -22,6 +22,11 @@ _RSS_FEEDS = {
     "bleepingcomputer.com": "https://www.bleepingcomputer.com/feed/",
     "therecord.media": "https://therecord.media/feed",
     "darkreading.com": "https://www.darkreading.com/rss.xml",
+    "thedebrief.org": "https://thedebrief.org/feed/",
+    "mysteriousuniverse.org": "https://mysteriousuniverse.org/feed/",
+    "ancient-origins.net": "https://www.ancient-origins.net/rss.xml",
+    "unexplained-mysteries.com": "https://www.unexplained-mysteries.com/rss.php",
+    "theblackvault.com": "https://www.theblackvault.com/documentdb/feed/",
 }
 _TOPIC_KEYWORDS = [
     "ai",
@@ -73,8 +78,86 @@ _TOPIC_KEYWORDS = [
     "patient data",
     "health system",
     "clinic",
+    "ufo",
+    "uap",
+    "alien",
+    "extraterrestrial",
+    "paranormal",
+    "ghost",
+    "haunted",
+    "supernatural",
+    "mystery",
+    "unexplained",
+    "ancient",
+    "archaeology",
+    "pyramid",
+    "secret",
+    "conspiracy",
+    "phenomenon",
+    "anomaly",
+    "cryptid",
+    "bigfoot",
+    "bermuda",
+    "energy",
+    "spiritual",
+    "psychic",
+    "dimension",
+    "meteor",
+    "asteroid",
+    "solar flare",
+    "earthquake",
+    "disaster",
+    "catastrophe",
+    "apocalypse",
 ]
 _PRIORITY_EMOJI = {"high": "🔴", "medium": "🟡", "low": "🟢"}
+_CATEGORY_LABELS = {
+    "ai": "🤖 AI/Tech",
+    "security": "🔐 Security",
+    "mystery": "👽 Mystery/UFO",
+    "world": "🌍 โลก/ภัยพิบัติ",
+}
+_CATEGORY_ORDER = ["ai", "security", "mystery", "world"]
+_SECURITY_KEYWORDS = [
+    "breach",
+    "ransomware",
+    "hack",
+    "hacker",
+    "malware",
+    "phishing",
+    "exploit",
+    "vulnerability",
+    "zero-day",
+    "cybercrime",
+    "data leak",
+    "credential",
+]
+_MYSTERY_KEYWORDS = [
+    "ufo",
+    "uap",
+    "alien",
+    "extraterrestrial",
+    "paranormal",
+    "ghost",
+    "haunted",
+    "supernatural",
+    "mystery",
+    "unexplained",
+    "conspiracy",
+    "cryptid",
+    "bigfoot",
+    "psychic",
+    "dimension",
+]
+_WORLD_KEYWORDS = [
+    "earthquake",
+    "disaster",
+    "catastrophe",
+    "meteor",
+    "asteroid",
+    "solar flare",
+    "apocalypse",
+]
 SUMMARY_SYSTEM = build_system_prompt("""คุณเป็น AI วิเคราะห์ข่าวสำหรับกบ
 
 บริบทของกบ:
@@ -87,6 +170,8 @@ SUMMARY_SYSTEM = build_system_prompt("""คุณเป็น AI วิเคร
 บริบทของกบเพิ่มเติม:
 - ดูแลระบบ IT infra โรงพยาบาล → ข่าว hospital/healthcare breach สำคัญมาก
 - มีระบบ Ener-AI อยู่บน server → ต้องระวัง vulnerability
+- กบสนใจด้านจิตวิญญาณ พลังงาน และปรากฏการณ์ลึกลับ
+- มี Ener Scan ที่วิเคราะห์พลังงานพระเครื่อง
 
 วิเคราะห์ข่าวนี้แล้วตอบ JSON:
 {
@@ -94,8 +179,9 @@ SUMMARY_SYSTEM = build_system_prompt("""คุณเป็น AI วิเคร
   "summary": "สรุปเนื้อหา 2-3 ประโยค เข้าใจง่าย",
   "apply_to": {
     "ener_ai": "นำไปใช้กับ Ener-AI ได้ยังไง (ถ้าได้)",
-    "ener_scan": "นำไปใช้กับ Ener Scan ได้ยังไง (ถ้าได้)",
+    "ener_scan": "เชื่อมกับ Ener Scan / พลังงาน / จิตวิญญาณได้ไหม",
     "content": "ทำ content จากข่าวนี้ได้ไหม hook คืออะไร",
+    "content_moo": "ทำ content สายมู / ลึกลับได้ไหม hook คืออะไร",
     "it_work": "เกี่ยวกับงาน IT โรงพยาบาลไหม",
     "security": "กระทบ server/ระบบกบไหม ต้องทำอะไรไหม"
   },
@@ -131,6 +217,10 @@ def _keyword_score(topic_text: str) -> int:
         score += 5
     if any(word in topic_text for word in ["breach", "ransomware", "malware", "phishing", "zero-day", "vulnerability"]):
         score += 3
+    if any(word in topic_text for word in _MYSTERY_KEYWORDS):
+        score += 3
+    if any(word in topic_text for word in _WORLD_KEYWORDS):
+        score += 2
     return score
 
 
@@ -138,6 +228,125 @@ def _is_hospital_security_story(topic_text: str) -> bool:
     has_hospital = any(word in topic_text for word in ["hospital", "healthcare", "medical", "patient data", "health system", "clinic"])
     has_incident = any(word in topic_text for word in ["breach", "ransomware", "malware", "phishing", "exploit", "vulnerability", "leaked", "data leak"])
     return has_hospital and has_incident
+
+
+def _detect_category(topic_text: str) -> str:
+    if any(word in topic_text for word in _MYSTERY_KEYWORDS):
+        return "mystery"
+    if any(word in topic_text for word in _SECURITY_KEYWORDS):
+        return "security"
+    if any(word in topic_text for word in _WORLD_KEYWORDS):
+        return "world"
+    return "ai"
+
+
+def _mystery_emoji(topic_text: str) -> str:
+    if any(word in topic_text for word in ["ufo", "uap", "alien", "extraterrestrial"]):
+        return "👽"
+    if any(word in topic_text for word in ["ghost", "haunted", "spiritual", "psychic", "paranormal"]):
+        return "🔮"
+    return "🌀"
+
+
+def _category_bonus(category: str, topic_text: str) -> int:
+    bonus = {
+        "security": 4,
+        "mystery": 3,
+        "world": 2,
+        "ai": 1,
+    }.get(category, 0)
+    if category == "security" and _is_hospital_security_story(topic_text):
+        bonus += 5
+    return bonus
+
+
+def _pick_top_items(items: list[dict[str, str]]) -> list[dict[str, str]]:
+    selected: list[dict[str, str]] = []
+    per_category_limit = 3
+    total_limit = 8
+    counts = {category: 0 for category in _CATEGORY_ORDER}
+
+    ranked = sorted(
+        items,
+        key=lambda item: (
+            1 if _is_hospital_security_story(item["topic_text"]) else 0,
+            item.get("match_score", 0) + _category_bonus(item.get("category", "ai"), item["topic_text"]),
+        ),
+        reverse=True,
+    )
+
+    for item in ranked:
+        category = item.get("category", "ai")
+        if counts.get(category, 0) >= per_category_limit:
+            continue
+        selected.append(item)
+        counts[category] = counts.get(category, 0) + 1
+        if len(selected) >= total_limit:
+            break
+
+    return selected
+
+
+def _format_item_title(item: dict[str, str], index: int) -> str:
+    prefix = ""
+    if item.get("category") == "mystery":
+        prefix = f"{_mystery_emoji(item['topic_text'])} "
+    return f"{index}️⃣ {prefix}{item['title_th']} {_PRIORITY_EMOJI.get(item.get('priority', 'low'), '🟢')}"
+
+
+def _format_news_message(items: list[dict[str, str]]) -> str:
+    lines = [f"📌 ข่าววันนี้ {len(items)} เรื่อง"]
+
+    high_priority_items = [item for item in items if item.get("priority") == "high"]
+    if high_priority_items:
+        lines.extend(["", "🔴 ข่าวที่ควรดูเป็นพิเศษ"])
+        for item in high_priority_items:
+            action_text = f" → {item['action']}" if item.get("action") else ""
+            lines.append(f"· {item['title_th']}{action_text}")
+
+    grouped = {category: [] for category in _CATEGORY_ORDER}
+    for item in items:
+        grouped.setdefault(item.get("category", "ai"), []).append(item)
+
+    for category in _CATEGORY_ORDER:
+        category_items = grouped.get(category, [])
+        if not category_items:
+            continue
+        lines.extend(["", f"{_CATEGORY_LABELS[category]} ({len(category_items)} เรื่อง)"])
+        for index, item in enumerate(category_items, start=1):
+            lines.extend(
+                [
+                    "",
+                    _format_item_title(item, index),
+                    f"   {item['summary']}",
+                    "",
+                    "   🔧 ใช้กับระบบได้:",
+                ]
+            )
+            apply_lines = [
+                _format_apply_line("Ener-AI", item["apply_to"].get("ener_ai")),
+                _format_apply_line("Ener Scan", item["apply_to"].get("ener_scan")),
+                _format_apply_line("Content", item["apply_to"].get("content")),
+                _format_apply_line("IT งาน", item["apply_to"].get("it_work")),
+            ]
+            emitted = False
+            for apply_line in apply_lines:
+                if apply_line:
+                    emitted = True
+                    lines.append(apply_line)
+            if item["apply_to"].get("content_moo"):
+                emitted = True
+                lines.append(f"   🔮 Content มู: {item['apply_to']['content_moo']}")
+            if item["apply_to"].get("security"):
+                emitted = True
+                lines.append(f"   🔐 Security: {item['apply_to']['security']}")
+            if not emitted:
+                lines.append("   · ยังไม่เห็นมุมใช้ต่อที่ชัดเจน")
+            if item.get("action"):
+                lines.extend(["", f"   ✅ ทำต่อ: {item['action']}"])
+            lines.append(f"   🔗 {item['source']}")
+
+    return "\n".join(lines)
 
 
 async def _parse_feed(feed_url: str):
@@ -160,7 +369,7 @@ def _format_apply_line(label: str, value: str | None) -> str | None:
 
 @log_agent_run("NewsAgent", triggered_by="scheduler")
 async def fetch_and_summarize() -> str:
-    agent_memory = await get_agent_context("NewsAgent", ["news", "ai", "tech"])
+    agent_memory = await get_agent_context("NewsAgent", ["news", "ai", "tech", "security", "mystery"])
     items: list[dict[str, str]] = []
     seen_links: set[str] = set()
 
@@ -201,17 +410,11 @@ async def fetch_and_summarize() -> str:
                     "summary_source": clean_summary[:1200],
                     "topic_text": topic_text,
                     "match_score": _keyword_score(topic_text),
+                    "category": _detect_category(topic_text),
                 }
             )
 
-    items.sort(
-        key=lambda item: (
-            1 if _is_hospital_security_story(item["topic_text"]) else 0,
-            item.get("match_score", 0),
-        ),
-        reverse=True,
-    )
-    items = items[:5]
+    items = _pick_top_items(items)
 
     if not items:
         async with get_db() as db:
@@ -224,13 +427,13 @@ async def fetch_and_summarize() -> str:
             await log_event(
                 agent_name="NewsAgent",
                 event_type="warning",
-                summary="ไม่พบข่าว AI/Tech ที่เข้าเงื่อนไข",
+                summary="ไม่พบข่าวที่เข้าเงื่อนไข",
                 tags=["news", "warning"],
                 result="success",
             )
         except Exception:
             pass
-        return "📌 วันนี้ยังไม่พบข่าว AI/Tech ที่เข้าเงื่อนไข"
+        return "📌 วันนี้ยังไม่พบข่าวที่เข้าเงื่อนไข"
 
     try:
         async with get_db() as db:
@@ -275,6 +478,7 @@ async def fetch_and_summarize() -> str:
                     "ener_ai": _clean_text(apply_to.get("ener_ai")),
                     "ener_scan": _clean_text(apply_to.get("ener_scan")),
                     "content": _clean_text(apply_to.get("content")),
+                    "content_moo": _clean_text(apply_to.get("content_moo")),
                     "it_work": _clean_text(apply_to.get("it_work")),
                     "security": _clean_text(apply_to.get("security")),
                 }
@@ -286,6 +490,7 @@ async def fetch_and_summarize() -> str:
                     ("Ener-AI", item["apply_to"]["ener_ai"]),
                     ("Ener Scan", item["apply_to"]["ener_scan"]),
                     ("Content", item["apply_to"]["content"]),
+                    ("Content มู", item["apply_to"]["content_moo"]),
                     ("IT งาน", item["apply_to"]["it_work"]),
                     ("Security", item["apply_to"]["security"]),
                 ]:
@@ -325,53 +530,13 @@ async def fetch_and_summarize() -> str:
             pass
         raise
 
-    lines = [f"📌 ข่าว AI/Tech วันนี้ {len(items)} เรื่อง", "", "📰 ข่าวเด่นวันนี้"]
-    high_priority_items = [item for item in items if item.get("priority") == "high"]
-    if high_priority_items:
-        lines.extend(["", "🔴 ข่าวที่ควรดูเป็นพิเศษ"])
-        for item in high_priority_items:
-            action_text = f" → {item['action']}" if item.get("action") else ""
-            lines.append(f"· {item['title_th']}{action_text}")
-
-    for index, item in enumerate(items, start=1):
-        priority_emoji = _PRIORITY_EMOJI.get(item.get("priority", "low"), "🟢")
-        lines.extend(
-            [
-                "",
-                f"{index}️⃣ {item['title_th']} {priority_emoji}",
-                f"   {item['summary']}",
-                "",
-                "   🔧 ใช้กับระบบได้:",
-            ]
-        )
-        apply_lines = [
-            _format_apply_line("Ener-AI", item["apply_to"].get("ener_ai")),
-            _format_apply_line("Ener Scan", item["apply_to"].get("ener_scan")),
-            _format_apply_line("Content", item["apply_to"].get("content")),
-            _format_apply_line("IT งาน", item["apply_to"].get("it_work")),
-        ]
-        emitted = False
-        for apply_line in apply_lines:
-            if apply_line:
-                emitted = True
-                lines.append(apply_line)
-        security_line = _format_apply_line("🔐 Security", item["apply_to"].get("security"))
-        if security_line:
-            emitted = True
-            lines.append(security_line)
-        if not emitted:
-            lines.append("   · ยังไม่เห็นมุมใช้ต่อที่ชัดเจน")
-        if item.get("action"):
-            lines.extend(["", f"   ✅ ทำต่อ: {item['action']}"])
-        lines.append(f"   🔗 {item['source']}")
-
-    result_text = "\n".join(lines)
+    result_text = _format_news_message(items)
     try:
         await log_event(
             agent_name="NewsAgent",
             event_type="insight",
             summary=f"สรุปข่าว {len(items)} เรื่อง",
-            tags=["news", "ai", "tech", "deep-analysis"],
+            tags=["news", "ai", "tech", "security", "mystery", "deep-analysis"],
             context=result_text[:400],
             result="success",
         )
