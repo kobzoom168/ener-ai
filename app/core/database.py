@@ -97,6 +97,16 @@ async def init_db():
                 fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS approved_news_sources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                domain TEXT UNIQUE NOT NULL,
+                rss_url TEXT NOT NULL,
+                category TEXT DEFAULT 'general',
+                reason TEXT,
+                approved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                active BOOLEAN DEFAULT 1
+            );
+
             CREATE TABLE IF NOT EXISTS digests (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 digest_type TEXT NOT NULL,

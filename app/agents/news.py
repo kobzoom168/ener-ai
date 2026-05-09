@@ -8,7 +8,7 @@ from app.core.ai import chat_json
 from app.core.agents import log_agent_run
 from app.core.database import get_db
 from app.core.event_log import get_agent_context, log_event
-from app.core.policy import ALLOWED_NEWS_SOURCES, build_system_prompt
+from app.core.policy import build_system_prompt
 
 _BANGKOK = ZoneInfo("Asia/Bangkok")
 _RSS_FEEDS = {
@@ -458,6 +458,21 @@ async def _parse_feed(feed_url: str):
         return None
 
 
+async def _get_all_feeds() -> dict[str, str]:
+    feeds = dict(_RSS_FEEDS)
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT domain, rss_url FROM approved_news_sources WHERE active = 1"
+        )
+        rows = await cursor.fetchall()
+    for row in rows:
+        domain = str(row["domain"] or "").strip()
+        rss_url = str(row["rss_url"] or "").strip()
+        if domain and rss_url:
+            feeds[domain] = rss_url
+    return feeds
+
+
 def _clean_text(value: object) -> str | None:
     text = " ".join(str(value or "").split()).strip()
     return text or None
@@ -475,12 +490,10 @@ async def fetch_and_summarize() -> str:
     items: list[dict[str, str]] = []
     seen_links: set[str] = set()
 
+    all_feeds = await _get_all_feeds()
     feed_jobs = []
     ordered_sources = []
-    for source in ALLOWED_NEWS_SOURCES:
-        feed_url = _RSS_FEEDS.get(source)
-        if not feed_url:
-            continue
+    for source, feed_url in all_feeds.items():
         ordered_sources.append(source)
         feed_jobs.append(_parse_feed(feed_url))
 

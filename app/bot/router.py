@@ -12,6 +12,7 @@ from telegram.ext import (
 )
 from app.agents import log_keeper
 from app.agents.monitor_agent import cmd_errors, cmd_logs, cmd_server, cmd_status
+from app.agents.news_discovery import approve_source, list_active_sources, list_pending_sources
 from app.core.config import settings
 from app.core.policy import ALLOWED_CHAT_IDS
 from app.core.tts import text_to_audio_bytes, text_to_voice_bytes
@@ -297,6 +298,31 @@ async def handle_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await _reply(update, result)
 
 
+async def handle_approve_source(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+    domain = " ".join(ctx.args).strip() if ctx.args else ""
+    if not domain:
+        await _reply(update, "📌 พิมพ์ domain หลัง /approve_source เช่น /approve_source example.com")
+        return
+    result = await approve_source(domain, _agent_triggered_by="user")
+    await _reply(update, result)
+
+
+async def handle_pending_sources(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+    result = await list_pending_sources(_agent_triggered_by="user")
+    await _reply(update, result)
+
+
+async def handle_list_sources(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+    result = await list_active_sources(_agent_triggered_by="user")
+    await _reply(update, result)
+
+
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
@@ -323,6 +349,9 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/errors          — ดู errors อย่างเดียว\n"
         "/server          — CPU/RAM/Disk + processes\n"
         "/status          — สรุปสถานะทั้งหมด + AI วิเคราะห์\n"
+        "/approve_source <domain> — อนุมัติแหล่งข่าวใหม่\n"
+        "/pending_sources — ดูแหล่งข่าวที่รอ approve\n"
+        "/list_sources    — ดูแหล่งข่าวที่ใช้อยู่\n"
         "/today           — สรุปวันนี้\n"
         "/news            — ดึงข่าว AI/Tech วันนี้\n"
         "/week            — รีวิว 7 วันที่ผ่านมา\n"
@@ -387,6 +416,9 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("errors", handle_errors))
     app.add_handler(CommandHandler("server", handle_server))
     app.add_handler(CommandHandler("status", handle_status))
+    app.add_handler(CommandHandler("approve_source", handle_approve_source))
+    app.add_handler(CommandHandler("pending_sources", handle_pending_sources))
+    app.add_handler(CommandHandler("list_sources", handle_list_sources))
     app.add_handler(CommandHandler("today", cmd_today))
     app.add_handler(CommandHandler("news", cmd_news))
     app.add_handler(CommandHandler("week", cmd_week))

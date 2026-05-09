@@ -37,6 +37,7 @@ OWNER_CONTEXT = """
 TASK_MODEL_MAP = {
     "chat": "groq",
     "news": "gemini",
+    "newsdiscovery": "haiku",
     "brainstorm": "haiku",
     "summary": "groq",
     "learn": "groq",

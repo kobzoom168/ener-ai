@@ -16,6 +16,9 @@ COMMAND_AGENT_MAP = {
     "errors": "MonitorAgent",
     "server": "MonitorAgent",
     "status": "MonitorAgent",
+    "approve_source": "NewsDiscoveryAgent",
+    "pending_sources": "NewsDiscoveryAgent",
+    "list_sources": "NewsDiscoveryAgent",
     "today": "DigestAgent",
     "week": "DigestAgent",
     "news": "NewsAgent",
@@ -43,6 +46,7 @@ SCHEDULER_AGENTS = {
     "session": "SessionAgent",
     "log_keeper": "LogKeeper",
     "monitor": "MonitorAgent",
+    "news_discovery": "NewsDiscoveryAgent",
 }
 
 _AGENT_AI_MAP = {
@@ -60,6 +64,7 @@ _AGENT_AI_MAP = {
     "EnerAgent": "ener",
     "LogKeeper": "logkeeper",
     "MonitorAgent": "monitor",
+    "NewsDiscoveryAgent": "newsdiscovery",
 }
 
 
