@@ -1,7 +1,9 @@
 import asyncio
 import base64
+import io
 
 import anthropic
+import PIL.Image
 from google import genai
 
 from app.core.agents import log_agent_run
@@ -108,24 +110,12 @@ async def analyze_image(image_bytes: bytes, prompt: str = "") -> str:
             return result
 
         client = genai.Client(api_key=settings.gemini_api_key)
-        image_b64 = base64.b64encode(image_bytes).decode()
+        image = PIL.Image.open(io.BytesIO(image_bytes))
 
         def _generate():
             return client.models.generate_content(
-                model="gemini-1.5-flash",
-                contents=[
-                    {
-                        "parts": [
-                            {"text": VISION_SYSTEM + "\n\n" + user_prompt},
-                            {
-                                "inline_data": {
-                                    "mime_type": "image/jpeg",
-                                    "data": image_b64,
-                                }
-                            },
-                        ]
-                    }
-                ],
+                model="gemini-2.0-flash",
+                contents=[VISION_SYSTEM + "\n\n" + user_prompt, image],
             )
 
         response = await asyncio.to_thread(_generate)
