@@ -532,7 +532,16 @@ async def chat_json(
     system: str = BASE_SYSTEM_PROMPT,
     agent: str = "general",
     messages: list[dict[str, str]] | None = None,
+    preferred_model: str | None = None,
+    strict_model: bool = False,
 ) -> dict:
     full_system = system + "\n\nตอบเป็น JSON เท่านั้น ไม่มีข้อความอื่น"
-    raw = await chat(prompt, system=full_system, agent=agent, messages=messages)
+    raw = await chat(
+        prompt,
+        system=full_system,
+        agent=agent,
+        messages=messages,
+        preferred_model=preferred_model,
+        strict_model=strict_model,
+    )
     return json.loads(_extract_json_payload(raw))
