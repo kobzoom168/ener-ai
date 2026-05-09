@@ -11,5 +11,5 @@ anthropic
 groq
 google-genai
 psutil
-edge-tts==6.1.12
+gTTS==2.5.3
 docker==7.1.0

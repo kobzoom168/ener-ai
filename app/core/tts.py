@@ -1,33 +1,24 @@
-import os
-import tempfile
-import edge_tts
+import io
+import asyncio
+from gtts import gTTS
 
-VOICE_FEMALE_TH = "th-TH-PremwadeeNeural"
 MAX_TTS_CHARS = 500
 
 
 async def text_to_voice_bytes(text: str) -> bytes:
     tts_text = text[:MAX_TTS_CHARS]
     if len(text) > MAX_TTS_CHARS:
-        tts_text += "... (อ่านต่อในข้อความด้านล่าง)"
+        tts_text += "... อ่านต่อในข้อความด้านล่าง"
 
-    communicate = edge_tts.Communicate(
-        text=tts_text,
-        voice=VOICE_FEMALE_TH,
-        rate="+0%",
-        volume="+0%",
-    )
+    def _generate():
+        tts = gTTS(text=tts_text, lang="th", slow=False)
+        buffer = io.BytesIO()
+        tts.write_to_fp(buffer)
+        buffer.seek(0)
+        return buffer.read()
 
-    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
-        tmp_path = f.name
-
-    try:
-        await communicate.save(tmp_path)
-        with open(tmp_path, "rb") as f:
-            return f.read()
-    finally:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _generate)
 
 
 async def is_voice_enabled(chat_id: str) -> bool:
