@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 from app.core.ai import chat_json
 from app.core.agents import log_agent_run
 from app.core.database import get_db
-from app.core.event_log import get_agent_context, log_event
+from app.core.event_log import log_event
 from app.core.policy import build_system_prompt
 
 _BANGKOK = ZoneInfo("Asia/Bangkok")
@@ -218,41 +218,12 @@ _WORLD_KEYWORDS = [
     "solar flare",
     "apocalypse",
 ]
-SUMMARY_SYSTEM = build_system_prompt("""คุณเป็น AI วิเคราะห์ข่าวสำหรับกบ
-
-บริบทของกบ:
-- IT PM ดูแลระบบ infra โรงพยาบาล
-- มี Ener-AI (personal AI assistant)
-- มี Ener Scan (สแกนพลังงานพระเครื่อง LINE bot)
-- ขายพระผ่าน TikTok/YouTube/Facebook
-- กำลังสร้าง content และ automation system
-
-บริบทของกบเพิ่มเติม:
-- ดูแลระบบ IT infra โรงพยาบาล → ข่าว hospital/healthcare breach สำคัญมาก
-- มีระบบ Ener-AI อยู่บน server → ต้องระวัง vulnerability
-- กบสนใจด้านจิตวิญญาณ พลังงาน และปรากฏการณ์ลึกลับ
-- มี Ener Scan ที่วิเคราะห์พลังงานพระเครื่อง
-
-วิเคราะห์ข่าวนี้แล้วตอบ JSON:
+SUMMARY_SYSTEM = build_system_prompt("""สรุปข่าวเป็นภาษาไทย ตอบ JSON เท่านั้น:
 {
-  "title_th": "หัวข้อภาษาไทยกระชับ",
-  "summary": "สรุปเนื้อหา 2-3 ประโยค เข้าใจง่าย",
-  "apply_to": {
-    "ener_ai": "นำไปใช้กับ Ener-AI ได้ยังไง (ถ้าได้)",
-    "ener_scan": "เชื่อมกับ Ener Scan / พลังงาน / จิตวิญญาณได้ไหม",
-    "content": "ทำ content จากข่าวนี้ได้ไหม hook คืออะไร",
-    "content_moo": "ทำ content สายมู / ลึกลับได้ไหม hook คืออะไร",
-    "it_work": "เกี่ยวกับงาน IT โรงพยาบาลไหม",
-    "security": "กระทบ server/ระบบกบไหม ต้องทำอะไรไหม",
-    "try_now": "น่าลองใช้ทันทีไหม ลองแบบไหนได้บ้าง",
-    "business_idea": "เอาไอเดียนี้มาทำธุรกิจกับ Ener Scan ได้ไหม"
-  },
-  "action": "สิ่งที่กบควรทำต่อ 1 อย่าง (ถ้ามี)",
-  "priority": "high|medium|low"
-}
-
-ถ้าไม่เกี่ยวกับกบเลย → priority: low และ apply_to ทุก field เป็น null
-ถ้าข่าว hospital/healthcare breach → priority ต้องเป็น high""")
+  "title_th": "หัวข้อไทยสั้นๆ",
+  "summary_th": "อธิบาย 1 ประโยคว่าข่าวนี้คืออะไร",
+  "apply": "ใช้กับงาน IT หรือธุรกิจพระของกบได้ไหม บอกสั้นๆ"
+}""")
 
 
 def _matches_topic(topic_text: str) -> bool:
@@ -390,6 +361,16 @@ def _format_item_title(item: dict[str, str], index: int) -> str:
     return f"{index}️⃣ {prefix}{item['title_th']} {_PRIORITY_EMOJI.get(item.get('priority', 'low'), '🟢')}"
 
 
+def _derive_priority(item: dict[str, str]) -> str:
+    if _is_hospital_security_story(item["topic_text"]):
+        return "high"
+    if item.get("category") in {"security", "tools", "business"}:
+        return "medium"
+    if int(item.get("match_score", 0) or 0) >= 6:
+        return "medium"
+    return "low"
+
+
 def _format_news_message(items: list[dict[str, str]]) -> str:
     lines = [f"📌 ข่าววันนี้ {len(items)} เรื่อง"]
 
@@ -414,39 +395,11 @@ def _format_news_message(items: list[dict[str, str]]) -> str:
                 [
                     "",
                     _format_item_title(item, index),
-                    f"   {item['summary']}",
-                    "",
-                    "   🔧 ใช้กับระบบได้:",
+                    f"   {item['summary_th']}",
+                    f"   → {item['apply']}",
+                    f"   🔗 {item['source']}",
                 ]
             )
-            apply_lines = [
-                _format_apply_line("Ener-AI", item["apply_to"].get("ener_ai")),
-                _format_apply_line("Ener Scan", item["apply_to"].get("ener_scan")),
-                _format_apply_line("Content", item["apply_to"].get("content")),
-                _format_apply_line("IT งาน", item["apply_to"].get("it_work")),
-            ]
-            emitted = False
-            for apply_line in apply_lines:
-                if apply_line:
-                    emitted = True
-                    lines.append(apply_line)
-            if item["apply_to"].get("try_now"):
-                emitted = True
-                lines.append(f"   🎮 ลองได้เลย: {item['apply_to']['try_now']}")
-            if item["apply_to"].get("business_idea"):
-                emitted = True
-                lines.append(f"   💡 ไอเดียธุรกิจ: {item['apply_to']['business_idea']}")
-            if item["apply_to"].get("content_moo"):
-                emitted = True
-                lines.append(f"   🔮 Content มู: {item['apply_to']['content_moo']}")
-            if item["apply_to"].get("security"):
-                emitted = True
-                lines.append(f"   🔐 Security: {item['apply_to']['security']}")
-            if not emitted:
-                lines.append("   · ยังไม่เห็นมุมใช้ต่อที่ชัดเจน")
-            if item.get("action"):
-                lines.extend(["", f"   ✅ ทำต่อ: {item['action']}"])
-            lines.append(f"   🔗 {item['source']}")
 
     return "\n".join(lines)
 
@@ -486,7 +439,6 @@ def _format_apply_line(label: str, value: str | None) -> str | None:
 
 @log_agent_run("NewsAgent", triggered_by="scheduler")
 async def fetch_and_summarize() -> str:
-    agent_memory = await get_agent_context("NewsAgent", ["news", "ai", "tech", "security", "mystery", "tools", "business"])
     items: list[dict[str, str]] = []
     seen_links: set[str] = set()
 
@@ -558,85 +510,59 @@ async def fetch_and_summarize() -> str:
         return "📌 วันนี้ยังไม่พบข่าวที่เข้าเงื่อนไข"
 
     try:
+        for item in items:
+            prompt = (
+                f"หัวข้อ: {item['title']}\n"
+                f"แหล่งข่าว: {item['source']}\n"
+                f"ลิงก์: {item['url']}\n"
+                f"เนื้อหา: {item['summary_source']}\n"
+            )
+            try:
+                ai_result = await chat_json(
+                    prompt,
+                    system=SUMMARY_SYSTEM,
+                    agent="news",
+                    preferred_model="groq",
+                    strict_model=True,
+                )
+                item["title_th"] = _clean_text(ai_result.get("title_th")) or item["title"]
+                item["summary_th"] = _clean_text(ai_result.get("summary_th")) or "ไม่มีสรุป"
+                item["apply"] = _clean_text(ai_result.get("apply")) or "ยังไม่เห็นมุมใช้ต่อ"
+            except Exception:
+                item["title_th"] = item["title"]
+                item["summary_th"] = "ไม่มีสรุป"
+                item["apply"] = "ยังไม่เห็นมุมใช้ต่อ"
+
+            item["priority"] = _derive_priority(item)
+
+        today = datetime.now(_BANGKOK).date().isoformat()
+        news_rows = [
+            (
+                item["title_th"],
+                item["url"],
+                item["source"],
+                item["summary_th"],
+                item["apply"],
+            )
+            for item in items
+        ]
+        daily_log_rows = [
+            (today, "news", f"[{item['priority']}] [{item['source']}] {item['title_th']}")
+            for item in items
+        ]
+
         async with get_db() as db:
-            for item in items:
-                prompt = (
-                    f"หัวข้อ: {item['title']}\n"
-                    f"แหล่งข่าว: {item['source']}\n"
-                    f"ลิงก์: {item['url']}\n"
-                    f"เนื้อหา: {item['summary_source']}\n\n"
-                    f"{agent_memory}"
-                )
-                try:
-                    ai_result = await chat_json(
-                        prompt,
-                        system=SUMMARY_SYSTEM,
-                        agent="news",
-                        preferred_model="groq",
-                        strict_model=True,
-                    )
-                    title_th = _clean_text(ai_result.get("title_th")) or item["title"]
-                    summary = _clean_text(ai_result.get("summary")) or item["title"]
-                    apply_to = ai_result.get("apply_to", {}) or {}
-                    if not isinstance(apply_to, dict):
-                        apply_to = {}
-                    action = _clean_text(ai_result.get("action"))
-                    priority = str(ai_result.get("priority", "low")).strip().lower()
-                    if priority not in _PRIORITY_EMOJI:
-                        priority = "low"
-                except Exception:
-                    title_th = item["title"]
-                    summary = item["title"]
-                    apply_to = {}
-                    action = None
-                    priority = "low"
-
-                if _is_hospital_security_story(item["topic_text"]):
-                    priority = "high"
-
-                item["title_th"] = title_th
-                item["summary"] = summary
-                item["apply_to"] = {
-                    "ener_ai": _clean_text(apply_to.get("ener_ai")),
-                    "ener_scan": _clean_text(apply_to.get("ener_scan")),
-                    "content": _clean_text(apply_to.get("content")),
-                    "content_moo": _clean_text(apply_to.get("content_moo")),
-                    "it_work": _clean_text(apply_to.get("it_work")),
-                    "security": _clean_text(apply_to.get("security")),
-                    "try_now": _clean_text(apply_to.get("try_now")),
-                    "business_idea": _clean_text(apply_to.get("business_idea")),
-                }
-                item["action"] = action
-                item["priority"] = priority
-
-                relevance_parts = []
-                for label, value in [
-                    ("Ener-AI", item["apply_to"]["ener_ai"]),
-                    ("Ener Scan", item["apply_to"]["ener_scan"]),
-                    ("Content", item["apply_to"]["content"]),
-                    ("Content มู", item["apply_to"]["content_moo"]),
-                    ("IT งาน", item["apply_to"]["it_work"]),
-                    ("Security", item["apply_to"]["security"]),
-                    ("Try Now", item["apply_to"]["try_now"]),
-                    ("Business Idea", item["apply_to"]["business_idea"]),
-                ]:
-                    if value:
-                        relevance_parts.append(f"{label}: {value}")
-                relevance = " | ".join(relevance_parts) or "ไม่เกี่ยวกับกบโดยตรง"
-
-                await db.execute(
-                    """
-                    INSERT INTO news_items (title, url, source, summary, relevance)
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                    (item["title_th"], item["url"], item["source"], summary, relevance),
-                )
-                today = datetime.now(_BANGKOK).date().isoformat()
-                await db.execute(
-                    "INSERT INTO daily_logs (log_date, category, content) VALUES (?, ?, ?)",
-                    (today, "news", f"[{item['priority']}] [{item['source']}] {item['title_th']}"),
-                )
-
+            await db.executemany(
+                """
+                INSERT INTO news_items (title, url, source, summary, relevance)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                news_rows,
+            )
+            await db.executemany(
+                "INSERT INTO daily_logs (log_date, category, content) VALUES (?, ?, ?)",
+                daily_log_rows,
+            )
             await db.execute(
                 "INSERT INTO audit_logs (action, details) VALUES (?, ?)",
                 ("news_fetch_completed", f"count={len(items)}"),
