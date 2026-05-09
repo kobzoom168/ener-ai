@@ -161,9 +161,15 @@ async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await file_obj.download_to_memory(photo_bytes)
     image_data = photo_bytes.getvalue()
     caption = update.message.caption or ""
+    chat_id = str(update.effective_chat.id)
 
     thinking = await update.message.reply_text("🔍 กำลังวิเคราะห์รูป...", parse_mode=None)
-    result = await vision_analyze(image_data, caption, _agent_triggered_by="user")
+    result = await vision_analyze(
+        image_data,
+        caption,
+        chat_id=chat_id,
+        _agent_triggered_by="user",
+    )
     try:
         await thinking.delete()
     except Exception:
