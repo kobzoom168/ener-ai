@@ -1,10 +1,6 @@
-import asyncio
 import base64
-import io
 
 import anthropic
-import PIL.Image
-from google import genai
 
 from app.core.agents import log_agent_run
 from app.core.config import settings
@@ -99,31 +95,11 @@ async def _analyze_with_haiku(image_bytes: bytes, prompt: str) -> str:
 async def analyze_image(image_bytes: bytes, prompt: str = "") -> str:
     user_prompt = prompt or "วิเคราะห์รูปนี้ให้ละเอียด"
     try:
-        if not settings.gemini_api_key:
-            result = await _analyze_with_haiku(image_bytes, user_prompt)
-            await _log_vision_event(
-                event_type="task_done",
-                summary=f"วิเคราะห์รูป: {user_prompt[:50]}",
-                tags=["vision", "image", "haiku"],
-                result="success",
-            )
-            return result
-
-        client = genai.Client(api_key=settings.gemini_api_key)
-        image = PIL.Image.open(io.BytesIO(image_bytes))
-
-        def _generate():
-            return client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=[VISION_SYSTEM + "\n\n" + user_prompt, image],
-            )
-
-        response = await asyncio.to_thread(_generate)
-        result = getattr(response, "text", "") or "ไม่สามารถวิเคราะห์รูปได้"
+        result = await _analyze_with_haiku(image_bytes, user_prompt)
         await _log_vision_event(
             event_type="task_done",
             summary=f"วิเคราะห์รูป: {user_prompt[:50]}",
-            tags=["vision", "image", "gemini"],
+            tags=["vision", "image", "haiku"],
             result="success",
         )
         return result
