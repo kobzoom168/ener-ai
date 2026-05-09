@@ -14,7 +14,7 @@ from app.agents import log_keeper
 from app.agents.monitor_agent import cmd_errors, cmd_logs, cmd_server, cmd_status
 from app.core.config import settings
 from app.core.policy import ALLOWED_CHAT_IDS
-from app.core.tts import text_to_voice_bytes
+from app.core.tts import text_to_audio_bytes, text_to_voice_bytes
 from app.agents.main_agent import MAIN_AGENT
 
 logger = logging.getLogger(__name__)
@@ -83,16 +83,22 @@ async def handle_tts_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        audio_bytes = await text_to_voice_bytes(text)
-        audio_file = io.BytesIO(audio_bytes)
-        audio_file.name = "reply.mp3"
-        await query.message.reply_audio(audio=audio_file, title="Ener-AI")
+        voice_bytes = await text_to_voice_bytes(text)
+        voice_file = io.BytesIO(voice_bytes)
+        voice_file.name = "voice.ogg"
+        await query.message.reply_voice(voice=voice_file)
     except Exception as e:
         logger.error(f"TTS callback error: {e}", exc_info=True)
         try:
-            await query.answer("ส่งเสียงไม่ได้ตอนนี้", show_alert=True)
+            audio_bytes = await text_to_audio_bytes(text)
+            audio_file = io.BytesIO(audio_bytes)
+            audio_file.name = "reply.mp3"
+            await query.message.reply_audio(audio=audio_file, title="Ener-AI")
         except Exception:
-            pass
+            try:
+                await query.answer("ส่งเสียงไม่ได้ตอนนี้", show_alert=True)
+            except Exception:
+                pass
 
 
 def _is_allowed(update: Update) -> bool:
