@@ -7,6 +7,10 @@ ALLOWED_NEWS_SOURCES = [
     "reuters.com",
     "arstechnica.com",
     "wired.com",
+    "krebsonsecurity.com",
+    "bleepingcomputer.com",
+    "therecord.media",
+    "darkreading.com",
 ]
 
 ALLOWED_CHAT_IDS = [7486743496]

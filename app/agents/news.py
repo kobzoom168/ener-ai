@@ -18,6 +18,10 @@ _RSS_FEEDS = {
     "reuters.com": "https://feeds.reuters.com/reuters/technologyNews",
     "arstechnica.com": "https://feeds.arstechnica.com/arstechnica/technology-lab",
     "wired.com": "https://www.wired.com/feed/rss",
+    "krebsonsecurity.com": "https://krebsonsecurity.com/feed/",
+    "bleepingcomputer.com": "https://www.bleepingcomputer.com/feed/",
+    "therecord.media": "https://therecord.media/feed",
+    "darkreading.com": "https://www.darkreading.com/rss.xml",
 }
 _TOPIC_KEYWORDS = [
     "ai",
@@ -47,6 +51,28 @@ _TOPIC_KEYWORDS = [
     "api",
     "tech",
     "technology",
+    "dark web",
+    "darkweb",
+    "ransomware",
+    "breach",
+    "malware",
+    "hacker",
+    "leaked",
+    "cybercrime",
+    "threat",
+    "vulnerability",
+    "exploit",
+    "phishing",
+    "zero-day",
+    "botnet",
+    "data leak",
+    "credential",
+    "hospital",
+    "healthcare",
+    "medical",
+    "patient data",
+    "health system",
+    "clinic",
 ]
 _PRIORITY_EMOJI = {"high": "🔴", "medium": "🟡", "low": "🟢"}
 SUMMARY_SYSTEM = build_system_prompt("""คุณเป็น AI วิเคราะห์ข่าวสำหรับกบ
@@ -58,6 +84,10 @@ SUMMARY_SYSTEM = build_system_prompt("""คุณเป็น AI วิเคร
 - ขายพระผ่าน TikTok/YouTube/Facebook
 - กำลังสร้าง content และ automation system
 
+บริบทของกบเพิ่มเติม:
+- ดูแลระบบ IT infra โรงพยาบาล → ข่าว hospital/healthcare breach สำคัญมาก
+- มีระบบ Ener-AI อยู่บน server → ต้องระวัง vulnerability
+
 วิเคราะห์ข่าวนี้แล้วตอบ JSON:
 {
   "title_th": "หัวข้อภาษาไทยกระชับ",
@@ -66,13 +96,15 @@ SUMMARY_SYSTEM = build_system_prompt("""คุณเป็น AI วิเคร
     "ener_ai": "นำไปใช้กับ Ener-AI ได้ยังไง (ถ้าได้)",
     "ener_scan": "นำไปใช้กับ Ener Scan ได้ยังไง (ถ้าได้)",
     "content": "ทำ content จากข่าวนี้ได้ไหม hook คืออะไร",
-    "it_work": "เกี่ยวกับงาน IT โรงพยาบาลไหม"
+    "it_work": "เกี่ยวกับงาน IT โรงพยาบาลไหม",
+    "security": "กระทบ server/ระบบกบไหม ต้องทำอะไรไหม"
   },
   "action": "สิ่งที่กบควรทำต่อ 1 อย่าง (ถ้ามี)",
   "priority": "high|medium|low"
 }
 
-ถ้าไม่เกี่ยวกับกบเลย → priority: low และ apply_to ทุก field เป็น null""")
+ถ้าไม่เกี่ยวกับกบเลย → priority: low และ apply_to ทุก field เป็น null
+ถ้าข่าว hospital/healthcare breach → priority ต้องเป็น high""")
 
 
 def _matches_topic(topic_text: str) -> bool:
@@ -84,6 +116,35 @@ def _matches_topic(topic_text: str) -> bool:
         if re.search(rf"\b{re.escape(keyword)}\b", topic_text):
             return True
     return False
+
+
+def _keyword_score(topic_text: str) -> int:
+    score = 0
+    for keyword in _TOPIC_KEYWORDS:
+        if " " in keyword:
+            if keyword in topic_text:
+                score += 2
+            continue
+        if re.search(rf"\b{re.escape(keyword)}\b", topic_text):
+            score += 1
+    if any(word in topic_text for word in ["hospital", "healthcare", "medical", "patient data", "clinic"]):
+        score += 5
+    if any(word in topic_text for word in ["breach", "ransomware", "malware", "phishing", "zero-day", "vulnerability"]):
+        score += 3
+    return score
+
+
+def _is_hospital_security_story(topic_text: str) -> bool:
+    has_hospital = any(word in topic_text for word in ["hospital", "healthcare", "medical", "patient data", "health system", "clinic"])
+    has_incident = any(word in topic_text for word in ["breach", "ransomware", "malware", "phishing", "exploit", "vulnerability", "leaked", "data leak"])
+    return has_hospital and has_incident
+
+
+async def _parse_feed(feed_url: str):
+    try:
+        return await asyncio.to_thread(feedparser.parse, feed_url)
+    except Exception:
+        return None
 
 
 def _clean_text(value: object) -> str | None:
@@ -103,12 +164,21 @@ async def fetch_and_summarize() -> str:
     items: list[dict[str, str]] = []
     seen_links: set[str] = set()
 
+    feed_jobs = []
+    ordered_sources = []
     for source in ALLOWED_NEWS_SOURCES:
         feed_url = _RSS_FEEDS.get(source)
         if not feed_url:
             continue
-        feed = await asyncio.to_thread(feedparser.parse, feed_url)
-        for entry in feed.entries:
+        ordered_sources.append(source)
+        feed_jobs.append(_parse_feed(feed_url))
+
+    feeds = await asyncio.gather(*feed_jobs, return_exceptions=True)
+
+    for source, feed in zip(ordered_sources, feeds):
+        if feed is None or isinstance(feed, Exception):
+            continue
+        for entry in getattr(feed, "entries", []):
             title = (entry.get("title") or "").strip()
             link = (entry.get("link") or "").strip()
             raw_summary = (entry.get("summary") or entry.get("description") or "").strip()
@@ -129,12 +199,19 @@ async def fetch_and_summarize() -> str:
                     "url": link,
                     "source": source,
                     "summary_source": clean_summary[:1200],
+                    "topic_text": topic_text,
+                    "match_score": _keyword_score(topic_text),
                 }
             )
-            if len(items) >= 5:
-                break
-        if len(items) >= 5:
-            break
+
+    items.sort(
+        key=lambda item: (
+            1 if _is_hospital_security_story(item["topic_text"]) else 0,
+            item.get("match_score", 0),
+        ),
+        reverse=True,
+    )
+    items = items[:5]
 
     if not items:
         async with get_db() as db:
@@ -189,6 +266,9 @@ async def fetch_and_summarize() -> str:
                     action = None
                     priority = "low"
 
+                if _is_hospital_security_story(item["topic_text"]):
+                    priority = "high"
+
                 item["title_th"] = title_th
                 item["summary"] = summary
                 item["apply_to"] = {
@@ -196,6 +276,7 @@ async def fetch_and_summarize() -> str:
                     "ener_scan": _clean_text(apply_to.get("ener_scan")),
                     "content": _clean_text(apply_to.get("content")),
                     "it_work": _clean_text(apply_to.get("it_work")),
+                    "security": _clean_text(apply_to.get("security")),
                 }
                 item["action"] = action
                 item["priority"] = priority
@@ -206,6 +287,7 @@ async def fetch_and_summarize() -> str:
                     ("Ener Scan", item["apply_to"]["ener_scan"]),
                     ("Content", item["apply_to"]["content"]),
                     ("IT งาน", item["apply_to"]["it_work"]),
+                    ("Security", item["apply_to"]["security"]),
                 ]:
                     if value:
                         relevance_parts.append(f"{label}: {value}")
@@ -273,6 +355,10 @@ async def fetch_and_summarize() -> str:
             if apply_line:
                 emitted = True
                 lines.append(apply_line)
+        security_line = _format_apply_line("🔐 Security", item["apply_to"].get("security"))
+        if security_line:
+            emitted = True
+            lines.append(security_line)
         if not emitted:
             lines.append("   · ยังไม่เห็นมุมใช้ต่อที่ชัดเจน")
         if item.get("action"):
