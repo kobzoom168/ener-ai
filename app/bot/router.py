@@ -1,7 +1,8 @@
 import io
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     MessageHandler,
     filters,
@@ -11,32 +12,79 @@ from app.agents import log_keeper
 from app.agents.monitor_agent import cmd_errors, cmd_logs, cmd_server, cmd_status
 from app.core.config import settings
 from app.core.policy import ALLOWED_CHAT_IDS
-from app.core.tts import is_voice_enabled, text_to_voice_bytes
+from app.core.tts import text_to_voice_bytes
 from app.agents.main_agent import MAIN_AGENT
 
 
 async def _reply(update: Update, text: str):
-    await update.message.reply_text(text, parse_mode=None)
+    await _reply_smart(update, text)
+
+
+async def _cache_tts_text(chat_id: str, text_hash: int, text: str):
+    from app.core.database import get_db
+
+    async with get_db() as db:
+        await db.execute(
+            """
+            INSERT INTO memories (key, value, tag)
+            VALUES (?, ?, 'tts_cache')
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                tag = 'tts_cache',
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (f"tts_{chat_id}_{text_hash}", text[:500]),
+        )
+        await db.commit()
+
+
+async def _get_cached_tts_text(chat_id: str, text_hash: str) -> str | None:
+    from app.core.database import get_db
+
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT value FROM memories WHERE key = ?",
+            (f"tts_{chat_id}_{text_hash}",),
+        )
+        row = await cursor.fetchone()
+    return row["value"] if row else None
 
 
 async def _reply_smart(update: Update, text: str):
+    text_hash = hash(text)
+    keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🔊 ฟัง", callback_data=f"tts:{text_hash}")]]
+    )
     chat_id = str(update.effective_chat.id)
-    if await is_voice_enabled(chat_id):
-        try:
-            audio_bytes = await text_to_voice_bytes(text)
-            audio_file = io.BytesIO(audio_bytes)
-            audio_file.name = "ener-ai.mp3"
-            await update.message.reply_audio(
-                audio=audio_file,
-                title="Ener-AI",
-                performer="🤖",
-            )
-            await update.message.reply_text(text, parse_mode=None)
-            return
-        except Exception:
-            await update.message.reply_text(text, parse_mode=None)
-            return
-    await update.message.reply_text(text, parse_mode=None)
+    await _cache_tts_text(chat_id, text_hash, text)
+    await update.message.reply_text(
+        text,
+        reply_markup=keyboard,
+        parse_mode=None,
+    )
+
+
+async def handle_tts_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if not query or not query.data or not query.data.startswith("tts:"):
+        return
+
+    text_hash = query.data.split(":", 1)[1]
+    chat_id = str(query.message.chat.id)
+    text = await _get_cached_tts_text(chat_id, text_hash)
+    if not text:
+        await query.answer("หมดอายุแล้ว ขอใหม่ได้เลย", show_alert=True)
+        return
+
+    try:
+        audio_bytes = await text_to_voice_bytes(text)
+        audio_file = io.BytesIO(audio_bytes)
+        audio_file.name = "reply.mp3"
+        await query.message.reply_audio(audio=audio_file, title="Ener-AI")
+    except Exception:
+        await query.answer("ส่งเสียงไม่ได้ตอนนี้", show_alert=True)
 
 
 def _is_allowed(update: Update) -> bool:
@@ -157,14 +205,6 @@ async def cmd_memory(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await _reply(update, result)
 
 
-async def cmd_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not _is_allowed(update):
-        return
-    chat_id = str(update.effective_chat.id)
-    result = await MAIN_AGENT.handle("voice", " ".join(ctx.args), chat_id)
-    await _reply(update, result)
-
-
 async def cmd_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
@@ -261,7 +301,6 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/remember <ข้อความ> — บันทึก long-term memory ทันที\n"
         "/forget <คำค้น>  — ลบ long-term memory ที่ตรงคำค้น\n"
         "/memory          — ดู long-term memory ทั้งหมด\n"
-        "/voice           — เปิด/ปิดตอบเป็นเสียง\n"
         "/code <ข้อความ>  — ช่วยเขียน/review/debug code\n"
         "/ener <ข้อความ>  — วิเคราะห์พระ/ener report\n"
         "/content <ข้อความ> — สร้าง caption/script ขายของ\n"
@@ -326,7 +365,6 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("remember", cmd_remember))
     app.add_handler(CommandHandler("forget", cmd_forget))
     app.add_handler(CommandHandler("memory", cmd_memory))
-    app.add_handler(CommandHandler("voice", cmd_voice))
     app.add_handler(CommandHandler("code", cmd_code))
     app.add_handler(CommandHandler("ener", cmd_ener))
     app.add_handler(CommandHandler("content", cmd_content))
@@ -341,5 +379,6 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("cost", cmd_cost))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("start", cmd_help))
+    app.add_handler(CallbackQueryHandler(handle_tts_callback, pattern="^tts:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, msg_fallback))
     return app
