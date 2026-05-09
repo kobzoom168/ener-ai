@@ -16,7 +16,7 @@ from app.agents.monitor_agent import cmd_errors, cmd_logs, cmd_server, cmd_statu
 from app.agents.news_discovery import approve_source, list_active_sources, list_pending_sources
 from app.agents.vision_agent import analyze_image as vision_analyze
 from app.core.config import settings
-from app.core.policy import ALLOWED_CHAT_IDS
+from app.core.policy import ALLOWED_CHAT_IDS, OWNER_LOCATION
 from app.core.tts import text_to_audio_bytes, text_to_voice_bytes
 from app.agents.main_agent import MAIN_AGENT
 
@@ -311,6 +311,39 @@ async def cmd_memory(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await _reply(update, result)
 
 
+async def cmd_location(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+
+    subcommand = str(ctx.args[0]).strip().lower() if ctx.args else ""
+    if subcommand == "home":
+        text = (
+            "📍 บ้าน: "
+            f"{OWNER_LOCATION['home']}\n"
+            "[ดูบน Maps](https://maps.google.com/maps?q=eco house+วงแหวนลำลูกกา+ปทุมธานี)"
+        )
+        await _reply(update, text, enable_tts=False)
+        return
+
+    if subcommand == "work":
+        text = (
+            "🏥 ที่ทำงาน: "
+            f"{OWNER_LOCATION['work']}\n"
+            "[ดูบน Maps](https://maps.google.com/maps?q=โรงพยาบาลจักษุ+รัตนิน+กรุงเทพ)"
+        )
+        await _reply(update, text, enable_tts=False)
+        return
+
+    text = (
+        "📍 Location ของกบ\n\n"
+        f"บ้าน: {OWNER_LOCATION['home']}\n"
+        f"งาน: {OWNER_LOCATION['work']}\n\n"
+        "ใช้ `/location home` เพื่อดู Maps ใกล้บ้าน\n"
+        "ใช้ `/location work` เพื่อดู Maps ใกล้ที่ทำงาน"
+    )
+    await _reply(update, text, enable_tts=False)
+
+
 async def cmd_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
@@ -486,6 +519,9 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/remember <ข้อความ> — บันทึก long-term memory ทันที\n"
         "/forget <คำค้น>  — ลบ long-term memory ที่ตรงคำค้น\n"
         "/memory          — ดู long-term memory ทั้งหมด\n"
+        "/location        — ดู location บ้านและที่ทำงาน\n"
+        "/location home   — ดู Maps ใกล้บ้าน\n"
+        "/location work   — ดู Maps ใกล้ที่ทำงาน\n"
         "/code <ข้อความ>  — ช่วยเขียน/review/debug code\n"
         "/ener <ข้อความ>  — วิเคราะห์พระ/ener report\n"
         "/content <ข้อความ> — สร้าง caption/script ขายของ\n"
@@ -557,6 +593,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("remember", cmd_remember))
     app.add_handler(CommandHandler("forget", cmd_forget))
     app.add_handler(CommandHandler("memory", cmd_memory))
+    app.add_handler(CommandHandler("location", cmd_location))
     app.add_handler(CommandHandler("code", cmd_code))
     app.add_handler(CommandHandler("ener", cmd_ener))
     app.add_handler(CommandHandler("content", cmd_content))

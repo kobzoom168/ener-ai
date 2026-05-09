@@ -112,6 +112,8 @@ async def get_long_term_context() -> str:
         get_time_context(),
         "",
         "=== สิ่งที่รู้เกี่ยวกับกบ ===",
+        "📍 บ้าน: eco house วงแหวนลำลูกกา",
+        "🏥 งาน: โรงพยาบาลจักษุ รัตนิน",
     ]
     used_chars = len("\n".join(lines))
 
