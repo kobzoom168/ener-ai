@@ -337,6 +337,122 @@ async def _call_ollama(
         raise
 
 
+async def _call_anthropic_with_tools(
+    prompt: str,
+    system: str,
+    messages: list[dict[str, str]] | None,
+    tools: list[dict],
+    agent: str,
+) -> dict:
+    started_at = time.perf_counter()
+    try:
+        client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        anthropic_tools = [
+            {
+                "name": tool["name"],
+                "description": tool["description"],
+                "input_schema": tool["input_schema"],
+            }
+            for tool in tools
+        ]
+        response = await client.messages.create(
+            model=_PRIMARY_MODEL,
+            max_tokens=2048,
+            system=system,
+            tools=anthropic_tools,
+            messages=_anthropic_messages(prompt, messages),
+        )
+
+        text_parts = []
+        tool_calls = []
+        for block in response.content:
+            block_type = getattr(block, "type", "")
+            if block_type == "text":
+                text_parts.append(getattr(block, "text", ""))
+            elif block_type == "tool_use":
+                tool_calls.append(
+                    {
+                        "name": getattr(block, "name", ""),
+                        "input": getattr(block, "input", {}) or {},
+                    }
+                )
+
+        input_tokens = getattr(response.usage, "input_tokens", 0)
+        output_tokens = getattr(response.usage, "output_tokens", 0)
+        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+        await _log_ai_run(agent, "haiku", input_tokens, output_tokens, elapsed_ms, True)
+        return {
+            "text": "".join(text_parts).strip(),
+            "tool_calls": tool_calls,
+        }
+    except Exception:
+        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+        await _log_ai_run(agent, "haiku", 0, 0, elapsed_ms, False)
+        raise
+
+
+async def _call_groq_with_tools(
+    prompt: str,
+    system: str,
+    messages: list[dict[str, str]] | None,
+    tools: list[dict],
+    agent: str,
+) -> dict:
+    started_at = time.perf_counter()
+    try:
+        client = AsyncGroq(api_key=settings.groq_api_key)
+        groq_tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": tool["name"],
+                    "description": tool["description"],
+                    "parameters": tool["input_schema"],
+                },
+            }
+            for tool in tools
+        ]
+        response = await client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=_groq_messages(prompt, system, messages),
+            tools=groq_tools,
+            tool_choice="auto",
+        )
+
+        msg = response.choices[0].message
+        text = msg.content or ""
+        tool_calls = []
+        if msg.tool_calls:
+            for tool_call in msg.tool_calls:
+                raw_arguments = getattr(tool_call.function, "arguments", "") or "{}"
+                try:
+                    parsed_input = json.loads(raw_arguments)
+                except Exception:
+                    parsed_input = {}
+                tool_calls.append(
+                    {
+                        "name": getattr(tool_call.function, "name", ""),
+                        "input": parsed_input,
+                    }
+                )
+
+        usage = response.usage
+        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+        await _log_ai_run(
+            agent,
+            "groq",
+            getattr(usage, "prompt_tokens", 0) or 0,
+            getattr(usage, "completion_tokens", 0) or 0,
+            elapsed_ms,
+            True,
+        )
+        return {"text": text.strip(), "tool_calls": tool_calls}
+    except Exception:
+        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+        await _log_ai_run(agent, "groq", 0, 0, elapsed_ms, False)
+        raise
+
+
 async def chat(
     prompt: str,
     system: str = BASE_SYSTEM_PROMPT,
@@ -374,6 +490,29 @@ async def chat(
     if default_candidate == "gemini":
         return await _call_gemini(prompt, system, messages, agent)
     return await _call_ollama(prompt, system, messages, agent, default_candidate)
+
+
+async def chat_with_tools(
+    prompt: str,
+    system: str,
+    messages: list[dict[str, str]] | None,
+    tools: list[dict],
+    agent: str = "chat",
+) -> dict:
+    """
+    เรียก AI พร้อม tool definitions
+    Return: {"text": str, "tool_calls": list}
+    """
+    availability = get_model_availability()
+    active = (await get_active_model()) or _default_model(availability)
+
+    if active == "haiku" and availability.get("haiku"):
+        return await _call_anthropic_with_tools(prompt, system, messages, tools, agent)
+    if active == "groq" and availability.get("groq"):
+        return await _call_groq_with_tools(prompt, system, messages, tools, agent)
+
+    text = await chat(prompt, system=system, agent=agent, messages=messages)
+    return {"text": text, "tool_calls": []}
 
 
 async def chat_json(

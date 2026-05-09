@@ -1,4 +1,4 @@
-from app.core.ai import chat, chat_json
+from app.core.ai import chat_with_tools
 from app.core.agents import log_agent_run
 from app.core.database import get_db
 from app.core.event_log import get_agent_context, log_event
@@ -9,91 +9,10 @@ from app.core.memory import (
     get_time_context,
 )
 from app.core.policy import BASE_SYSTEM_PROMPT
-from app.agents import task as task_agent
-
-_TASK_EXTRACT_SYSTEM = BASE_SYSTEM_PROMPT + """
-
-งานของคุณ: อ่านข้อความผู้ใช้และคำตอบของผู้ช่วย แล้วดึงเฉพาะ task ที่ควรสร้างจริง
-
-กฎ:
-- สร้าง task เฉพาะสิ่งที่เป็น action item ชัดเจน
-- ถ้าไม่มี task ให้ตอบ tasks เป็น []
-- ตอบเป็น JSON เท่านั้น
-
-รูปแบบ:
-{
-  "tasks": ["task 1", "task 2"]
-}"""
-
-_TASK_KEYWORDS = [
-    "ต้อง",
-    "อย่าลืม",
-    "เตือน",
-    "deadline",
-    "นัด",
-    "ภายใน",
-    "พรุ่งนี้",
-]
+from app.core.tools import TOOLS, execute_tool
 
 
-def _looks_like_task_message(text: str) -> bool:
-    lowered = text.lower()
-    return any(keyword in text or keyword in lowered for keyword in _TASK_KEYWORDS)
-
-
-async def _extract_tasks(text: str, reply: str) -> list[str]:
-    try:
-        result = await chat_json(
-            f"ข้อความผู้ใช้:\n{text}\n\nคำตอบผู้ช่วย:\n{reply}",
-            system=_TASK_EXTRACT_SYSTEM,
-            agent="chat",
-        )
-    except Exception:
-        return []
-
-    tasks = []
-    seen = set()
-    for item in result.get("tasks", []):
-        task_text = str(item).strip()
-        if not task_text:
-            continue
-        if task_text in seen:
-            continue
-        seen.add(task_text)
-        tasks.append(task_text)
-    return tasks
-
-
-async def _create_tasks(task_titles: list[str]) -> list[str]:
-    created = []
-    if not task_titles:
-        return created
-
-    for task_title in task_titles:
-        await task_agent.create_task(task_title, _agent_triggered_by="agent")
-        created.append(task_title)
-
-    async with get_db() as db:
-        await db.execute(
-            "INSERT INTO audit_logs (action, details) VALUES (?, ?)",
-            ("chat_tasks_created", f"count={len(created)}"),
-        )
-        await db.commit()
-    return created
-
-
-def _render_reply(reply: str, created_tasks: list[str]) -> str:
-    base_reply = reply.strip() or "ยังไม่มีคำตอบตอนนี้"
-    if not created_tasks:
-        return base_reply
-
-    task_lines = "\n".join(task_title for task_title in created_tasks)
-    return f"{base_reply}\n\n📌 บันทึก task:\n{task_lines}"
-
-
-@log_agent_run("MainChatAgent")
-async def run_chat(chat_id: str, text: str) -> str:
-    agent_memory = await get_agent_context("MainChatAgent", ["chat", "conversation"])
+async def _get_history(chat_id: str) -> list[dict[str, str]]:
     async with get_db() as db:
         cursor = await db.execute(
             """
@@ -106,15 +25,18 @@ async def run_chat(chat_id: str, text: str) -> str:
             (chat_id,),
         )
         rows = await cursor.fetchall()
-
-    history = [
+    return [
         {"role": row["role"], "content": row["content"]}
         for row in reversed(rows)
     ]
+
+
+async def _build_system_prompt() -> str:
+    agent_memory = await get_agent_context("MainChatAgent", ["chat", "conversation", "tools"])
     time_context = get_time_context()
     long_term = await get_long_term_context()
     summaries = await get_recent_summaries()
-    system_prompt = BASE_SYSTEM_PROMPT + f"""
+    return BASE_SYSTEM_PROMPT + f"""
 
 {time_context}
 
@@ -130,35 +52,13 @@ async def run_chat(chat_id: str, text: str) -> str:
 หน้าที่:
 - คุยกับกบเหมือนผู้ช่วยส่วนตัวแบบ conversational
 - ตอบเป็นภาษาไทย กระชับ ตรงประเด็น
-- พูดเหมือนคุยกับกบตรงๆ แบบ GPT/Claude ที่เป็นผู้ช่วยส่วนตัว
-- ตอบเป็นข้อความธรรมดาเท่านั้น ไม่ต้องตอบเป็น JSON"""
-    try:
-        reply = (
-            await chat(
-                text,
-                system=system_prompt,
-                agent="chat",
-                messages=history,
-            )
-        ).strip() or "ยังไม่มีคำตอบตอนนี้"
-    except Exception as exc:
-        try:
-            await log_event(
-                agent_name="MainChatAgent",
-                event_type="task_failed",
-                summary=f"chat fail: {text[:80]}",
-                tags=["chat", "error"],
-                result="failure",
-                learned=str(exc)[:200],
-            )
-        except Exception:
-            pass
-        raise
+- ถ้าต้องบันทึก task, note, memory หรือเรียกความสามารถอื่น ให้ใช้ tools ตามความจำเป็น
+- ถ้าไม่จำเป็นต้องใช้ tool ให้ตอบข้อความธรรมดาได้เลย
+- ตอบเป็นข้อความธรรมดาเท่านั้น ไม่ต้องตอบเป็น JSON
+"""
 
-    extracted_tasks = []
-    if _looks_like_task_message(text):
-        extracted_tasks = await _extract_tasks(text, reply)
 
+async def _save_messages(chat_id: str, text: str, reply: str) -> None:
     async with get_db() as db:
         await db.execute(
             "INSERT INTO messages (chat_id, role, content) VALUES (?, ?, ?)",
@@ -174,18 +74,82 @@ async def run_chat(chat_id: str, text: str) -> str:
         )
         await db.commit()
 
+
+@log_agent_run("MainChatAgent")
+async def run_chat(chat_id: str, text: str) -> str:
+    history = await _get_history(chat_id)
+    system_prompt = await _build_system_prompt()
+    try:
+        response = await chat_with_tools(
+            prompt=text,
+            system=system_prompt,
+            messages=history,
+            tools=TOOLS,
+            agent="MainChatAgent",
+        )
+        reply = str(response.get("text", "")).strip() or "ยังไม่มีคำตอบตอนนี้"
+        tool_calls = response.get("tool_calls", []) or []
+    except Exception as exc:
+        try:
+            await log_event(
+                agent_name="MainChatAgent",
+                event_type="task_failed",
+                summary=f"chat fail: {text[:80]}",
+                tags=["chat", "error"],
+                result="failure",
+                learned=str(exc)[:200],
+            )
+        except Exception:
+            pass
+        raise
+
+    tool_results = []
+    for tool_call in tool_calls:
+        tool_name = str(tool_call.get("name", "")).strip()
+        tool_input = tool_call.get("input", {}) or {}
+        if not tool_name:
+            continue
+        try:
+            result = await execute_tool(tool_name, tool_input)
+            tool_results.append(f"✅ {result}")
+            try:
+                await log_event(
+                    agent_name="MainChatAgent",
+                    event_type="task_done",
+                    summary=f"tool {tool_name}: {text[:80]}",
+                    tags=["chat", "tool", tool_name],
+                    context=str(tool_input)[:200],
+                    result="success",
+                )
+            except Exception:
+                pass
+        except Exception as exc:
+            try:
+                await log_event(
+                    agent_name="MainChatAgent",
+                    event_type="task_failed",
+                    summary=f"tool fail {tool_name}: {text[:80]}",
+                    tags=["chat", "tool", tool_name, "error"],
+                    context=str(tool_input)[:200],
+                    result="failure",
+                    learned=str(exc)[:200],
+                )
+            except Exception:
+                pass
+            tool_results.append(f"⚠️ tool {tool_name} ทำงานไม่สำเร็จ")
+
+    await _save_messages(chat_id, text, reply)
     await extract_and_store_long_term_memories(text, reply)
-    created_tasks = await _create_tasks(extracted_tasks)
-    final_reply = _render_reply(reply, created_tasks)
+    final_reply = reply if not tool_results else reply + "\n\n" + "\n".join(tool_results)
     try:
         await log_event(
             agent_name="MainChatAgent",
-            event_type="task_done" if created_tasks else "insight",
+            event_type="task_done" if tool_results else "insight",
             summary=f"ตอบแชต: {text[:80]}",
-            tags=["chat"] + (["task"] if created_tasks else ["conversation"]),
+            tags=["chat"] + (["tool-use"] if tool_results else ["conversation"]),
             context=reply[:200],
             result="success",
-            learned=f"สร้าง task {len(created_tasks)} รายการ" if created_tasks else None,
+            learned=f"ใช้ tool {len(tool_results)} ครั้ง" if tool_results else None,
         )
     except Exception:
         pass
