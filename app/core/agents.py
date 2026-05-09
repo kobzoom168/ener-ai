@@ -56,6 +56,7 @@ _AGENT_AI_MAP = {
     "MainChatAgent": "chat",
     "MainAgent": "mainagent",
     "NewsAgent": "news",
+    "VisionAgent": "vision",
     "DigestAgent": "summary",
     "LessonAgent": "learn",
     "ThinkTeam": "brainstorm",

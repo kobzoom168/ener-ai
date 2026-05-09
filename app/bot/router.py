@@ -13,6 +13,7 @@ from telegram.ext import (
 from app.agents import gmail_agent, log_keeper
 from app.agents.monitor_agent import cmd_errors, cmd_logs, cmd_server, cmd_status
 from app.agents.news_discovery import approve_source, list_active_sources, list_pending_sources
+from app.agents.vision_agent import analyze_image as vision_analyze
 from app.core.config import settings
 from app.core.policy import ALLOWED_CHAT_IDS
 from app.core.tts import text_to_audio_bytes, text_to_voice_bytes
@@ -146,6 +147,28 @@ async def handle_email_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(draft, reply_markup=keyboard, parse_mode=None)
     elif data.startswith("email_skip:"):
         await query.answer("ข้ามแล้วครับ", show_alert=False)
+
+
+async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+    if not update.message or not update.message.photo:
+        return
+
+    photo = update.message.photo[-1]
+    file_obj = await ctx.bot.get_file(photo.file_id)
+    photo_bytes = io.BytesIO()
+    await file_obj.download_to_memory(photo_bytes)
+    image_data = photo_bytes.getvalue()
+    caption = update.message.caption or ""
+
+    thinking = await update.message.reply_text("🔍 กำลังวิเคราะห์รูป...", parse_mode=None)
+    result = await vision_analyze(image_data, caption, _agent_triggered_by="user")
+    try:
+        await thinking.delete()
+    except Exception:
+        pass
+    await _reply_smart(update, result)
 
 
 def _is_allowed(update: Update) -> bool:
@@ -452,6 +475,7 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/email           — สรุป email ใหม่\n"
         "/email draft <id> — ร่างคำตอบ email\n"
         "/email reply <id> <ข้อความ> — ตอบ email ทันที\n"
+        "ส่งรูป           — VisionAgent วิเคราะห์อัตโนมัติ\n"
         "/approve_source <domain> — อนุมัติแหล่งข่าวใหม่\n"
         "/pending_sources — ดูแหล่งข่าวที่รอ approve\n"
         "/list_sources    — ดูแหล่งข่าวที่ใช้อยู่\n"
@@ -531,5 +555,6 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("start", cmd_help))
     app.add_handler(CallbackQueryHandler(handle_email_callback, pattern="^email_"))
     app.add_handler(CallbackQueryHandler(handle_tts_callback, pattern="^tts:"))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, msg_fallback))
     return app
