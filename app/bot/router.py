@@ -1,4 +1,6 @@
+import hashlib
 import io
+import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
@@ -15,12 +17,14 @@ from app.core.policy import ALLOWED_CHAT_IDS
 from app.core.tts import text_to_voice_bytes
 from app.agents.main_agent import MAIN_AGENT
 
+logger = logging.getLogger(__name__)
+
 
 async def _reply(update: Update, text: str):
     await _reply_smart(update, text)
 
 
-async def _cache_tts_text(chat_id: str, text_hash: int, text: str):
+async def _cache_tts_text(chat_id: str, text_hash: str, text: str):
     from app.core.database import get_db
 
     async with get_db() as db:
@@ -51,7 +55,7 @@ async def _get_cached_tts_text(chat_id: str, text_hash: str) -> str | None:
 
 
 async def _reply_smart(update: Update, text: str):
-    text_hash = hash(text)
+    text_hash = hashlib.md5(text.encode()).hexdigest()[:16]
     keyboard = InlineKeyboardMarkup(
         [[InlineKeyboardButton("🔊 ฟัง", callback_data=f"tts:{text_hash}")]]
     )
@@ -83,8 +87,12 @@ async def handle_tts_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         audio_file = io.BytesIO(audio_bytes)
         audio_file.name = "reply.mp3"
         await query.message.reply_audio(audio=audio_file, title="Ener-AI")
-    except Exception:
-        await query.answer("ส่งเสียงไม่ได้ตอนนี้", show_alert=True)
+    except Exception as e:
+        logger.error(f"TTS callback error: {e}", exc_info=True)
+        try:
+            await query.answer("ส่งเสียงไม่ได้ตอนนี้", show_alert=True)
+        except Exception:
+            pass
 
 
 def _is_allowed(update: Update) -> bool:
