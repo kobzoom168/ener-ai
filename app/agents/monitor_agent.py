@@ -1,4 +1,4 @@
-import subprocess
+import docker as docker_sdk
 import psutil
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -10,8 +10,6 @@ from app.core.event_log import log_event
 from app.core.policy import build_system_prompt
 
 _BANGKOK = ZoneInfo("Asia/Bangkok")
-_DOCKER_CONTAINER_NAME = "ener-ai-ener-ai-1"
-
 MONITOR_SYSTEM = build_system_prompt("""คุณเป็น Server Monitor AI ของ Ener-AI
 วิเคราะห์ logs และสถานะ server
 ตอบเป็นภาษาไทย กระชับ ตรงประเด็น
@@ -22,27 +20,27 @@ MONITOR_SYSTEM = build_system_prompt("""คุณเป็น Server Monitor AI 
 def get_docker_logs(lines: int = 20, filter_errors: bool = False) -> str:
     """ดึง docker logs ล่าสุด"""
     try:
-        cmd = [
-            "docker",
-            "logs",
-            "--tail",
-            str(lines),
-            "--timestamps",
-            _DOCKER_CONTAINER_NAME,
-        ]
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        output = (result.stdout or "") + (result.stderr or "")
+        client = docker_sdk.from_env()
+
+        containers = client.containers.list()
+        target = None
+        for container in containers:
+            if "ener-ai" in container.name:
+                target = container
+                break
+
+        if not target:
+            return "ไม่พบ container ener-ai"
+
+        output = target.logs(
+            tail=lines,
+            timestamps=True,
+        ).decode("utf-8", errors="replace")
 
         if filter_errors:
-            lines_list = output.split("\n")
             error_lines = [
                 line
-                for line in lines_list
+                for line in output.split("\n")
                 if any(
                     word in line.lower()
                     for word in [
@@ -51,8 +49,7 @@ def get_docker_logs(lines: int = 20, filter_errors: bool = False) -> str:
                         "traceback",
                         "failed",
                         "critical",
-                        "warning",
-                        "errno",
+                        "operationalerror",
                     ]
                 )
             ]

@@ -12,3 +12,4 @@ groq
 google-genai
 psutil
 edge-tts==6.1.12
+docker==7.1.0
