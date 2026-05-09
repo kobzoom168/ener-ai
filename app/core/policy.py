@@ -16,6 +16,11 @@ ALLOWED_NEWS_SOURCES = [
     "ancient-origins.net",
     "unexplained-mysteries.com",
     "theblackvault.com",
+    "producthunt.com",
+    "news.ycombinator.com",
+    "venturebeat.com",
+    "techsauce.co",
+    "blognone.com",
 ]
 
 ALLOWED_CHAT_IDS = [7486743496]

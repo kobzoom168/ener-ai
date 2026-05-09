@@ -27,6 +27,11 @@ _RSS_FEEDS = {
     "ancient-origins.net": "https://www.ancient-origins.net/rss.xml",
     "unexplained-mysteries.com": "https://www.unexplained-mysteries.com/rss.php",
     "theblackvault.com": "https://www.theblackvault.com/documentdb/feed/",
+    "producthunt.com": "https://www.producthunt.com/feed",
+    "venturebeat.com": "https://venturebeat.com/feed/",
+    "news.ycombinator.com": "https://hnrss.org/frontpage",
+    "techsauce.co": "https://techsauce.co/feed",
+    "blognone.com": "https://www.blognone.com/node/feed",
 }
 _TOPIC_KEYWORDS = [
     "ai",
@@ -109,15 +114,70 @@ _TOPIC_KEYWORDS = [
     "disaster",
     "catastrophe",
     "apocalypse",
+    "launch",
+    "product hunt",
+    "new tool",
+    "free tool",
+    "open source",
+    "release",
+    "beta",
+    "saas",
+    "no-code",
+    "automation tool",
+    "workflow",
+    "funding",
+    "revenue",
+    "profitable",
+    "solopreneur",
+    "indie",
+    "bootstrapped",
+    "business model",
+    "monetize",
+    "side project",
+    "ไทย",
+    "thailand",
+    "เอเชีย",
+    "asean",
 ]
 _PRIORITY_EMOJI = {"high": "🔴", "medium": "🟡", "low": "🟢"}
 _CATEGORY_LABELS = {
+    "tools": "🛠️ AI Tools น่าลอง",
+    "business": "💼 ธุรกิจน่าสนใจ",
     "ai": "🤖 AI/Tech",
     "security": "🔐 Security",
     "mystery": "👽 Mystery/UFO",
     "world": "🌍 โลก/ภัยพิบัติ",
 }
-_CATEGORY_ORDER = ["ai", "security", "mystery", "world"]
+_CATEGORY_ORDER = ["tools", "business", "ai", "security", "mystery", "world"]
+_AI_TOOLS_KEYWORDS = [
+    "launch",
+    "product hunt",
+    "new tool",
+    "free tool",
+    "open source",
+    "release",
+    "beta",
+    "saas",
+    "no-code",
+    "automation tool",
+    "workflow",
+]
+_BUSINESS_KEYWORDS = [
+    "startup",
+    "funding",
+    "revenue",
+    "profitable",
+    "solopreneur",
+    "indie",
+    "bootstrapped",
+    "business model",
+    "monetize",
+    "side project",
+    "thailand",
+    "asean",
+    "ไทย",
+    "เอเชีย",
+]
 _SECURITY_KEYWORDS = [
     "breach",
     "ransomware",
@@ -183,7 +243,9 @@ SUMMARY_SYSTEM = build_system_prompt("""คุณเป็น AI วิเคร
     "content": "ทำ content จากข่าวนี้ได้ไหม hook คืออะไร",
     "content_moo": "ทำ content สายมู / ลึกลับได้ไหม hook คืออะไร",
     "it_work": "เกี่ยวกับงาน IT โรงพยาบาลไหม",
-    "security": "กระทบ server/ระบบกบไหม ต้องทำอะไรไหม"
+    "security": "กระทบ server/ระบบกบไหม ต้องทำอะไรไหม",
+    "try_now": "น่าลองใช้ทันทีไหม ลองแบบไหนได้บ้าง",
+    "business_idea": "เอาไอเดียนี้มาทำธุรกิจกับ Ener Scan ได้ไหม"
   },
   "action": "สิ่งที่กบควรทำต่อ 1 อย่าง (ถ้ามี)",
   "priority": "high|medium|low"
@@ -221,6 +283,10 @@ def _keyword_score(topic_text: str) -> int:
         score += 3
     if any(word in topic_text for word in _WORLD_KEYWORDS):
         score += 2
+    if any(word in topic_text for word in _AI_TOOLS_KEYWORDS):
+        score += 4
+    if any(word in topic_text for word in _BUSINESS_KEYWORDS):
+        score += 3
     return score
 
 
@@ -231,12 +297,16 @@ def _is_hospital_security_story(topic_text: str) -> bool:
 
 
 def _detect_category(topic_text: str) -> str:
-    if any(word in topic_text for word in _MYSTERY_KEYWORDS):
-        return "mystery"
+    if any(word in topic_text for word in _AI_TOOLS_KEYWORDS):
+        return "tools"
     if any(word in topic_text for word in _SECURITY_KEYWORDS):
         return "security"
+    if any(word in topic_text for word in _MYSTERY_KEYWORDS):
+        return "mystery"
     if any(word in topic_text for word in _WORLD_KEYWORDS):
         return "world"
+    if any(word in topic_text for word in _BUSINESS_KEYWORDS):
+        return "business"
     return "ai"
 
 
@@ -250,6 +320,8 @@ def _mystery_emoji(topic_text: str) -> str:
 
 def _category_bonus(category: str, topic_text: str) -> int:
     bonus = {
+        "tools": 5,
+        "business": 4,
         "security": 4,
         "mystery": 3,
         "world": 2,
@@ -258,6 +330,30 @@ def _category_bonus(category: str, topic_text: str) -> int:
     if category == "security" and _is_hospital_security_story(topic_text):
         bonus += 5
     return bonus
+
+
+def _extract_upvotes(entry: object) -> int | None:
+    if not hasattr(entry, "get"):
+        return None
+    for key in ["votes", "upvotes", "score", "points"]:
+        raw = entry.get(key)
+        if raw is None:
+            continue
+        text = str(raw).strip().replace(",", "")
+        if text.isdigit():
+            return int(text)
+    raw_text = " ".join(
+        str(part or "")
+        for part in [
+            entry.get("summary"),
+            entry.get("description"),
+            entry.get("title"),
+        ]
+    )
+    match = re.search(r"(\d[\d,]*)\s*(?:upvotes?|votes?|points?)", raw_text, re.IGNORECASE)
+    if not match:
+        return None
+    return int(match.group(1).replace(",", ""))
 
 
 def _pick_top_items(items: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -334,6 +430,12 @@ def _format_news_message(items: list[dict[str, str]]) -> str:
                 if apply_line:
                     emitted = True
                     lines.append(apply_line)
+            if item["apply_to"].get("try_now"):
+                emitted = True
+                lines.append(f"   🎮 ลองได้เลย: {item['apply_to']['try_now']}")
+            if item["apply_to"].get("business_idea"):
+                emitted = True
+                lines.append(f"   💡 ไอเดียธุรกิจ: {item['apply_to']['business_idea']}")
             if item["apply_to"].get("content_moo"):
                 emitted = True
                 lines.append(f"   🔮 Content มู: {item['apply_to']['content_moo']}")
@@ -351,8 +453,8 @@ def _format_news_message(items: list[dict[str, str]]) -> str:
 
 async def _parse_feed(feed_url: str):
     try:
-        return await asyncio.to_thread(feedparser.parse, feed_url)
-    except Exception:
+        return await asyncio.wait_for(asyncio.to_thread(feedparser.parse, feed_url), timeout=10)
+    except (TimeoutError, Exception):
         return None
 
 
@@ -369,7 +471,7 @@ def _format_apply_line(label: str, value: str | None) -> str | None:
 
 @log_agent_run("NewsAgent", triggered_by="scheduler")
 async def fetch_and_summarize() -> str:
-    agent_memory = await get_agent_context("NewsAgent", ["news", "ai", "tech", "security", "mystery"])
+    agent_memory = await get_agent_context("NewsAgent", ["news", "ai", "tech", "security", "mystery", "tools", "business"])
     items: list[dict[str, str]] = []
     seen_links: set[str] = set()
 
@@ -387,7 +489,10 @@ async def fetch_and_summarize() -> str:
     for source, feed in zip(ordered_sources, feeds):
         if feed is None or isinstance(feed, Exception):
             continue
-        for entry in getattr(feed, "entries", []):
+        entries = list(getattr(feed, "entries", []))
+        if source == "news.ycombinator.com":
+            entries = entries[:20]
+        for entry in entries:
             title = (entry.get("title") or "").strip()
             link = (entry.get("link") or "").strip()
             raw_summary = (entry.get("summary") or entry.get("description") or "").strip()
@@ -396,6 +501,10 @@ async def fetch_and_summarize() -> str:
 
             if not title or not link:
                 continue
+            if source == "producthunt.com":
+                upvotes = _extract_upvotes(entry)
+                if upvotes is not None and upvotes <= 100:
+                    continue
             if not _matches_topic(topic_text):
                 continue
             if link in seen_links:
@@ -481,6 +590,8 @@ async def fetch_and_summarize() -> str:
                     "content_moo": _clean_text(apply_to.get("content_moo")),
                     "it_work": _clean_text(apply_to.get("it_work")),
                     "security": _clean_text(apply_to.get("security")),
+                    "try_now": _clean_text(apply_to.get("try_now")),
+                    "business_idea": _clean_text(apply_to.get("business_idea")),
                 }
                 item["action"] = action
                 item["priority"] = priority
@@ -493,6 +604,8 @@ async def fetch_and_summarize() -> str:
                     ("Content มู", item["apply_to"]["content_moo"]),
                     ("IT งาน", item["apply_to"]["it_work"]),
                     ("Security", item["apply_to"]["security"]),
+                    ("Try Now", item["apply_to"]["try_now"]),
+                    ("Business Idea", item["apply_to"]["business_idea"]),
                 ]:
                     if value:
                         relevance_parts.append(f"{label}: {value}")
@@ -536,7 +649,7 @@ async def fetch_and_summarize() -> str:
             agent_name="NewsAgent",
             event_type="insight",
             summary=f"สรุปข่าว {len(items)} เรื่อง",
-            tags=["news", "ai", "tech", "security", "mystery", "deep-analysis"],
+            tags=["news", "ai", "tech", "security", "mystery", "tools", "business", "deep-analysis"],
             context=result_text[:400],
             result="success",
         )
