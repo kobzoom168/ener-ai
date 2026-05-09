@@ -458,14 +458,23 @@ async def chat(
     system: str = BASE_SYSTEM_PROMPT,
     agent: str = "general",
     messages: list[dict[str, str]] | None = None,
+    preferred_model: str | None = None,
+    strict_model: bool = False,
 ) -> str:
     availability = get_model_availability()
     active_model = (await get_active_model()) or _default_model(availability)
-    requested_model = _resolve_requested_model(agent, active_model)
-    candidates = _model_candidates(requested_model)
-    if active_model in _VALID_MODELS and active_model in candidates:
-        candidates.remove(active_model)
-        candidates.insert(0, active_model)
+    requested_model = (
+        preferred_model
+        if preferred_model in _VALID_MODELS
+        else _resolve_requested_model(agent, active_model)
+    )
+    if strict_model and requested_model in _VALID_MODELS:
+        candidates = [requested_model]
+    else:
+        candidates = _model_candidates(requested_model)
+        if active_model in _VALID_MODELS and active_model in candidates and preferred_model not in _VALID_MODELS:
+            candidates.remove(active_model)
+            candidates.insert(0, active_model)
 
     for candidate in candidates:
         if candidate in {"haiku", "groq", "gemini"} and not availability.get(candidate, False):
@@ -481,6 +490,9 @@ async def chat(
                 return await _call_ollama(prompt, system, messages, agent, candidate)
         except Exception:
             continue
+
+    if strict_model and requested_model in _VALID_MODELS:
+        raise RuntimeError(f"model unavailable: {requested_model}")
 
     default_candidate = _default_model(availability)
     if default_candidate == "haiku":

@@ -8,6 +8,7 @@ from telegram.ext import (
     ContextTypes,
 )
 from app.agents import log_keeper
+from app.agents.monitor_agent import cmd_errors, cmd_logs, cmd_server, cmd_status
 from app.core.config import settings
 from app.core.policy import ALLOWED_CHAT_IDS
 from app.core.tts import is_voice_enabled, text_to_voice_bytes
@@ -211,6 +212,37 @@ async def cmd_health(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await _reply(update, result)
 
 
+async def handle_logs(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+    lines = 20
+    if ctx.args and ctx.args[0].isdigit():
+        lines = min(int(ctx.args[0]), 100)
+    result = await cmd_logs(lines, _agent_triggered_by="user")
+    await _reply(update, result)
+
+
+async def handle_errors(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+    result = await cmd_errors(_agent_triggered_by="user")
+    await _reply(update, result)
+
+
+async def handle_server(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+    result = await cmd_server(_agent_triggered_by="user")
+    await _reply(update, result)
+
+
+async def handle_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+    result = await cmd_status(_agent_triggered_by="user")
+    await _reply(update, result)
+
+
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
@@ -234,6 +266,10 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/ener <ข้อความ>  — วิเคราะห์พระ/ener report\n"
         "/content <ข้อความ> — สร้าง caption/script ขายของ\n"
         "/health          — ดูสุขภาพของ agents\n"
+        "/logs [n]        — ดู logs ล่าสุด n บรรทัด\n"
+        "/errors          — ดู errors อย่างเดียว\n"
+        "/server          — CPU/RAM/Disk + processes\n"
+        "/status          — สรุปสถานะทั้งหมด + AI วิเคราะห์\n"
         "/today           — สรุปวันนี้\n"
         "/news            — ดึงข่าว AI/Tech วันนี้\n"
         "/week            — รีวิว 7 วันที่ผ่านมา\n"
@@ -295,6 +331,10 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("ener", cmd_ener))
     app.add_handler(CommandHandler("content", cmd_content))
     app.add_handler(CommandHandler("health", cmd_health))
+    app.add_handler(CommandHandler("logs", handle_logs))
+    app.add_handler(CommandHandler("errors", handle_errors))
+    app.add_handler(CommandHandler("server", handle_server))
+    app.add_handler(CommandHandler("status", handle_status))
     app.add_handler(CommandHandler("today", cmd_today))
     app.add_handler(CommandHandler("news", cmd_news))
     app.add_handler(CommandHandler("week", cmd_week))

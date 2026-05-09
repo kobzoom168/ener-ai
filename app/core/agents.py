@@ -12,6 +12,10 @@ COMMAND_AGENT_MAP = {
     "ener": "EnerAgent",
     "content": "ContentAgent",
     "health": "LogKeeper",
+    "logs": "MonitorAgent",
+    "errors": "MonitorAgent",
+    "server": "MonitorAgent",
+    "status": "MonitorAgent",
     "today": "DigestAgent",
     "week": "DigestAgent",
     "news": "NewsAgent",
@@ -38,6 +42,7 @@ SCHEDULER_AGENTS = {
     "metrics": "MetricsAgent",
     "session": "SessionAgent",
     "log_keeper": "LogKeeper",
+    "monitor": "MonitorAgent",
 }
 
 _AGENT_AI_MAP = {
@@ -54,6 +59,7 @@ _AGENT_AI_MAP = {
     "ContentAgent": "content",
     "EnerAgent": "ener",
     "LogKeeper": "logkeeper",
+    "MonitorAgent": "monitor",
 }
 
 

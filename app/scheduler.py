@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from telegram import Bot
-from app.agents import log_keeper, news, session_agent, summary
+from app.agents import log_keeper, monitor_agent, news, session_agent, summary
 from app.core.agents import log_agent_run
 from app.core.config import settings
 from app.core.database import get_db
@@ -105,6 +105,10 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
     async def send_agent_health_report():
         message = await log_keeper.analyze_agent_health(_agent_triggered_by="scheduler")
         await _send_scheduled_message(bot, message, "scheduled_agent_health_sent")
+
+    @log_agent_run("MonitorAgent", triggered_by="scheduler")
+    async def monitor_check():
+        await monitor_agent.check_and_alert(bot, _agent_triggered_by="scheduler")
 
     @log_agent_run("LogPruneAgent", triggered_by="scheduler")
     async def prune_agent_events():
@@ -219,6 +223,12 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
         send_agent_health_report,
         CronTrigger(hour=22, minute=0, timezone=_BANGKOK),
         id="agent_health_report",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        monitor_check,
+        CronTrigger(minute="*/30", timezone=_BANGKOK),
+        id="monitor_check",
         replace_existing=True,
     )
     scheduler.add_job(
