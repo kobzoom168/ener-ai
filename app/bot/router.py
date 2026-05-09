@@ -21,8 +21,34 @@ from app.agents.main_agent import MAIN_AGENT
 logger = logging.getLogger(__name__)
 
 
-async def _reply(update: Update, text: str):
-    await _reply_smart(update, text)
+def _merge_voice_button(
+    text_hash: str,
+    reply_markup: InlineKeyboardMarkup | None = None,
+) -> InlineKeyboardMarkup:
+    voice_row = [InlineKeyboardButton("🔊 ฟัง", callback_data=f"tts:{text_hash}")]
+    if not reply_markup:
+        return InlineKeyboardMarkup([voice_row])
+
+    rows = [list(row) for row in reply_markup.inline_keyboard]
+    has_voice = any(
+        any(str(button.callback_data or "").startswith("tts:") for button in row)
+        for row in rows
+    )
+    if not has_voice:
+        rows.append(voice_row)
+    return InlineKeyboardMarkup(rows)
+
+
+async def _reply(
+    update: Update,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None = None,
+    enable_tts: bool = True,
+):
+    if enable_tts:
+        await _reply_smart(update, text, reply_markup=reply_markup)
+        return
+    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode=None)
 
 
 async def _cache_tts_text(chat_id: str, text_hash: str, text: str):
@@ -55,11 +81,13 @@ async def _get_cached_tts_text(chat_id: str, text_hash: str) -> str | None:
     return row["value"] if row else None
 
 
-async def _reply_smart(update: Update, text: str):
+async def _reply_smart(
+    update: Update,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None = None,
+):
     text_hash = hashlib.md5(text.encode()).hexdigest()[:16]
-    keyboard = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("🔊 ฟัง", callback_data=f"tts:{text_hash}")]]
-    )
+    keyboard = _merge_voice_button(text_hash, reply_markup=reply_markup)
     chat_id = str(update.effective_chat.id)
     await _cache_tts_text(chat_id, text_hash, text)
     await update.message.reply_text(
@@ -112,7 +140,10 @@ async def handle_email_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await query.answer()
         email_id = data.split(":", 1)[1]
         draft = await gmail_agent.draft_reply(email_id, _agent_triggered_by="user")
-        await query.message.reply_text(draft, parse_mode=None)
+        text_hash = hashlib.md5(draft.encode()).hexdigest()[:16]
+        await _cache_tts_text(str(query.message.chat.id), text_hash, draft)
+        keyboard = _merge_voice_button(text_hash)
+        await query.message.reply_text(draft, reply_markup=keyboard, parse_mode=None)
     elif data.startswith("email_skip:"):
         await query.answer("ข้ามแล้วครับ", show_alert=False)
 
@@ -127,7 +158,7 @@ async def cmd_note(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     text = " ".join(ctx.args) if ctx.args else ""
     if not text:
-        await _reply(update, "📌 พิมพ์ข้อความหลัง /note เช่น /note ไอเดีย X")
+        await _reply(update, "📌 พิมพ์ข้อความหลัง /note เช่น /note ไอเดีย X", enable_tts=False)
         return
     chat_id = str(update.effective_chat.id)
     result = await MAIN_AGENT.handle("note", text, chat_id)
@@ -138,7 +169,7 @@ async def cmd_task(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
     if not ctx.args:
-        await _reply(update, "📌 พิมพ์ชื่อ task เช่น /task ซื้อของ")
+        await _reply(update, "📌 พิมพ์ชื่อ task เช่น /task ซื้อของ", enable_tts=False)
         return
     raw = " ".join(ctx.args)
     result = await MAIN_AGENT.handle("task", raw, str(update.effective_chat.id))
@@ -156,7 +187,7 @@ async def cmd_done(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
     if not ctx.args or not ctx.args[0].isdigit():
-        await _reply(update, "📌 ระบุ ID task เช่น /done 3")
+        await _reply(update, "📌 ระบุ ID task เช่น /done 3", enable_tts=False)
         return
     result = await MAIN_AGENT.handle("done", ctx.args[0], str(update.effective_chat.id))
     await _reply(update, result)
@@ -167,7 +198,7 @@ async def cmd_learn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     text = " ".join(ctx.args) if ctx.args else ""
     if not text:
-        await _reply(update, "📌 พิมพ์ข้อความหลัง /learn เช่น /learn พลาดเรื่อง X เพราะ Y")
+        await _reply(update, "📌 พิมพ์ข้อความหลัง /learn เช่น /learn พลาดเรื่อง X เพราะ Y", enable_tts=False)
         return
     result = await MAIN_AGENT.handle("learn", text, str(update.effective_chat.id))
     await _reply(update, result)
@@ -178,7 +209,7 @@ async def cmd_think(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     text = " ".join(ctx.args) if ctx.args else ""
     if not text:
-        await _reply(update, "📌 พิมพ์หัวข้อหลัง /think เช่น /think ทำโปรดักต์ AI ตัวนี้ดีไหม")
+        await _reply(update, "📌 พิมพ์หัวข้อหลัง /think เช่น /think ทำโปรดักต์ AI ตัวนี้ดีไหม", enable_tts=False)
         return
     result = await MAIN_AGENT.handle("think", text, str(update.effective_chat.id))
     await _reply_smart(update, result)
@@ -189,7 +220,7 @@ async def cmd_park(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     text = " ".join(ctx.args) if ctx.args else ""
     if not text:
-        await _reply(update, "📌 พิมพ์ไอเดียหลัง /park เช่น /park ระบบแจ้งเตือนแบบใหม่")
+        await _reply(update, "📌 พิมพ์ไอเดียหลัง /park เช่น /park ระบบแจ้งเตือนแบบใหม่", enable_tts=False)
         return
     result = await MAIN_AGENT.handle("park", text, str(update.effective_chat.id))
     await _reply(update, result)
@@ -200,7 +231,7 @@ async def cmd_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     text = " ".join(ctx.args) if ctx.args else ""
     if not text:
-        await _reply(update, "📌 พิมพ์คำค้นหลัง /search เช่น /search โปรเจกต์ AI")
+        await _reply(update, "📌 พิมพ์คำค้นหลัง /search เช่น /search โปรเจกต์ AI", enable_tts=False)
         return
     result = await MAIN_AGENT.handle("search", text, str(update.effective_chat.id))
     await _reply(update, result)
@@ -211,7 +242,7 @@ async def cmd_remember(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     text = " ".join(ctx.args) if ctx.args else ""
     if not text:
-        await _reply(update, "📌 พิมพ์ข้อความหลัง /remember เช่น /remember ผมชอบกาแฟดำไม่ใส่น้ำตาล")
+        await _reply(update, "📌 พิมพ์ข้อความหลัง /remember เช่น /remember ผมชอบกาแฟดำไม่ใส่น้ำตาล", enable_tts=False)
         return
     result = await MAIN_AGENT.handle("remember", text, str(update.effective_chat.id))
     await _reply(update, result)
@@ -222,7 +253,7 @@ async def cmd_forget(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     text = " ".join(ctx.args) if ctx.args else ""
     if not text:
-        await _reply(update, "📌 พิมพ์ keyword หลัง /forget เช่น /forget Bumrungrad")
+        await _reply(update, "📌 พิมพ์ keyword หลัง /forget เช่น /forget Bumrungrad", enable_tts=False)
         return
     result = await MAIN_AGENT.handle("forget", text, str(update.effective_chat.id))
     await _reply(update, result)
@@ -247,7 +278,7 @@ async def cmd_code(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     text = " ".join(ctx.args) if ctx.args else ""
     if not text:
-        await _reply(update, "📌 พิมพ์โจทย์หลัง /code เช่น /code เขียน FastAPI health check")
+        await _reply(update, "📌 พิมพ์โจทย์หลัง /code เช่น /code เขียน FastAPI health check", enable_tts=False)
         return
     result = await MAIN_AGENT.handle("code", text, str(update.effective_chat.id))
     await _reply(update, result)
@@ -258,7 +289,7 @@ async def cmd_ener(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     text = " ".join(ctx.args) if ctx.args else ""
     if not text:
-        await _reply(update, "📌 พิมพ์รายละเอียดหลัง /ener เช่น /ener วิเคราะห์พระสมเด็จรุ่นนี้")
+        await _reply(update, "📌 พิมพ์รายละเอียดหลัง /ener เช่น /ener วิเคราะห์พระสมเด็จรุ่นนี้", enable_tts=False)
         return
     result = await MAIN_AGENT.handle("ener", text, str(update.effective_chat.id))
     await _reply(update, result)
@@ -269,7 +300,7 @@ async def cmd_content(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     text = " ".join(ctx.args) if ctx.args else ""
     if not text:
-        await _reply(update, "📌 พิมพ์โจทย์หลัง /content เช่น /content เขียน caption ขายพระลง TikTok")
+        await _reply(update, "📌 พิมพ์โจทย์หลัง /content เช่น /content เขียน caption ขายพระลง TikTok", enable_tts=False)
         return
     result = await MAIN_AGENT.handle("content", text, str(update.effective_chat.id))
     await _reply(update, result)
@@ -318,7 +349,7 @@ async def handle_approve_source(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     domain = " ".join(ctx.args).strip() if ctx.args else ""
     if not domain:
-        await _reply(update, "📌 พิมพ์ domain หลัง /approve_source เช่น /approve_source example.com")
+        await _reply(update, "📌 พิมพ์ domain หลัง /approve_source เช่น /approve_source example.com", enable_tts=False)
         return
     result = await approve_source(domain, _agent_triggered_by="user")
     await _reply(update, result)
@@ -366,13 +397,13 @@ async def cmd_email(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             )
 
         keyboard = InlineKeyboardMarkup(buttons)
-        await update.message.reply_text(result, reply_markup=keyboard, parse_mode=None)
+        await _reply_smart(update, result, reply_markup=keyboard)
         return
 
     subcommand = str(ctx.args[0]).strip().lower()
     if subcommand == "reply":
         if len(ctx.args) < 3:
-            await _reply(update, "📌 ใช้แบบนี้: /email reply <id> <ข้อความตอบกลับ>")
+            await _reply(update, "📌 ใช้แบบนี้: /email reply <id> <ข้อความตอบกลับ>", enable_tts=False)
             return
         email_id = ctx.args[1].strip()
         reply_text = " ".join(ctx.args[2:]).strip()
@@ -382,14 +413,14 @@ async def cmd_email(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if subcommand == "draft":
         if len(ctx.args) < 2:
-            await _reply(update, "📌 ใช้แบบนี้: /email draft <id>")
+            await _reply(update, "📌 ใช้แบบนี้: /email draft <id>", enable_tts=False)
             return
         email_id = ctx.args[1].strip()
         result = await gmail_agent.draft_reply(email_id, _agent_triggered_by="user")
         await _reply_smart(update, result)
         return
 
-    await _reply(update, "📌 ใช้ /email, /email draft <id>, หรือ /email reply <id> <ข้อความ>")
+    await _reply(update, "📌 ใช้ /email, /email draft <id>, หรือ /email reply <id> <ข้อความ>", enable_tts=False)
 
 
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
