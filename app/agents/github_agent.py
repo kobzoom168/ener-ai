@@ -141,17 +141,69 @@ async def read_file(repo_name: str, file_path: str) -> str:
 
     try:
         repo = await asyncio.to_thread(user.get_repo, repo_name)
-        content = await asyncio.to_thread(repo.get_contents, file_path)
-        code = content.decoded_content.decode("utf-8")
     except Exception as exc:
         await _log_github_event("task_failed", "read github file fail", "failure", learned=str(exc)[:200])
         return f"อ่านไฟล์ไม่สำเร็จ: {exc}"
 
+    paths_to_try = [
+        file_path,
+        f"app/{file_path}",
+        f"src/{file_path}",
+    ]
+
+    content = None
+    used_path = file_path
+    for path in paths_to_try:
+        try:
+            content = await asyncio.to_thread(repo.get_contents, path)
+            used_path = path
+            break
+        except Exception:
+            continue
+
+    if not content:
+        try:
+            root = await asyncio.to_thread(repo.get_contents, "")
+            files = [item.path for item in root if item.type == "file"]
+            dirs = [item.path for item in root if item.type == "dir"]
+            result = (
+                f"ไม่พบ {file_path} กบ\n\n"
+                f"โครงสร้าง repo:\n"
+                f"📁 {chr(10).join(dirs)}\n"
+                f"📄 {chr(10).join(files)}"
+            )
+            await _log_github_event(
+                "warning",
+                "read github file missing",
+                "failure",
+                learned=f"{repo_name}:{file_path}",
+            )
+            return result
+        except Exception as exc:
+            await _log_github_event(
+                "task_failed",
+                "read github file structure fail",
+                "failure",
+                learned=str(exc)[:200],
+            )
+            return f"อ่านไม่ได้: {exc}"
+
+    try:
+        code = content.decoded_content.decode("utf-8")
+    except Exception as exc:
+        await _log_github_event(
+            "task_failed",
+            "decode github file fail",
+            "failure",
+            learned=str(exc)[:200],
+        )
+        return f"อ่านไฟล์ไม่สำเร็จ: {exc}"
+
     analysis = await chat(
-        f"ไฟล์ {file_path}:\n{code[:3000]}",
+        f"ไฟล์ {used_path}:\n{code[:3000]}",
         system=GITHUB_SYSTEM + "\nสรุป code นี้และบอกจุดที่ควรปรับปรุง",
         agent="github",
         preferred_model="haiku",
     )
-    await _log_github_event("task_done", "read github file", "success", learned=f"{repo_name}:{file_path}")
-    return f"📄 {file_path}\n\n{analysis}"
+    await _log_github_event("task_done", "read github file", "success", learned=f"{repo_name}:{used_path}")
+    return f"📄 {used_path}\n\n{analysis}"
