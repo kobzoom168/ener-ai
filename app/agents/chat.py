@@ -38,7 +38,12 @@ async def _get_model_handoff() -> str:
 
     async with get_db() as db:
         cursor = await db.execute(
-            "SELECT value FROM memories WHERE key = 'model_handoff_context' LIMIT 1"
+            """
+            SELECT value FROM memories
+            WHERE key = 'model_handoff_context'
+              AND updated_at > datetime('now', '-1 hour')
+            LIMIT 1
+            """
         )
         row = await cursor.fetchone()
     return row["value"] if row else ""
