@@ -1872,6 +1872,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       display: flex;
       align-items: center;
       gap: 8px;
+      flex-wrap: wrap;
       padding: 6px 16px;
       background: #1a1a00;
       border-bottom: 1px solid #ffaa00;
@@ -1885,6 +1886,22 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       padding: 4px 10px;
       border-radius: 4px;
       cursor: pointer;
+    }}
+    .edit-control {{
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      color: #aaa;
+    }}
+    .edit-control input[type=color] {{
+      width: 28px;
+      height: 22px;
+      border: 1px solid #444;
+      border-radius: 4px;
+      padding: 1px;
+      cursor: pointer;
+      background: none;
     }}
     .card-drag-handle {{
       display: none;
@@ -2087,8 +2104,33 @@ def build_admin_html(overview: dict) -> HTMLResponse:
   </div>
 
   <div id="edit-bar" class="edit-bar" style="display:none">
-    ✏️ Edit Mode — ลากและปรับขนาด card ได้
-    <button type="button" onclick="saveLayout()">💾 Save Layout</button>
+    <span>✏️ Edit Mode</span>
+    <div class="edit-control">
+      <span>ตัวอักษร:</span>
+      <button type="button" onclick="globalFontSize(-1)">A-</button>
+      <span id="font-size-display">12px</span>
+      <button type="button" onclick="globalFontSize(1)">A+</button>
+    </div>
+    <div class="edit-control">
+      <span>สีข้อความ:</span>
+      <input type="color" id="text-color-pick" value="#ffffff" oninput="applyTextColor(this.value)">
+    </div>
+    <div class="edit-control">
+      <span>สี accent:</span>
+      <input type="color" id="accent-color-pick" value="#00ff88" oninput="applyAccentColor(this.value)">
+    </div>
+    <div class="edit-control">
+      <span>สี card:</span>
+      <input type="color" id="card-bg-pick" value="#111111" oninput="applyCardBg(this.value)">
+    </div>
+    <div class="edit-control">
+      <span>Preset:</span>
+      <button type="button" onclick="applyPreset('dark')">🌑 Dark</button>
+      <button type="button" onclick="applyPreset('green')">💚 Green</button>
+      <button type="button" onclick="applyPreset('blue')">💙 Blue</button>
+      <button type="button" onclick="applyPreset('amber')">🟡 Amber</button>
+    </div>
+    <button type="button" onclick="saveLayout()">💾 Save</button>
     <button type="button" onclick="resetLayout()">↺ Reset</button>
     <button type="button" onclick="exitEditMode()">🔒 Lock</button>
   </div>
@@ -2117,10 +2159,21 @@ def build_admin_html(overview: dict) -> HTMLResponse:
     }}
 
     const LAYOUT_KEY = 'ener-admin-layout-v1';
+    const STYLE_KEY = 'ener-admin-style-v1';
+    const PRESETS = {{
+      dark: {{ text: '#ffffff', accent: '#00ff88', cardBg: '#111111' }},
+      green: {{ text: '#ccffcc', accent: '#00ff88', cardBg: '#0a1a0a' }},
+      blue: {{ text: '#cce0ff', accent: '#4488ff', cardBg: '#0a0a1a' }},
+      amber: {{ text: '#fff8cc', accent: '#ffaa00', cardBg: '#1a1500' }},
+    }};
     let editMode = false;
     const dashboardContainer = document.getElementById('dashboard-container');
     const editBar = document.getElementById('edit-bar');
     const editButton = document.getElementById('edit-btn');
+    const fontSizeDisplay = document.getElementById('font-size-display');
+    const textColorPicker = document.getElementById('text-color-pick');
+    const accentColorPicker = document.getElementById('accent-color-pick');
+    const cardBgPicker = document.getElementById('card-bg-pick');
     const widget = document.getElementById('log-tail-widget');
     const handle = document.getElementById('log-drag-handle');
     const content = document.getElementById('log-tail-content');
@@ -2137,6 +2190,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
     let resizeStartW = 0;
     let resizeStartH = 0;
     let fontSize = 11;
+    let currentFontSize = 12;
     let collapsed = false;
     let expandedHeight = '160px';
 
@@ -2171,6 +2225,97 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       toast.textContent = message;
       document.body.appendChild(toast);
       setTimeout(() => toast.remove(), 2000);
+    }}
+
+    function getDashboardStyleTargets() {{
+      return document.querySelectorAll('.dashboard-card, .dashboard-card .card, .log-widget');
+    }}
+
+    function getAccentTargets() {{
+      return document.querySelectorAll('.stat-number, .row-cost, .log-status, .agent-bar-fill');
+    }}
+
+    function saveStyle() {{
+      const style = {{
+        fontSize: currentFontSize,
+        textColor: textColorPicker?.value || '#ffffff',
+        accentColor: accentColorPicker?.value || '#00ff88',
+        cardBg: cardBgPicker?.value || '#111111',
+      }};
+      localStorage.setItem(STYLE_KEY, JSON.stringify(style));
+    }}
+
+    function globalFontSize(delta, shouldPersist = true) {{
+      currentFontSize = Math.max(9, Math.min(20, currentFontSize + delta));
+      getDashboardStyleTargets().forEach((el) => {{
+        el.style.fontSize = `${{currentFontSize}}px`;
+      }});
+      if (fontSizeDisplay) fontSizeDisplay.textContent = `${{currentFontSize}}px`;
+      if (content) content.style.fontSize = `${{currentFontSize}}px`;
+      fontSize = currentFontSize;
+      if (shouldPersist) saveStyle();
+    }}
+
+    function applyTextColor(color, shouldPersist = true) {{
+      getDashboardStyleTargets().forEach((el) => {{
+        el.style.color = color;
+      }});
+      document.querySelectorAll('.row-meta, .stat-meta, .timeline-message, .timeline-time, .card-subtitle, .subheading').forEach((el) => {{
+        el.style.color = color;
+      }});
+      if (textColorPicker && textColorPicker.value !== color) textColorPicker.value = color;
+      if (shouldPersist) saveStyle();
+    }}
+
+    function applyAccentColor(color, shouldPersist = true) {{
+      document.documentElement.style.setProperty('--green', color);
+      getAccentTargets().forEach((el) => {{
+        if (el.classList.contains('agent-bar-fill')) {{
+          if (!el.classList.contains('warning') && !el.classList.contains('danger')) {{
+            el.style.background = color;
+          }}
+        }} else {{
+          el.style.color = color;
+        }}
+      }});
+      if (accentColorPicker && accentColorPicker.value !== color) accentColorPicker.value = color;
+      if (shouldPersist) saveStyle();
+    }}
+
+    function applyCardBg(color, shouldPersist = true) {{
+      document.querySelectorAll('.dashboard-card, .dashboard-card .card').forEach((el) => {{
+        el.style.background = color;
+      }});
+      if (widget) widget.style.background = color;
+      if (cardBgPicker && cardBgPicker.value !== color) cardBgPicker.value = color;
+      if (shouldPersist) saveStyle();
+    }}
+
+    function applyPreset(name) {{
+      const preset = PRESETS[name];
+      if (!preset) return;
+      applyTextColor(preset.text, false);
+      applyAccentColor(preset.accent, false);
+      applyCardBg(preset.cardBg, false);
+      saveStyle();
+    }}
+
+    function loadStyle() {{
+      try {{
+        const saved = JSON.parse(localStorage.getItem(STYLE_KEY) || 'null');
+        if (!saved) return;
+        if (saved.fontSize) {{
+          currentFontSize = Number(saved.fontSize) || 12;
+          globalFontSize(0, false);
+        }} else if (fontSizeDisplay) {{
+          fontSizeDisplay.textContent = `${{currentFontSize}}px`;
+        }}
+        if (saved.textColor) applyTextColor(saved.textColor, false);
+        if (saved.accentColor) applyAccentColor(saved.accentColor, false);
+        if (saved.cardBg) applyCardBg(saved.cardBg, false);
+      }} catch (error) {{
+        // ignore corrupted saved style
+      }}
     }}
 
     function updateDashboardContainerHeight() {{
@@ -2314,13 +2459,17 @@ def build_admin_html(overview: dict) -> HTMLResponse:
         }};
       }});
       writeSavedLayout(layout);
+      saveStyle();
       exitEditMode();
       showToast('💾 บันทึก layout แล้ว');
     }}
 
     function resetLayout() {{
       localStorage.removeItem(LAYOUT_KEY);
+      localStorage.removeItem(STYLE_KEY);
       localStorage.removeItem('log-pos');
+      localStorage.removeItem('log-font-size');
+      localStorage.removeItem('log-widget-collapsed');
       location.reload();
     }}
 
@@ -2366,6 +2515,11 @@ def build_admin_html(overview: dict) -> HTMLResponse:
     window.exitEditMode = exitEditMode;
     window.saveLayout = saveLayout;
     window.resetLayout = resetLayout;
+    window.globalFontSize = globalFontSize;
+    window.applyTextColor = applyTextColor;
+    window.applyAccentColor = applyAccentColor;
+    window.applyCardBg = applyCardBg;
+    window.applyPreset = applyPreset;
 
     function updateLogContentHeight(totalHeight) {{
       if (!widget || !content) return;
@@ -2388,9 +2542,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
     }}
 
     function changeFontSize(delta) {{
-      fontSize = Math.max(8, Math.min(18, fontSize + delta));
-      if (content) content.style.fontSize = `${{fontSize}}px`;
-      localStorage.setItem('log-font-size', String(fontSize));
+      globalFontSize(delta);
     }}
 
     function toggleLog() {{
@@ -2517,16 +2669,8 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       isResizing = false;
     }});
 
-    const savedFontSize = localStorage.getItem('log-font-size');
-    if (savedFontSize) {{
-      const parsed = parseInt(savedFontSize, 10);
-      if (!Number.isNaN(parsed)) {{
-        fontSize = parsed;
-        if (content) content.style.fontSize = `${{fontSize}}px`;
-      }}
-    }}
-
     loadLayout();
+    loadStyle();
 
     collapsed = localStorage.getItem('log-widget-collapsed') === '1';
     if (collapsed && content && widget) {{
