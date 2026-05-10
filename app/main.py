@@ -45,6 +45,9 @@ _terminal_tokens: dict[str, float] = {}
 _ADMIN_OTP_CODE_KEY = "admin_otp_code"
 _ADMIN_OTP_EXPIRE_KEY = "admin_otp_expire"
 _ADMIN_OTP_LAST_SENT_KEY = "admin_otp_last_sent"
+_TERMINAL_OTP_CODE_KEY = "terminal_otp_code"
+_TERMINAL_OTP_EXPIRE_KEY = "terminal_otp_expire"
+_TERMINAL_OTP_LAST_SENT_KEY = "terminal_otp_last_sent"
 _ADMIN_SESSION_PREFIX = "admin_session:"
 OTP_EXPIRE = 300
 SESSION_EXPIRE = 7200
@@ -330,9 +333,9 @@ def _generate_session_token() -> str:
     return hashlib.sha256(f"{time.time()}{random.random()}".encode()).hexdigest()[:48]
 
 
-async def _send_otp_telegram(otp: str) -> None:
+async def _send_otp_telegram(otp: str, title: str = "Ener-AI Admin OTP") -> None:
     msg = (
-        "🔐 Ener-AI Admin OTP\n\n"
+        f"🔐 {title}\n\n"
         f"รหัส: *{otp}*\n\n"
         "หมดอายุใน 5 นาที\n"
         "ห้ามบอกใคร"
@@ -410,6 +413,34 @@ async def _clear_admin_otp() -> None:
     await _delete_memory_keys([
         _ADMIN_OTP_CODE_KEY,
         _ADMIN_OTP_EXPIRE_KEY,
+    ])
+
+
+async def _get_terminal_otp_state() -> dict[str, str]:
+    return await _get_memory_values(
+        [
+            _TERMINAL_OTP_CODE_KEY,
+            _TERMINAL_OTP_EXPIRE_KEY,
+            _TERMINAL_OTP_LAST_SENT_KEY,
+        ]
+    )
+
+
+async def _store_terminal_otp(otp: str, expires_at: float, sent_at: float) -> None:
+    await _set_memory_values(
+        {
+            _TERMINAL_OTP_CODE_KEY: otp,
+            _TERMINAL_OTP_EXPIRE_KEY: str(expires_at),
+            _TERMINAL_OTP_LAST_SENT_KEY: str(sent_at),
+        },
+        tag="terminal_otp",
+    )
+
+
+async def _clear_terminal_otp() -> None:
+    await _delete_memory_keys([
+        _TERMINAL_OTP_CODE_KEY,
+        _TERMINAL_OTP_EXPIRE_KEY,
     ])
 
 
@@ -3705,6 +3736,23 @@ async def admin_logs(request: Request):
 @app.get("/admin/terminal")
 async def terminal_page(request: Request):
     await _require_admin(request)
+    now = time.time()
+    otp_state = await _get_terminal_otp_state()
+    otp_code = otp_state.get(_TERMINAL_OTP_CODE_KEY, "")
+    try:
+        otp_expires_at = float(otp_state.get(_TERMINAL_OTP_EXPIRE_KEY, "0") or 0)
+    except Exception:
+        otp_expires_at = 0.0
+    has_valid_otp = bool(otp_code) and otp_expires_at > now
+    if not has_valid_otp:
+        otp = _generate_otp()
+        otp_expires_at = now + OTP_EXPIRE
+        await _store_terminal_otp(otp, otp_expires_at, now)
+        await _send_otp_telegram(otp, title="Ener-AI Terminal OTP")
+        terminal_status_copy = "📱 ส่ง Terminal OTP ไป Telegram แล้ว"
+    else:
+        terminal_status_copy = "📱 Terminal OTP ยังไม่หมดอายุ กรอกได้เลย"
+    initial_seconds = max(1, min(OTP_EXPIRE, int(otp_expires_at - now)))
     server_name = escape(str(getattr(settings, "server_host", "") or "my-ener.uk"))
     terminal_html = """<!DOCTYPE html>
 <html lang="th">
@@ -3814,20 +3862,37 @@ async def terminal_page(request: Request):
   </div>
   <div id="terminal-login">
     <h2>🔐 Terminal Access</h2>
-    <p>กรอก Terminal Password เพื่อเข้าใช้งาน</p>
-    <input type="password" id="term-pass" placeholder="Terminal Password" onkeydown="if(event.key==='Enter') verifyTerminal()">
+    <p>กรอก Terminal OTP เพื่อเข้าใช้งาน</p>
+    <div style="color:#00ff88;font-size:12px;margin-bottom:8px">__TERMINAL_STATUS__</div>
+    <input type="text" id="term-pass" placeholder="Terminal OTP" maxlength="6" onkeydown="if(event.key==='Enter') verifyTerminal()" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
     <button onclick="verifyTerminal()">เข้าใช้งาน</button>
-    <p id="term-error" style="color:red;display:none">Password ไม่ถูกต้อง</p>
+    <div id="term-timer" style="color:#ffaa00;font-size:12px;margin-top:8px">หมดอายุใน 5:00</div>
+    <button style="margin-top:10px;background:none;color:#777;border:none;text-decoration:underline" onclick="resendTerminalOtp()">ส่ง OTP ใหม่</button>
+    <p id="term-error" style="color:red;display:none">OTP ไม่ถูกต้อง</p>
   </div>
   <div id="terminal-container">
     <div id="terminal"></div>
   </div>
 
   <script>
+    let terminalSeconds = __INITIAL_TERMINAL_SECONDS__;
     let term = null;
     let fitAddon = null;
     let ws = null;
     let terminalInputBound = false;
+    const terminalTimer = setInterval(() => {
+      terminalSeconds -= 1;
+      const m = Math.floor(terminalSeconds / 60);
+      const s = terminalSeconds % 60;
+      const timerEl = document.getElementById('term-timer');
+      if (!timerEl) return;
+      timerEl.textContent = `หมดอายุใน ${m}:${String(Math.max(0, s)).padStart(2, '0')}`;
+      if (terminalSeconds <= 0) {
+        clearInterval(terminalTimer);
+        timerEl.textContent = '⏰ Terminal OTP หมดอายุแล้ว';
+        timerEl.style.color = '#ff4444';
+      }
+    }, 1000);
 
     function initTerminal(token) {{
       document.getElementById('terminal-login').style.display = 'none';
@@ -3874,7 +3939,7 @@ async def terminal_page(request: Request):
     }}
 
     async function verifyTerminal() {{
-      const pass = document.getElementById('term-pass').value;
+      const otp = document.getElementById('term-pass').value;
       const errorEl = document.getElementById('term-error');
       errorEl.style.display = 'none';
 
@@ -3882,13 +3947,39 @@ async def terminal_page(request: Request):
         method: 'POST',
         headers: {{ 'Content-Type': 'application/json' }},
         credentials: 'same-origin',
-        body: JSON.stringify({{ password: pass }}),
+        body: JSON.stringify({{ otp }}),
       }});
 
       if (res.ok) {{
         const data = await res.json();
         initTerminal(data.token);
       }} else {{
+        errorEl.style.display = 'block';
+      }}
+    }}
+
+    async function resendTerminalOtp() {{
+      const res = await fetch('/admin/terminal/resend', {{
+        method: 'POST',
+        credentials: 'same-origin',
+      }});
+      const errorEl = document.getElementById('term-error');
+      if (!res.ok) {{
+        errorEl.textContent = 'ส่ง OTP ไม่สำเร็จ';
+        errorEl.style.display = 'block';
+        return;
+      }}
+      const data = await res.json();
+      if (data.ok) {{
+        errorEl.textContent = '✅ ส่ง Terminal OTP ใหม่แล้ว';
+        errorEl.style.color = '#00ff88';
+        errorEl.style.display = 'block';
+        terminalSeconds = 300;
+        const timerEl = document.getElementById('term-timer');
+        if (timerEl) timerEl.style.color = '#ffaa00';
+      }} else if (typeof data.wait === 'number') {{
+        errorEl.textContent = `กรุณารอ ${{data.wait}} วินาที`;
+        errorEl.style.color = '#ffaa00';
         errorEl.style.display = 'block';
       }}
     }}
@@ -3962,6 +4053,8 @@ async def terminal_page(request: Request):
     return HTMLResponse(
         terminal_html
         .replace("__SERVER_NAME__", server_name)
+        .replace("__TERMINAL_STATUS__", escape(terminal_status_copy))
+        .replace("__INITIAL_TERMINAL_SECONDS__", str(initial_seconds))
         .replace("{{", "{")
         .replace("}}", "}")
     )
@@ -3972,15 +4065,41 @@ async def verify_terminal(request: Request):
     await _require_admin(request)
 
     body = await request.json()
-    password = str(body.get("password", ""))
-    if not secrets.compare_digest(password, settings.terminal_password):
-        raise HTTPException(status_code=401, detail="Invalid terminal password")
-
+    otp = str(body.get("otp", "")).strip()
     now = time.time()
+    otp_state = await _get_terminal_otp_state()
+    stored_otp = otp_state.get(_TERMINAL_OTP_CODE_KEY, "")
+    try:
+        otp_expires_at = float(otp_state.get(_TERMINAL_OTP_EXPIRE_KEY, "0") or 0)
+    except Exception:
+        otp_expires_at = 0.0
+    if not stored_otp or otp != stored_otp or now > otp_expires_at:
+        raise HTTPException(status_code=401, detail="Invalid terminal OTP")
+
+    await _clear_terminal_otp()
     _prune_terminal_tokens(now)
-    token = hashlib.sha256(f"{password}{now}{settings.admin_password}".encode()).hexdigest()[:32]
+    token = hashlib.sha256(f"{otp}{now}{settings.admin_password}".encode()).hexdigest()[:32]
     _terminal_tokens[token] = now
     return {"token": token}
+
+
+@app.post("/admin/terminal/resend")
+async def resend_terminal_otp(request: Request):
+    await _require_admin(request)
+    otp_state = await _get_terminal_otp_state()
+    now = time.time()
+    try:
+        last_sent = float(otp_state.get(_TERMINAL_OTP_LAST_SENT_KEY, "0") or 0)
+    except Exception:
+        last_sent = 0.0
+    if now - last_sent < 60:
+        remaining = int(60 - (now - last_sent))
+        return {"ok": False, "wait": remaining}
+
+    otp = _generate_otp()
+    await _store_terminal_otp(otp, now + OTP_EXPIRE, now)
+    await _send_otp_telegram(otp, title="Ener-AI Terminal OTP")
+    return {"ok": True}
 
 
 @app.websocket("/admin/terminal/ws")
