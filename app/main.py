@@ -1549,12 +1549,14 @@ def build_admin_html(overview: dict) -> HTMLResponse:
             for item in cost_breakdown
         )
         left_cards_html += f"""
-          <section class="card">
+          <section class="card chart-card">
             <div class="card-title">💰 COST BREAKDOWN</div>
             <div class="list-stack">{breakdown_rows}</div>
             <div class="chart-block">
               <div class="subheading">7-Day Cost</div>
-              <canvas id="cost7dChart" height="90"></canvas>
+              <div style="height:120px; width:100%; position:relative;">
+                <canvas id="costChart"></canvas>
+              </div>
             </div>
           </section>
         """
@@ -1813,6 +1815,10 @@ def build_admin_html(overview: dict) -> HTMLResponse:
     .agent-bar-fill.warning {{ background: var(--yellow); }}
     .agent-bar-fill.danger {{ background: var(--red); }}
     .chart-block {{ margin-top: 16px; }}
+    .chart-card {{
+      max-height: 200px;
+      overflow: hidden;
+    }}
     .timeline-card {{ min-height: 640px; }}
     .timeline-filters {{
       display: flex;
@@ -1933,7 +1939,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       }});
     }});
 
-    const costCanvas = document.getElementById("cost7dChart");
+    const costCanvas = document.getElementById("costChart");
     if (costCanvas) {{
       new Chart(costCanvas, {{
         type: "bar",
@@ -1951,26 +1957,21 @@ def build_admin_html(overview: dict) -> HTMLResponse:
           maintainAspectRatio: false,
           plugins: {{
             legend: {{ display: false }},
-            tooltip: {{
-              callbacks: {{
-                label: (ctx) => `฿${{Number(ctx.raw || 0).toFixed(2)}}`,
-              }},
-            }},
           }},
           scales: {{
             x: {{
               grid: {{ display: false }},
-              ticks: {{ color: "#888888" }},
-              border: {{ color: "#222222" }},
+              ticks: {{ color: "#888", font: {{ size: 10 }} }},
+              border: {{ color: "#222" }},
             }},
             y: {{
               beginAtZero: true,
-              grid: {{ color: "#1a1a1a" }},
+              grid: {{ color: "#222" }},
               ticks: {{
-                color: "#888888",
-                callback: (value) => `฿${{Number(value).toFixed(0)}}`,
+                color: "#888",
+                font: {{ size: 10 }},
               }},
-              border: {{ color: "#222222" }},
+              border: {{ color: "#222" }},
             }},
           }},
         }},
