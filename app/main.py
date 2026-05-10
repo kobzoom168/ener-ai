@@ -3693,9 +3693,7 @@ async def admin_logs(request: Request):
 async def terminal_page(request: Request):
     await _require_admin(request)
     server_name = escape(str(getattr(settings, "server_host", "") or "my-ener.uk"))
-
-    return HTMLResponse(
-        f"""<!DOCTYPE html>
+    terminal_html = """<!DOCTYPE html>
 <html lang="th">
 <head>
   <meta charset="utf-8">
@@ -3788,7 +3786,7 @@ async def terminal_page(request: Request):
 </head>
 <body>
   <div class="term-header">
-    <span>⚡ Ener-AI Terminal - {server_name}</span>
+    <span>⚡ Ener-AI Terminal - __SERVER_NAME__</span>
     <div style="display:flex;gap:12px;align-items:center">
       <span style="font-size:11px;color:#888">ผ่าน 2 ชั้น auth ก่อนใช้งาน terminal</span>
       <a href="/admin">← Admin</a>
@@ -3948,6 +3946,11 @@ async def terminal_page(request: Request):
   </script>
 </body>
 </html>"""
+    return HTMLResponse(
+        terminal_html
+        .replace("__SERVER_NAME__", server_name)
+        .replace("{{", "{")
+        .replace("}}", "}")
     )
 
 
