@@ -330,27 +330,42 @@ def _extract_upvotes(entry: object) -> int | None:
 
 
 def _pick_top_items(items: list[dict[str, str]]) -> list[dict[str, str]]:
-    selected: list[dict[str, str]] = []
-    per_category_limit = 3
-    total_limit = 8
-    counts = {category: 0 for category in _CATEGORY_ORDER}
+    GUARANTEED = {"mystery": 1, "security": 1}
+    PER_CATEGORY_LIMIT = 3
+    TOTAL_LIMIT = 9
 
     ranked = sorted(
         items,
         key=lambda item: (
             1 if _is_hospital_security_story(item["topic_text"]) else 0,
-            item.get("match_score", 0) + _category_bonus(item.get("category", "ai"), item["topic_text"]),
+            item.get("match_score", 0) + _category_bonus(
+                item.get("category", "ai"), item["topic_text"]
+            ),
         ),
         reverse=True,
     )
 
+    selected: list[dict[str, str]] = []
+    counts: dict[str, int] = {category: 0 for category in _CATEGORY_ORDER}
+
+    for category, minimum in GUARANTEED.items():
+        for item in ranked:
+            if item.get("category") != category:
+                continue
+            if counts.get(category, 0) >= minimum:
+                break
+            selected.append(item)
+            counts[category] = counts.get(category, 0) + 1
+
     for item in ranked:
+        if item in selected:
+            continue
         category = item.get("category", "ai")
-        if counts.get(category, 0) >= per_category_limit:
+        if counts.get(category, 0) >= PER_CATEGORY_LIMIT:
             continue
         selected.append(item)
         counts[category] = counts.get(category, 0) + 1
-        if len(selected) >= total_limit:
+        if len(selected) >= TOTAL_LIMIT:
             break
 
     return selected
@@ -490,16 +505,21 @@ async def fetch_and_summarize() -> str:
                 }
             )
 
-    if len(items) < 8 and settings.gemini_api_key:
+    if len(items) < 9 and settings.gemini_api_key:
         try:
             from app.core.ai import _gemini_grounded_search
             from datetime import date as _date
 
             today_str = _date.today().strftime("%d %B %Y")
-            gemini_result = await _gemini_grounded_search(
-                f"ข่าวเทคโนโลยี AI ความมั่นคงไซเบอร์ ธุรกิจไทย น่าสนใจ วันนี้ {today_str}"
-            )
-            if gemini_result and "⚠️" not in gemini_result:
+            search_queries = [
+                f"ข่าวเทคโนโลยี AI ความมั่นคงไซเบอร์ ธุรกิจไทย น่าสนใจ วันนี้ {today_str}",
+                f"UFO UAP alien sighting darkweb cybercrime mystery news today {today_str}",
+            ]
+
+            for search_query in search_queries:
+                gemini_result = await _gemini_grounded_search(search_query)
+                if not gemini_result or "⚠️" in gemini_result:
+                    continue
                 for line in gemini_result.split("\n"):
                     line = line.strip()
                     if not line.startswith("🔗"):
@@ -507,6 +527,8 @@ async def fetch_and_summarize() -> str:
                     url = line.replace("🔗", "").strip()
                     if not url.startswith("http"):
                         continue
+                    from urllib.parse import urlparse
+
                     domain = urlparse(url).netloc.replace("www.", "")
                     topic_text = gemini_result.lower()
                     if not _matches_topic(topic_text) or url in seen_links:
