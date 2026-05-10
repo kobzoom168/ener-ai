@@ -63,6 +63,8 @@ _AGENT_AI_MAP = {
     "MemoryAgent": "memory",
     "MemoryKeeper": "memorykeeper",
     "MemoryCurator": "memorycurator",
+    "BriefingAgent": "briefing",
+    "GithubAgent": "github",
     "SessionAgent": "session",
     "CodeAgent": "code",
     "ContentAgent": "content",

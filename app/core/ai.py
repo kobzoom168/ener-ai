@@ -27,14 +27,31 @@ _FALLBACK_SEQUENCE = ["groq", "haiku", "qwen3b"]
 
 
 def _estimate_cost_thb(model: str, prompt_tokens: int, completion_tokens: int) -> float:
-    if model != "haiku":
+    normalized = _normalize_model_name(model)
+    if normalized != "haiku":
         return 0.0
     usd_cost = (prompt_tokens / 1_000_000 * 0.80) + (completion_tokens / 1_000_000 * 4.00)
     return usd_cost * 33
 
 
+def _normalize_model_name(model: str) -> str:
+    lowered = str(model or "").strip().lower()
+    if "haiku" in lowered:
+        return "haiku"
+    if "groq" in lowered or "llama" in lowered:
+        return "groq"
+    if "gemini" in lowered:
+        return "gemini"
+    if "qwen" in lowered:
+        if "3b" in lowered:
+            return "qwen3b"
+        return "qwen7b"
+    return str(model or "").strip()
+
+
 def get_model_label(model_key: str) -> str:
-    return _MODEL_LABELS.get(model_key, "Claude Haiku")
+    normalized = _normalize_model_name(model_key)
+    return _MODEL_LABELS.get(normalized, "Claude Haiku")
 
 
 async def get_active_model() -> str:
@@ -60,6 +77,7 @@ async def _log_ai_run(
     response_time_ms: int,
     success: bool,
 ):
+    normalized = _normalize_model_name(model)
     async with get_db() as db:
         await db.execute(
             """
@@ -69,11 +87,11 @@ async def _log_ai_run(
             """,
             (
                 agent,
-                model,
+                normalized,
                 prompt_tokens,
                 completion_tokens,
                 response_time_ms,
-                _estimate_cost_thb(model, prompt_tokens, completion_tokens),
+                _estimate_cost_thb(normalized, prompt_tokens, completion_tokens),
                 1 if success else 0,
             ),
         )

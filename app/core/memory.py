@@ -2,7 +2,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from app.core.ai import chat_json
 from app.core.database import get_db
-from app.core.policy import build_system_prompt
+from app.core.policy import OWNER_LOCATION, build_system_prompt
 
 _BANGKOK = ZoneInfo("Asia/Bangkok")
 _MAX_CONTEXT_CHARS = 1800
@@ -75,6 +75,13 @@ def get_time_context() -> str:
     weekday = _THAI_WEEKDAYS[now.weekday()]
     month = _THAI_MONTHS[now.month]
     return f"วันและเวลาปัจจุบัน: {weekday} {now.day} {month} {now.year} เวลา {now.hour:02d}:{now.minute:02d} น."
+
+
+async def get_current_location() -> str:
+    now = datetime.now(_BANGKOK)
+    if now.weekday() < 5 and 8 <= now.hour < 18:
+        return f"ใกล้ที่ทำงาน: {OWNER_LOCATION['work']}"
+    return f"ใกล้บ้าน: {OWNER_LOCATION['home']}"
 
 
 async def get_long_term_context() -> str:

@@ -11,7 +11,7 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
-from app.agents import gmail_agent, log_keeper, memory_curator, memory_keeper
+from app.agents import github_agent, gmail_agent, log_keeper, memory_curator, memory_keeper
 from app.agents.monitor_agent import cmd_errors, cmd_logs, cmd_server, cmd_status
 from app.agents.news_discovery import approve_source, list_active_sources, list_pending_sources
 from app.agents.vision_agent import analyze_image as vision_analyze
@@ -328,6 +328,52 @@ async def cmd_memory_curate(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await _reply(update, result)
 
 
+async def cmd_github(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+
+    args = ctx.args or []
+    if not args:
+        prs = await github_agent.list_prs(_agent_triggered_by="user")
+        issues = await github_agent.list_issues(_agent_triggered_by="user")
+        await _reply(update, f"{prs}\n\n{issues}")
+        return
+
+    subcommand = str(args[0]).strip().lower()
+    if subcommand == "prs":
+        repo_name = str(args[1]).strip() if len(args) > 1 else None
+        result = await github_agent.list_prs(repo_name, _agent_triggered_by="user")
+        await _reply(update, result)
+        return
+
+    if subcommand == "issues":
+        repo_name = str(args[1]).strip() if len(args) > 1 else None
+        result = await github_agent.list_issues(repo_name, _agent_triggered_by="user")
+        await _reply(update, result)
+        return
+
+    if subcommand == "repos":
+        result = await github_agent.list_repos(_agent_triggered_by="user")
+        await _reply(update, result)
+        return
+
+    if subcommand == "read":
+        if len(args) < 3:
+            await _reply(update, "📌 ใช้แบบนี้: /github read <repo> <path>", enable_tts=False)
+            return
+        repo_name = str(args[1]).strip()
+        file_path = " ".join(args[2:]).strip()
+        result = await github_agent.read_file(repo_name, file_path, _agent_triggered_by="user")
+        await _reply(update, result)
+        return
+
+    await _reply(
+        update,
+        "📌 ใช้ /github, /github prs, /github issues, /github repos, หรือ /github read <repo> <path>",
+        enable_tts=False,
+    )
+
+
 async def cmd_location(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
@@ -538,6 +584,11 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/memory          — ดู long-term memory ทั้งหมด\n"
         "/memory_sync     — สกัด memory ล่าสุดและลบรายการซ้ำ\n"
         "/memory_curate   — รวม memory เป็น profile cards\n"
+        "/github          — ดู PRs และ Issues\n"
+        "/github prs      — ดู open PRs\n"
+        "/github issues   — ดู open Issues\n"
+        "/github repos    — ดู repos ทั้งหมด\n"
+        "/github read <repo> <path> — อ่านไฟล์ใน repo\n"
         "/location        — ดู location บ้านและที่ทำงาน\n"
         "/location home   — ดู Maps ใกล้บ้าน\n"
         "/location work   — ดู Maps ใกล้ที่ทำงาน\n"
@@ -614,6 +665,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("memory", cmd_memory))
     app.add_handler(CommandHandler("memory_sync", cmd_memory_sync))
     app.add_handler(CommandHandler("memory_curate", cmd_memory_curate))
+    app.add_handler(CommandHandler("github", cmd_github))
     app.add_handler(CommandHandler("location", cmd_location))
     app.add_handler(CommandHandler("code", cmd_code))
     app.add_handler(CommandHandler("ener", cmd_ener))

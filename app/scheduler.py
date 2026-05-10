@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from telegram import Bot
-from app.agents import gmail_agent, log_keeper, memory_curator, memory_keeper, monitor_agent, news, news_discovery, session_agent, summary
+from app.agents import briefing_agent, log_keeper, memory_curator, memory_keeper, monitor_agent, news, news_discovery, session_agent, summary
 from app.core.agents import log_agent_run
 from app.core.config import settings
 from app.core.database import get_db
@@ -68,13 +68,13 @@ async def _send_warning(bot: Bot, details: str, action: str):
 def build_scheduler(bot: Bot) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=_BANGKOK)
 
-    async def send_daily_news():
-        message = await news.fetch_and_summarize(_agent_triggered_by="scheduler")
-        await _send_scheduled_message(bot, message, "scheduled_news_sent")
-
-    async def send_daily_email_summary():
-        message = await gmail_agent.summarize_emails(_agent_triggered_by="scheduler")
-        await _send_scheduled_message(bot, message, "scheduled_email_summary_sent")
+    async def send_morning_briefing():
+        try:
+            await news.fetch_and_summarize(_agent_triggered_by="scheduler")
+        except Exception:
+            pass
+        message = await briefing_agent.generate_morning_briefing(_agent_triggered_by="scheduler")
+        await _send_scheduled_message(bot, message, "scheduled_morning_briefing_sent")
 
     async def send_daily_summary():
         message = await summary.generate_daily_summary(_agent_triggered_by="scheduler")
@@ -225,15 +225,9 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
             await db.commit()
 
     scheduler.add_job(
-        send_daily_email_summary,
+        send_morning_briefing,
         CronTrigger(hour=8, minute=0, timezone=_BANGKOK),
-        id="daily_email_summary",
-        replace_existing=True,
-    )
-    scheduler.add_job(
-        send_daily_news,
-        CronTrigger(hour=8, minute=0, timezone=_BANGKOK),
-        id="daily_news",
+        id="morning_briefing",
         replace_existing=True,
     )
     scheduler.add_job(

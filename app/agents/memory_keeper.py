@@ -235,15 +235,33 @@ async def extract_from_recent_messages(chat_id: str, limit: int = 50) -> int:
             """,
             (chat_id, limit),
         )
-        rows = await cursor.fetchall()
+        msg_rows = await cursor.fetchall()
 
-    if not rows:
+        cursor = await db.execute(
+            """
+            SELECT key_insights, decisions_made
+            FROM session_logs
+            ORDER BY log_date DESC
+            LIMIT 3
+            """
+        )
+        session_rows = await cursor.fetchall()
+
+    if not msg_rows and not session_rows:
         return 0
 
-    conv_text = "\n".join(
+    session_text = ""
+    for session in session_rows:
+        if session["key_insights"]:
+            session_text += f"insights: {session['key_insights']}\n"
+        if session["decisions_made"]:
+            session_text += f"decisions: {session['decisions_made']}\n"
+
+    message_text = "\n".join(
         f"{row['role']}: {str(row['content'])[:200]}"
-        for row in reversed(rows)
+        for row in reversed(msg_rows)
     )
+    conv_text = (session_text + "\n" + message_text).strip()
 
     try:
         result = await chat_json(
@@ -305,7 +323,10 @@ async def extract_from_recent_messages(chat_id: str, limit: int = 50) -> int:
 
         await db.execute(
             "INSERT INTO audit_logs (action, details) VALUES (?, ?)",
-            ("memory_keeper_extract", f"chat_id={chat_id} saved={saved} scanned={len(rows)}"),
+            (
+                "memory_keeper_extract",
+                f"chat_id={chat_id} saved={saved} scanned={len(msg_rows)} sessions={len(session_rows)}",
+            ),
         )
         await db.commit()
 

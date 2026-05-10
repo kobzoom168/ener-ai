@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from app.core.ai import chat
 from app.core.agents import log_agent_run
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.policy import build_system_prompt
 
@@ -25,6 +26,9 @@ _WEEKLY_SUMMARY_SYSTEM = build_system_prompt("""
 - ห้ามเกริ่นนำยาว
 - ไม่ต้องใส่ markdown code block
 """)
+_TODAY_CHAT_SYSTEM = build_system_prompt("""
+สรุปบทสนทนาวันนี้เป็นภาษาไทย 2-3 ประโยค บอกว่าคุยเรื่องอะไร ตัดสินใจอะไร
+""")
 
 
 @log_agent_run("DigestAgent", triggered_by="scheduler")
@@ -43,13 +47,13 @@ async def generate_daily_summary() -> str:
             """
             SELECT role, content
             FROM messages
-            WHERE date(created_at, 'localtime') = ?
-            ORDER BY id DESC
-            LIMIT 20
+            WHERE chat_id = ?
+              AND date(created_at, '+7 hours') = date('now', '+7 hours')
+            ORDER BY created_at
             """,
-            (today.isoformat(),),
+            (settings.telegram_chat_id,),
         )
-        message_rows = await cursor.fetchall()
+        chat_rows = await cursor.fetchall()
 
         cursor = await db.execute(
             """
@@ -93,21 +97,15 @@ async def generate_daily_summary() -> str:
                     closed_tasks += 1
 
         chat_summary = "ยังไม่มีบทสนทนาสำคัญวันนี้"
-        if message_rows:
-            transcript_lines = [
-                f"- {row['role']}: {' '.join(str(row['content']).split())[:180]}"
-                for row in reversed(message_rows)
-            ]
-            prompt = (
-                f"สรุปบทสนทนาของกบในวันที่ {today.isoformat()} แบบสั้นมาก ไม่เกิน 4 บรรทัด\n\n"
-                + "\n".join(transcript_lines)
-                + "\n\n"
-                + "เน้นเรื่องที่กบพูดถึงจริง งานค้าง ความกังวล แผน หรือข้อมูลสำคัญ"
+        if chat_rows:
+            transcript = "\n".join(
+                f"{row['role']}: {str(row['content'])[:100]}"
+                for row in chat_rows[-30:]
             )
             chat_summary = (
                 await chat(
-                    prompt,
-                    system=_DAILY_CHAT_SUMMARY_SYSTEM,
+                    transcript,
+                    system=_TODAY_CHAT_SYSTEM,
                     agent="summary",
                 )
             ).strip() or chat_summary
