@@ -162,76 +162,42 @@ TOOLS = [
         },
     },
     {
-        "name": "search_web",
+        "name": "make_maps_links",
         "description": (
-            "ค้นหาข้อมูลจากอินเทอร์เน็ตจริงๆ ใช้เมื่อกบถามเรื่องที่ต้องการข้อมูลปัจจุบัน "
-            "เช่น ร้านอาหาร สถานที่ ข่าว ราคา หรือข้อมูลที่ AI ไม่รู้แน่ชัด "
-            "ห้ามสร้าง URL ปลอม ให้ใช้ tool นี้แทนเสมอเมื่อต้องการ link จริง"
+            "สร้าง Google Maps link จริงจากชื่อร้านหรือสถานที่ที่รู้ "
+            "ใช้เมื่อกบถามหาสถานที่และต้องการ link แนบ "
+            "ห้ามสร้าง link เองโดยไม่ใช้ tool นี้"
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "คำค้นหา เช่น 'ร้านเหล้าแถวอุบลราชธานี พร้อมที่อยู่'"
-                },
-                "count": {
-                    "type": "integer",
-                    "description": "จำนวนผลลัพธ์ที่ต้องการ (1-10, default 5)",
+                "places": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "รายชื่อสถานที่ เช่น ['ร้านเหล้าแม่ค่า อุบลราชธานี', 'ร้านเหล้าพ่อพี อุบลราชธานี']",
                 },
             },
-            "required": ["query"],
+            "required": ["places"],
         },
     },
 ]
 
 
-async def _brave_search(query: str, count: int = 5) -> str:
-    """Call Brave Search API and return formatted results with real URLs."""
-    import httpx
+def _make_maps_links(places: list[str]) -> str:
+    """Generate real Google Maps search URLs from place names."""
+    import urllib.parse
 
-    from app.core.config import settings
-
-    api_key = settings.brave_api_key
-    if not api_key:
-        return "⚠️ ยังไม่ได้ตั้งค่า BRAVE_API_KEY ใน .env"
-
-    count = max(1, min(10, int(count or 5)))
-    headers = {
-        "Accept": "application/json",
-        "Accept-Encoding": "gzip",
-        "X-Subscription-Token": api_key,
-    }
-    params = {"q": query, "count": count, "country": "TH", "search_lang": "th"}
-
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                "https://api.search.brave.com/res/v1/web/search",
-                headers=headers,
-                params=params,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-    except Exception as exc:
-        return f"⚠️ ค้นหาไม่สำเร็จ: {exc}"
-
-    results = data.get("web", {}).get("results", [])
-    if not results:
-        return f"ไม่พบผลลัพธ์สำหรับ: {query}"
-
-    lines = [f"🔍 ผลการค้นหา: {query}\n"]
-    for i, result in enumerate(results, 1):
-        title = str(result.get("title", "")).strip()
-        url = str(result.get("url", "")).strip()
-        desc = str(result.get("description", "")).strip()[:120]
-        lines.append(f"{i}. {title}")
-        if desc:
-            lines.append(f"   {desc}")
-        if url:
-            lines.append(f"   🔗 {url}")
-        lines.append("")
-
+    if not places:
+        return "ไม่มีชื่อสถานที่"
+    lines = ["📍 Google Maps Links:\n"]
+    for place in places:
+        place = str(place).strip()
+        if not place:
+            continue
+        encoded = urllib.parse.quote_plus(place)
+        url = f"https://www.google.com/maps/search/{encoded}"
+        lines.append(f"• {place}")
+        lines.append(f"  🗺️ {url}\n")
     return "\n".join(lines)
 
 
@@ -335,11 +301,10 @@ async def execute_tool(tool_name: str, tool_input: dict) -> str:
             _agent_triggered_by="agent",
         )
 
-    if tool_name == "search_web":
-        query = str(payload.get("query", "")).strip()
-        count = int(payload.get("count", 5))
-        if not query:
-            return "กรุณาระบุคำค้นหา"
-        return await _brave_search(query, count)
+    if tool_name == "make_maps_links":
+        places = payload.get("places", [])
+        if isinstance(places, str):
+            places = [places]
+        return _make_maps_links(list(places))
 
     return f"ไม่รู้จัก tool: {tool_name}"
