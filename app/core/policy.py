@@ -53,6 +53,7 @@ TASK_MODEL_MAP = {
     "session": "haiku",
     "logkeeper": "haiku",
     "memorykeeper": "groq",
+    "memorycurator": "haiku",
     "code": "groq",
     "content": "groq",
     "ener": "haiku",

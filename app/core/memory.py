@@ -78,15 +78,12 @@ def get_time_context() -> str:
 
 
 async def get_long_term_context() -> str:
+    from app.agents.memory_curator import get_curated_context
+
     async with get_db() as db:
         belief_rows = await (
             await db.execute(
                 "SELECT topic, belief FROM beliefs ORDER BY created_at DESC LIMIT 20"
-            )
-        ).fetchall()
-        long_term_rows = await (
-            await db.execute(
-                "SELECT content FROM long_term_memories ORDER BY created_at DESC LIMIT 20"
             )
         ).fetchall()
         task_rows = await (
@@ -107,6 +104,7 @@ async def get_long_term_context() -> str:
                 """
             )
         ).fetchall()
+    curated_context = await get_curated_context()
 
     lines = [
         get_time_context(),
@@ -126,9 +124,9 @@ async def get_long_term_context() -> str:
 
     used_chars = _append_with_budget(lines, "", used_chars)
     used_chars = _append_with_budget(lines, "=== ความจำระยะยาว ===", used_chars)
-    if long_term_rows:
-        for row in long_term_rows:
-            entry = f"- {_compact(row['content'], 100)}"
+    if curated_context:
+        for entry_line in curated_context.splitlines():
+            entry = _compact(entry_line, 160)
             used_chars = _append_with_budget(lines, entry, used_chars)
     else:
         used_chars = _append_with_budget(lines, "- ยังไม่มี", used_chars)

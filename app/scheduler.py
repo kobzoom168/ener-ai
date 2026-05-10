@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from telegram import Bot
-from app.agents import gmail_agent, log_keeper, memory_keeper, monitor_agent, news, news_discovery, session_agent, summary
+from app.agents import gmail_agent, log_keeper, memory_curator, memory_keeper, monitor_agent, news, news_discovery, session_agent, summary
 from app.core.agents import log_agent_run
 from app.core.config import settings
 from app.core.database import get_db
@@ -124,6 +124,10 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
             _agent_triggered_by="scheduler",
         )
         await _log_audit("scheduled_memory_keeper_run", result)
+
+    async def run_memory_curator_sync():
+        result = await memory_curator.curate_memories(_agent_triggered_by="scheduler")
+        await _log_audit("scheduled_memory_curator_run", result)
 
     @log_agent_run("MonitorAgent", triggered_by="scheduler")
     async def monitor_check():
@@ -254,6 +258,12 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
         run_memory_keeper_sync,
         CronTrigger(hour=22, minute=30, timezone=_BANGKOK),
         id="memory_keeper_sync",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        run_memory_curator_sync,
+        CronTrigger(hour=23, minute=0, timezone=_BANGKOK),
+        id="memory_curator_sync",
         replace_existing=True,
     )
     scheduler.add_job(

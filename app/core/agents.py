@@ -62,6 +62,7 @@ _AGENT_AI_MAP = {
     "ThinkTeam": "brainstorm",
     "MemoryAgent": "memory",
     "MemoryKeeper": "memorykeeper",
+    "MemoryCurator": "memorycurator",
     "SessionAgent": "session",
     "CodeAgent": "code",
     "ContentAgent": "content",

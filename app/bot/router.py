@@ -11,7 +11,7 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
-from app.agents import gmail_agent, log_keeper, memory_keeper
+from app.agents import gmail_agent, log_keeper, memory_curator, memory_keeper
 from app.agents.monitor_agent import cmd_errors, cmd_logs, cmd_server, cmd_status
 from app.agents.news_discovery import approve_source, list_active_sources, list_pending_sources
 from app.agents.vision_agent import analyze_image as vision_analyze
@@ -321,6 +321,13 @@ async def cmd_memory_sync(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await _reply(update, result)
 
 
+async def cmd_memory_curate(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+    result = await memory_curator.curate_memories(_agent_triggered_by="user")
+    await _reply(update, result)
+
+
 async def cmd_location(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
@@ -530,6 +537,7 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/forget <คำค้น>  — ลบ long-term memory ที่ตรงคำค้น\n"
         "/memory          — ดู long-term memory ทั้งหมด\n"
         "/memory_sync     — สกัด memory ล่าสุดและลบรายการซ้ำ\n"
+        "/memory_curate   — รวม memory เป็น profile cards\n"
         "/location        — ดู location บ้านและที่ทำงาน\n"
         "/location home   — ดู Maps ใกล้บ้าน\n"
         "/location work   — ดู Maps ใกล้ที่ทำงาน\n"
@@ -605,6 +613,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("forget", cmd_forget))
     app.add_handler(CommandHandler("memory", cmd_memory))
     app.add_handler(CommandHandler("memory_sync", cmd_memory_sync))
+    app.add_handler(CommandHandler("memory_curate", cmd_memory_curate))
     app.add_handler(CommandHandler("location", cmd_location))
     app.add_handler(CommandHandler("code", cmd_code))
     app.add_handler(CommandHandler("ener", cmd_ener))
