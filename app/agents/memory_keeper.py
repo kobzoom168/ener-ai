@@ -77,6 +77,13 @@ _JUNK_PATTERNS = [
     r"ผู้ใช้ต้องการ",
     r"^log",
 ]
+OTP_PATTERNS = [
+    r"Ener-AI Admin OTP",
+    r"รหัส:\s*\d{6}",
+    r"หมดอายุใน 5 นาที",
+    r"ห้ามบอกใคร",
+    r"admin_otp",
+]
 _ENTITY_KEYWORDS = [
     "หมา",
     "สุนัข",
@@ -131,6 +138,8 @@ def _normalize_category(value: object) -> str:
 def _is_junk(content: str) -> bool:
     text = " ".join(str(content or "").split()).strip()
     if not text:
+        return True
+    if any(re.search(pattern, text, re.IGNORECASE) for pattern in OTP_PATTERNS):
         return True
     if any(re.search(pattern, text, re.IGNORECASE) for pattern in _JUNK_PATTERNS):
         return True

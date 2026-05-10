@@ -42,11 +42,12 @@ _ALLOWED_UPLOAD_PATHS = [
 ]
 _TERMINAL_TOKEN_TTL_SECONDS = 1800
 _terminal_tokens: dict[str, float] = {}
-_otp_store: dict[str, float] = {}
 _session_store: dict[str, float] = {}
+_ADMIN_OTP_CODE_KEY = "admin_otp_code"
+_ADMIN_OTP_EXPIRE_KEY = "admin_otp_expire"
+_ADMIN_OTP_LAST_SENT_KEY = "admin_otp_last_sent"
 OTP_EXPIRE = 300
 SESSION_EXPIRE = 7200
-_last_otp_sent: float = 0.0
 _RANGE_OPTIONS = ["1h", "3h", "10h", "24h", "7d"]
 _AGENT_ORDER = [
     "MainChatAgent",
@@ -343,11 +344,73 @@ async def _send_otp_telegram(otp: str) -> None:
     )
 
 
-def _prune_otp_store(now: float | None = None) -> None:
-    current = now if now is not None else time.time()
-    expired = [otp for otp, expires_at in _otp_store.items() if current > expires_at]
-    for otp in expired:
-        _otp_store.pop(otp, None)
+async def _get_memory_values(keys: list[str]) -> dict[str, str]:
+    if not keys:
+        return {}
+    placeholders = ", ".join("?" for _ in keys)
+    async with get_db() as db:
+        cursor = await db.execute(
+            f"SELECT key, value FROM memories WHERE key IN ({placeholders})",
+            tuple(keys),
+        )
+        rows = await cursor.fetchall()
+    return {str(row["key"]): str(row["value"] or "") for row in rows}
+
+
+async def _set_memory_values(values: dict[str, str], tag: str = "system") -> None:
+    if not values:
+        return
+    async with get_db() as db:
+        for key, value in values.items():
+            await db.execute(
+                """
+                INSERT INTO memories (key, value, tag)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    tag = excluded.tag,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (key, value, tag),
+            )
+        await db.commit()
+
+
+async def _delete_memory_keys(keys: list[str]) -> None:
+    if not keys:
+        return
+    placeholders = ", ".join("?" for _ in keys)
+    async with get_db() as db:
+        await db.execute(f"DELETE FROM memories WHERE key IN ({placeholders})", tuple(keys))
+        await db.commit()
+
+
+async def _get_admin_otp_state() -> dict[str, str]:
+    return await _get_memory_values(
+        [
+            _ADMIN_OTP_CODE_KEY,
+            _ADMIN_OTP_EXPIRE_KEY,
+            _ADMIN_OTP_LAST_SENT_KEY,
+        ]
+    )
+
+
+async def _store_admin_otp(otp: str, expires_at: float, sent_at: float) -> None:
+    await _set_memory_values(
+        {
+            _ADMIN_OTP_CODE_KEY: otp,
+            _ADMIN_OTP_EXPIRE_KEY: str(expires_at),
+            _ADMIN_OTP_LAST_SENT_KEY: str(sent_at),
+        },
+        tag="admin_otp",
+    )
+
+
+async def _clear_admin_otp() -> None:
+    await _delete_memory_keys([
+        _ADMIN_OTP_CODE_KEY,
+        _ADMIN_OTP_EXPIRE_KEY,
+    ])
 
 
 def _prune_session_store(now: float | None = None) -> None:
@@ -3408,29 +3471,32 @@ async def admin_dashboard(request: Request):
 
 @app.get("/admin/otp")
 async def otp_page(request: Request):
-    global _last_otp_sent
     if _is_valid_session(request):
         return RedirectResponse("/admin", status_code=303)
 
     _validate_admin_basic_auth(request)
     now = time.time()
-    _prune_otp_store(now)
-    has_valid_otp = any(exp > now for exp in _otp_store.values())
+    otp_state = await _get_admin_otp_state()
+    otp_code = otp_state.get(_ADMIN_OTP_CODE_KEY, "")
+    try:
+        otp_expires_at = float(otp_state.get(_ADMIN_OTP_EXPIRE_KEY, "0") or 0)
+    except Exception:
+        otp_expires_at = 0.0
+
+    has_valid_otp = bool(otp_code) and otp_expires_at > now
 
     if not has_valid_otp:
         otp = _generate_otp()
-        _otp_store.clear()
-        _otp_store[otp] = now + OTP_EXPIRE
+        otp_expires_at = now + OTP_EXPIRE
+        await _store_admin_otp(otp, otp_expires_at, now)
         await _send_otp_telegram(otp)
-        _last_otp_sent = now
         just_sent = True
     else:
         just_sent = False
 
     status_copy = "📱 ส่ง OTP ไป Telegram แล้ว" if just_sent else "📱 OTP ยังไม่หมดอายุ กรอกได้เลย"
-
-    return HTMLResponse(
-        f"""<!DOCTYPE html>
+    initial_seconds = max(1, min(OTP_EXPIRE, int(otp_expires_at - now)))
+    otp_html = """<!DOCTYPE html>
 <html lang="th">
 <head>
   <meta charset="utf-8">
@@ -3483,7 +3549,7 @@ async def otp_page(request: Request):
   <div class="otp-box">
     <h2>🔐 Admin Access</h2>
     <p>OTP ส่งไป Telegram แล้วครับ</p>
-    <div class="sent-msg">{status_copy}</div>
+    <div class="sent-msg">__STATUS_COPY__</div>
 
     <form method="POST" action="/admin/otp/verify">
       <input type="text" name="otp" class="otp-input"
@@ -3499,7 +3565,7 @@ async def otp_page(request: Request):
   </div>
 
   <script>
-    let seconds = 300;
+    let seconds = __INITIAL_SECONDS__;
     const timer = setInterval(() => {
       seconds--;
       const m = Math.floor(seconds / 60);
@@ -3528,13 +3594,18 @@ async def otp_page(request: Request):
         seconds = 300;
         document.getElementById('timer').style.color = '#ffaa00';
       } else if (typeof data.wait === 'number') {
-        document.getElementById('msg').textContent = `กรุณารอ ${{data.wait}} วินาที`;
+        document.getElementById('msg').textContent = `กรุณารอ ${data.wait} วินาที`;
         document.getElementById('msg').style.color = '#ffaa00';
       }
     }
   </script>
 </body>
 </html>"""
+
+    return HTMLResponse(
+        otp_html
+        .replace("__STATUS_COPY__", escape(status_copy))
+        .replace("__INITIAL_SECONDS__", str(initial_seconds))
     )
 
 
@@ -3544,9 +3615,14 @@ async def verify_otp(request: Request):
     form = await request.form()
     otp = str(form.get("otp", "")).strip()
     now = time.time()
-    _prune_otp_store(now)
+    otp_state = await _get_admin_otp_state()
+    stored_otp = otp_state.get(_ADMIN_OTP_CODE_KEY, "")
+    try:
+        otp_expires_at = float(otp_state.get(_ADMIN_OTP_EXPIRE_KEY, "0") or 0)
+    except Exception:
+        otp_expires_at = 0.0
 
-    if otp not in _otp_store or now > _otp_store[otp]:
+    if not stored_otp or otp != stored_otp or now > otp_expires_at:
         return HTMLResponse(
             """
         <script>
@@ -3556,7 +3632,7 @@ async def verify_otp(request: Request):
         """
         )
 
-    _otp_store.pop(otp, None)
+    await _clear_admin_otp()
     token = _generate_session_token()
     _session_store[token] = now + SESSION_EXPIRE
 
@@ -3573,17 +3649,19 @@ async def verify_otp(request: Request):
 
 @app.post("/admin/otp/resend")
 async def resend_otp(request: Request):
-    global _last_otp_sent
     _validate_admin_basic_auth(request)
+    otp_state = await _get_admin_otp_state()
     now = time.time()
-    if now - _last_otp_sent < 60:
-        remaining = int(60 - (now - _last_otp_sent))
+    try:
+        last_sent = float(otp_state.get(_ADMIN_OTP_LAST_SENT_KEY, "0") or 0)
+    except Exception:
+        last_sent = 0.0
+    if now - last_sent < 60:
+        remaining = int(60 - (now - last_sent))
         return {"ok": False, "wait": remaining}
 
     otp = _generate_otp()
-    _otp_store.clear()
-    _otp_store[otp] = now + OTP_EXPIRE
-    _last_otp_sent = now
+    await _store_admin_otp(otp, now + OTP_EXPIRE, now)
     await _send_otp_telegram(otp)
     return {"ok": True}
 
