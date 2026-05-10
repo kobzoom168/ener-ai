@@ -33,11 +33,24 @@ async def _get_history(chat_id: str) -> list[dict[str, str]]:
     ]
 
 
+async def _get_model_handoff() -> str:
+    from app.core.database import get_db
+
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT value FROM memories WHERE key = 'model_handoff_context' LIMIT 1"
+        )
+        row = await cursor.fetchone()
+    return row["value"] if row else ""
+
+
 async def _build_system_prompt() -> str:
     agent_memory = await get_agent_context("MainChatAgent", ["chat", "conversation", "tools"])
     time_context = get_time_context()
     long_term = await get_long_term_context()
     summaries = await get_recent_summaries()
+    handoff = await _get_model_handoff()
+    handoff_section = f"\n\n=== Handoff จาก Model ก่อนหน้า ===\n{handoff}" if handoff else ""
     return build_system_prompt(f"""
 
 {time_context}
@@ -46,6 +59,7 @@ async def _build_system_prompt() -> str:
 
 === สรุปบทสนทนาล่าสุด 7 วัน ===
 {summaries}
+{handoff_section}
 
 หมายเหตุ: ข้อมูลเหล่านี้คือสิ่งที่กบบอกไว้ก่อนหน้า จำและใช้ตอบได้เลย
 
@@ -141,6 +155,16 @@ async def run_chat(chat_id: str, text: str) -> str:
             tool_results.append(f"⚠️ tool {tool_name} ทำงานไม่สำเร็จ")
 
     await _save_messages(chat_id, text, reply)
+    try:
+        from app.core.database import get_db
+
+        async with get_db() as db:
+            await db.execute(
+                "DELETE FROM memories WHERE key = 'model_handoff_context'"
+            )
+            await db.commit()
+    except Exception:
+        pass
     await extract_and_store_long_term_memories(text, reply)
     final_reply = reply if not tool_results else reply + "\n\n" + "\n".join(tool_results)
     lowered_text = text.lower()

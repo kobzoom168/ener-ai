@@ -4396,6 +4396,51 @@ async def upload_file(
     }
 
 
+async def _generate_model_handoff(new_model: str) -> None:
+    """Summarise recent messages so the new model knows what was discussed."""
+    try:
+        from app.core.ai import chat_json
+
+        async with get_db() as db:
+            cursor = await db.execute(
+                """
+                SELECT role, content FROM messages
+                ORDER BY id DESC LIMIT 10
+                """
+            )
+            rows = await cursor.fetchall()
+        if not rows:
+            return
+        convo = "\n".join(
+            f"{'กบ' if row['role'] == 'user' else 'AI'}: {str(row['content'] or '')[:200]}"
+            for row in reversed(rows)
+        )
+        result = await chat_json(
+            f"สรุปบทสนทนานี้ใน 2-3 ประโยคสั้นๆ เพื่อให้ AI ตัวใหม่รับช่วงต่อได้:\n\n{convo}",
+            system='คุณคือตัวช่วยสรุปบทสนทนา ตอบเป็น JSON: {"summary": "...สรุปสั้นๆ ภาษาไทย..."}',
+            agent="system",
+        )
+        summary = str(result.get("summary", "")).strip()
+        if not summary:
+            return
+        handoff = f"[Model เพิ่ง switch มาเป็น {new_model}] บทสนทนาก่อนหน้า: {summary}"
+        async with get_db() as db:
+            await db.execute(
+                """
+                INSERT INTO memories (key, value, tag)
+                VALUES ('model_handoff_context', ?, 'system')
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    tag = excluded.tag,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (handoff,),
+            )
+            await db.commit()
+    except Exception:
+        pass
+
+
 @app.post("/admin/switch-model")
 async def admin_switch_model(request: Request):
     await _require_admin(request)
@@ -4427,6 +4472,9 @@ async def admin_switch_model(request: Request):
             ("admin_model_switched", f"model={model}"),
         )
         await db.commit()
+    import asyncio as _asyncio
+
+    _asyncio.create_task(_generate_model_handoff(model))
     return RedirectResponse(url="/admin", status_code=303)
 
 
