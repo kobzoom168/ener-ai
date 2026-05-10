@@ -1707,15 +1707,16 @@ def build_admin_html(overview: dict) -> HTMLResponse:
             return "warning"
         return "ok"
 
+    stat_card_ids = ["stats-calls", "stats-cost", "stats-msgs", "stats-tasks"]
     stats_html = "".join(
         f"""
-        <section class="card stat-card">
+        <section class="card stat-card" data-card-id="{stat_card_ids[idx] if idx < len(stat_card_ids) else f'stats-{idx + 1}'}">
           <div class="stat-label">{escape(str(item.get("label", "")))}</div>
           <div class="stat-number">{escape(str(item.get("value", "0")))}</div>
           <div class="stat-meta">{escape(str(item.get("meta", "")))}</div>
         </section>
         """
-        for item in stats
+        for idx, item in enumerate(stats)
     )
 
     model_switch_html = "".join(
@@ -1742,7 +1743,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
         )
 
     left_cards_html = f"""
-      <section class="card">
+      <section class="card" data-card-id="model">
         <div class="card-title">🤖 MODEL</div>
         <div class="card-subtitle">Active: {escape(str(model_panel.get("active_model", "Unknown")))}</div>
         <div class="model-pills">{model_switch_html}</div>
@@ -1767,7 +1768,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
             for item in cost_breakdown
         )
         left_cards_html += f"""
-          <section class="card chart-card">
+          <section class="card chart-card" data-card-id="cost">
             <div class="card-title">💰 COST BREAKDOWN</div>
             <div class="list-stack">{breakdown_rows}</div>
             <div class="chart-block">
@@ -1797,7 +1798,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
             for item in timeline
         )
         timeline_html = f"""
-          <section class="card timeline-card">
+          <section class="card timeline-card" data-card-id="timeline">
             <div class="card-title">📊 TODAY</div>
             <div class="timeline-filters">
               <button class="filter-chip active" type="button" data-filter="all">All</button>
@@ -1850,7 +1851,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
         )
 
     right_html = f"""
-      <section class="card">
+      <section class="card" data-card-id="server">
         <div class="card-title">🖥 SERVER</div>
         {''.join(server_rows)}
         <div class="row-meta">Uptime {escape(str(server.get("uptime", "Unknown")))}</div>
@@ -1861,7 +1862,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
     errors_html = ""
     if errors:
         errors_html = (
-            '<section class="card errors-card"><div class="card-title">Recent Errors</div><div class="list-stack">'
+            '<section class="card errors-card" data-card-id="errors"><div class="card-title">Recent Errors</div><div class="list-stack">'
             + "".join(
                 f'<div class="error-row"><div class="error-time">{escape(str(item["time"]))}</div><div><div class="row-title">{escape(str(item["agent"]))}</div><div class="row-meta">{escape(str(item["message"]))}</div></div></div>'
                 for item in errors
@@ -1958,6 +1959,9 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       border: 1px solid #222;
       border-radius: 8px;
       padding: 16px;
+    }}
+    .card[data-card-id] {{
+      transition: box-shadow 0.15s ease, border-color 0.15s ease;
     }}
     .stats-row {{
       display: grid;
@@ -2152,6 +2156,10 @@ def build_admin_html(overview: dict) -> HTMLResponse:
     }}
     .dashboard-card.draggable .card-drag-handle {{ display: block; }}
     .dashboard-card.draggable .card-resize-handle {{ display: block; }}
+    .card-selected {{
+      border-color: var(--green) !important;
+      box-shadow: 0 0 0 1px rgba(0, 255, 136, 0.7), 0 0 18px rgba(0, 255, 136, 0.15);
+    }}
     .toast {{
       position: fixed;
       bottom: 80px;
@@ -2378,6 +2386,16 @@ def build_admin_html(overview: dict) -> HTMLResponse:
     {errors_html}
   </main>
   {live_log_tail_html}
+  <div id="card-toolbar" style="display:none;position:fixed;z-index:9999;background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:8px 12px;gap:10px;align-items:center;font-size:12px;color:#fff;flex-wrap:wrap">
+    <span id="card-toolbar-title" style="color:#00ff88;font-weight:bold;min-width:80px"></span>
+    <button type="button" onclick="cardFontSize(-1)">A-</button>
+    <span id="card-font-display">12px</span>
+    <button type="button" onclick="cardFontSize(1)">A+</button>
+    <label>ข้อความ <input type="color" id="card-text-color" value="#ffffff" oninput="cardTextColor(this.value)"></label>
+    <label>พื้นหลัง <input type="color" id="card-bg-color" value="#111111" oninput="cardBgColor(this.value)"></label>
+    <button type="button" onclick="resetCard()">↺ Reset</button>
+    <button type="button" onclick="closeCardToolbar()">✕</button>
+  </div>
 
   <script>
     function escapeHtml(text) {{
@@ -2390,6 +2408,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
 
     const LAYOUT_KEY = 'ener-admin-layout-v1';
     const STYLE_KEY = 'ener-admin-style-v1';
+    const CARD_STYLE_KEY = 'ener_card_styles';
     const PRESETS = {{
       dark: {{ text: '#ffffff', accent: '#00ff88', cardBg: '#111111' }},
       green: {{ text: '#ccffcc', accent: '#00ff88', cardBg: '#0a1a0a' }},
@@ -2397,6 +2416,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       amber: {{ text: '#fff8cc', accent: '#ffaa00', cardBg: '#1a1500' }},
     }};
     let editMode = false;
+    let selectedCard = null;
     const dashboardContainer = document.getElementById('dashboard-container');
     const editBar = document.getElementById('edit-bar');
     const editButton = document.getElementById('edit-btn');
@@ -2404,6 +2424,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
     const textColorPicker = document.getElementById('text-color-pick');
     const accentColorPicker = document.getElementById('accent-color-pick');
     const cardBgPicker = document.getElementById('card-bg-pick');
+    const cardToolbar = document.getElementById('card-toolbar');
     const widget = document.getElementById('log-tail-widget');
     const handle = document.getElementById('log-drag-handle');
     const content = document.getElementById('log-tail-content');
@@ -2436,6 +2457,18 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
     }}
 
+    function getCardStyles() {{
+      try {{
+        return JSON.parse(localStorage.getItem(CARD_STYLE_KEY) || '{{}}');
+      }} catch (error) {{
+        return {{}};
+      }}
+    }}
+
+    function saveCardStyles(styles) {{
+      localStorage.setItem(CARD_STYLE_KEY, JSON.stringify(styles));
+    }}
+
     function updateSavedLayoutForCard(cardId, nextState) {{
       const layout = readSavedLayout();
       layout[cardId] = {{
@@ -2458,11 +2491,44 @@ def build_admin_html(overview: dict) -> HTMLResponse:
     }}
 
     function getDashboardStyleTargets() {{
-      return document.querySelectorAll('.dashboard-card, .dashboard-card .card, .log-widget');
+      return document.querySelectorAll('.dashboard-card, .dashboard-card .card, .card[data-card-id], .log-widget');
     }}
 
     function getAccentTargets() {{
       return document.querySelectorAll('.stat-number, .row-cost, .log-status, .agent-bar-fill');
+    }}
+
+    function getEditableCards() {{
+      return document.querySelectorAll('.card[data-card-id]');
+    }}
+
+    function getCardIdentifier(card) {{
+      return card?.dataset?.cardId || card?.id || '';
+    }}
+
+    function setCardTextAppearance(card, color) {{
+      if (!card) return;
+      card.style.color = color || '';
+      card.querySelectorAll('*').forEach((el) => {{
+        if (el.tagName === 'INPUT' || el.tagName === 'CANVAS') return;
+        el.style.color = color ? 'inherit' : '';
+      }});
+    }}
+
+    function setCardBackground(card, color) {{
+      if (!card) return;
+      card.style.background = color || '';
+    }}
+
+    function applyStoredCardStyle(card, style) {{
+      if (!card || !style) return;
+      if (style.fontSize) card.style.fontSize = `${{style.fontSize}}px`;
+      if (style.textColor) setCardTextAppearance(card, style.textColor);
+      if (style.cardBg) setCardBackground(card, style.cardBg);
+    }}
+
+    function clearSelectedCard() {{
+      document.querySelectorAll('.card-selected').forEach((el) => el.classList.remove('card-selected'));
     }}
 
     function saveStyle() {{
@@ -2484,6 +2550,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       if (content) content.style.fontSize = `${{currentFontSize}}px`;
       fontSize = currentFontSize;
       if (shouldPersist) saveStyle();
+      loadCardStyles();
     }}
 
     function applyTextColor(color, shouldPersist = true) {{
@@ -2495,6 +2562,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       }});
       if (textColorPicker && textColorPicker.value !== color) textColorPicker.value = color;
       if (shouldPersist) saveStyle();
+      loadCardStyles();
     }}
 
     function applyAccentColor(color, shouldPersist = true) {{
@@ -2513,12 +2581,13 @@ def build_admin_html(overview: dict) -> HTMLResponse:
     }}
 
     function applyCardBg(color, shouldPersist = true) {{
-      document.querySelectorAll('.dashboard-card, .dashboard-card .card').forEach((el) => {{
+      document.querySelectorAll('.dashboard-card, .dashboard-card .card, .card[data-card-id]').forEach((el) => {{
         el.style.background = color;
       }});
       if (widget) widget.style.background = color;
       if (cardBgPicker && cardBgPicker.value !== color) cardBgPicker.value = color;
       if (shouldPersist) saveStyle();
+      loadCardStyles();
     }}
 
     function applyPreset(name) {{
@@ -2545,6 +2614,32 @@ def build_admin_html(overview: dict) -> HTMLResponse:
         if (saved.cardBg) applyCardBg(saved.cardBg, false);
       }} catch (error) {{
         // ignore corrupted saved style
+      }}
+    }}
+
+    function persistCardStyle(cardId, patch) {{
+      if (!cardId) return;
+      const styles = getCardStyles();
+      styles[cardId] = Object.assign(styles[cardId] || {{}}, patch);
+      saveCardStyles(styles);
+    }}
+
+    function loadCardStyles() {{
+      const styles = getCardStyles();
+      getEditableCards().forEach((card) => {{
+        const cardId = getCardIdentifier(card);
+        const saved = styles[cardId];
+        if (!saved) return;
+        applyStoredCardStyle(card, saved);
+      }});
+      if (selectedCard) {{
+        const selectedId = getCardIdentifier(selectedCard);
+        if (selectedId && styles[selectedId]) {{
+          const selectedStyle = styles[selectedId];
+          const size = Number(selectedStyle.fontSize) || parseInt(selectedCard.style.fontSize, 10) || currentFontSize;
+          const fontDisplay = document.getElementById('card-font-display');
+          if (fontDisplay) fontDisplay.textContent = `${{size}}px`;
+        }}
       }}
     }}
 
@@ -2666,6 +2761,12 @@ def build_admin_html(overview: dict) -> HTMLResponse:
         }}
       }});
 
+      getEditableCards().forEach((card) => {{
+        card.style.cursor = 'pointer';
+        card.removeEventListener('click', onCardClick);
+        card.addEventListener('click', onCardClick);
+      }});
+
       updateDashboardContainerHeight();
     }}
 
@@ -2673,9 +2774,102 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       editMode = false;
       if (editBar) editBar.style.display = 'none';
       if (editButton) editButton.style.display = 'block';
+      closeCardToolbar();
+      getEditableCards().forEach((card) => {{
+        card.removeEventListener('click', onCardClick);
+        card.style.cursor = '';
+      }});
       document.querySelectorAll('.dashboard-card').forEach((card) => {{
         card.classList.remove('draggable');
       }});
+    }}
+
+    function onCardClick(e) {{
+      if (!editMode) return;
+      if (e.target.closest('.card-drag-handle, .card-resize-handle, #card-toolbar, button, input, select, a, canvas')) return;
+      const card = e.currentTarget;
+      selectedCard = card;
+      clearSelectedCard();
+      card.classList.add('card-selected');
+      showCardToolbar(card);
+      e.stopPropagation();
+    }}
+
+    function showCardToolbar(card) {{
+      if (!cardToolbar) return;
+      const rect = card.getBoundingClientRect();
+      cardToolbar.style.display = 'flex';
+      const cardId = getCardIdentifier(card);
+      const labels = {{
+        'stats-calls': 'Stats Calls',
+        'stats-cost': 'Stats Cost',
+        'stats-msgs': 'Stats Msgs',
+        'stats-tasks': 'Stats Tasks',
+        model: 'Model',
+        cost: 'Cost',
+        timeline: 'Timeline',
+        server: 'Server',
+        errors: 'Errors',
+      }};
+      const title = document.getElementById('card-toolbar-title');
+      if (title) title.textContent = labels[cardId] || cardId || 'Card';
+
+      const styles = getCardStyles()[cardId] || {{}};
+      const currentSize = parseInt(card.style.fontSize, 10) || parseInt(window.getComputedStyle(card).fontSize, 10) || 12;
+      const fontDisplay = document.getElementById('card-font-display');
+      if (fontDisplay) fontDisplay.textContent = `${{currentSize}}px`;
+
+      const textInput = document.getElementById('card-text-color');
+      const bgInput = document.getElementById('card-bg-color');
+      if (textInput) textInput.value = styles.textColor || '#ffffff';
+      if (bgInput) bgInput.value = styles.cardBg || '#111111';
+
+      const nextTop = Math.max(12, rect.top + 8);
+      const nextLeft = Math.max(12, Math.min(window.innerWidth - cardToolbar.offsetWidth - 12, rect.left + 8));
+      cardToolbar.style.top = `${{nextTop}}px`;
+      cardToolbar.style.left = `${{nextLeft}}px`;
+    }}
+
+    function closeCardToolbar() {{
+      if (cardToolbar) cardToolbar.style.display = 'none';
+      clearSelectedCard();
+      selectedCard = null;
+    }}
+
+    function cardFontSize(delta) {{
+      if (!selectedCard) return;
+      const current = parseInt(selectedCard.style.fontSize, 10) || parseInt(window.getComputedStyle(selectedCard).fontSize, 10) || 12;
+      const next = Math.max(9, Math.min(20, current + delta));
+      selectedCard.style.fontSize = `${{next}}px`;
+      const fontDisplay = document.getElementById('card-font-display');
+      if (fontDisplay) fontDisplay.textContent = `${{next}}px`;
+      persistCardStyle(getCardIdentifier(selectedCard), {{ fontSize: next }});
+    }}
+
+    function cardTextColor(color) {{
+      if (!selectedCard) return;
+      setCardTextAppearance(selectedCard, color);
+      persistCardStyle(getCardIdentifier(selectedCard), {{ textColor: color }});
+    }}
+
+    function cardBgColor(color) {{
+      if (!selectedCard) return;
+      setCardBackground(selectedCard, color);
+      persistCardStyle(getCardIdentifier(selectedCard), {{ cardBg: color }});
+    }}
+
+    function resetCard() {{
+      if (!selectedCard) return;
+      const cardId = getCardIdentifier(selectedCard);
+      selectedCard.style.fontSize = '';
+      setCardTextAppearance(selectedCard, '');
+      setCardBackground(selectedCard, '');
+      const styles = getCardStyles();
+      delete styles[cardId];
+      saveCardStyles(styles);
+      loadStyle();
+      loadCardStyles();
+      closeCardToolbar();
     }}
 
     function saveLayout() {{
@@ -2697,6 +2891,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
     function resetLayout() {{
       localStorage.removeItem(LAYOUT_KEY);
       localStorage.removeItem(STYLE_KEY);
+      localStorage.removeItem(CARD_STYLE_KEY);
       localStorage.removeItem('log-pos');
       localStorage.removeItem('log-font-size');
       localStorage.removeItem('log-widget-collapsed');
@@ -2750,6 +2945,11 @@ def build_admin_html(overview: dict) -> HTMLResponse:
     window.applyAccentColor = applyAccentColor;
     window.applyCardBg = applyCardBg;
     window.applyPreset = applyPreset;
+    window.cardFontSize = cardFontSize;
+    window.cardTextColor = cardTextColor;
+    window.cardBgColor = cardBgColor;
+    window.resetCard = resetCard;
+    window.closeCardToolbar = closeCardToolbar;
 
     function updateLogContentHeight(totalHeight) {{
       if (!widget || !content) return;
@@ -2901,6 +3101,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
 
     loadLayout();
     loadStyle();
+    loadCardStyles();
 
     collapsed = localStorage.getItem('log-widget-collapsed') === '1';
     if (collapsed && content && widget) {{
