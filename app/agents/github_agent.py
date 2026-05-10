@@ -148,7 +148,9 @@ async def read_file(repo_name: str, file_path: str) -> str:
     paths_to_try = [
         file_path,
         f"app/{file_path}",
+        f"app/core/{file_path}",
         f"src/{file_path}",
+        f"src/core/{file_path}",
     ]
 
     content = None
@@ -207,3 +209,34 @@ async def read_file(repo_name: str, file_path: str) -> str:
     )
     await _log_github_event("task_done", "read github file", "success", learned=f"{repo_name}:{used_path}")
     return f"📄 {used_path}\n\n{analysis}"
+
+
+@log_agent_run("GithubAgent")
+async def list_repo_files(repo_name: str, path: str = "") -> str:
+    user, error = await _get_user()
+    if error:
+        await _log_github_event("warning", "github repo files unavailable", "failure", learned=error[:200])
+        return error
+
+    try:
+        repo = await asyncio.to_thread(user.get_repo, repo_name)
+        contents = await asyncio.to_thread(repo.get_contents, path)
+    except Exception as exc:
+        await _log_github_event("task_failed", "list repo files fail", "failure", learned=str(exc)[:200])
+        return f"อ่านโครงสร้าง repo ไม่สำเร็จ: {exc}"
+
+    if not isinstance(contents, list):
+        contents = [contents]
+
+    lines = [f"📦 {repo_name}/{path or ''}"]
+    for item in contents:
+        prefix = "📁" if item.type == "dir" else "📄"
+        lines.append(f"  {prefix} {item.name}")
+
+    await _log_github_event(
+        "task_done",
+        "list repo files",
+        "success",
+        learned=f"{repo_name}:{path or '/'} items={len(contents)}",
+    )
+    return "\n".join(lines)
