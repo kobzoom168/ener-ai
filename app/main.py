@@ -3876,1209 +3876,1413 @@ def build_workspace_html() -> HTMLResponse:
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg:#0d0d0d;
-      --sidebar:#141414;
-      --card:#1a1a1a;
-      --accent:#7c3aed;
-      --accent-soft:#a78bfa;
-      --text:#e5e5e5;
-      --subtext:#888;
-      --border:#262626;
-      --danger:#ef4444;
-      --success:#22c55e;
-      --warning:#f59e0b;
+      --bg: #212121;
+      --sidebar: #171717;
+      --card: #2f2f2f;
+      --accent: #7c3aed;
+      --accent-hover: #6d28d9;
+      --text: #ececec;
+      --subtext: #8e8ea0;
+      --border: #383838;
+      --user-bubble: #2f2f2f;
+      --ai-bubble: transparent;
     }
-    * { box-sizing:border-box; }
+
+    * { box-sizing: border-box; }
+
     body {
-      margin:0;
-      background:var(--bg);
-      color:var(--text);
-      font-family:'Inter', sans-serif;
-      font-size:15px;
-      line-height:1.6;
+      font-family: 'Inter', sans-serif;
+      font-size: 16px;
+      line-height: 1.7;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
     }
-    h1, h2, h3, h4, h5, h6 { letter-spacing:-0.01em; }
-    button { font-size:14px; font-weight:500; font-family:inherit; }
-    input, textarea, select { font-size:15px; font-family:inherit; }
-    .workspace-shell { display:flex; min-height:100vh; }
-    .sidebar {
-      width:60px;
-      background:var(--sidebar);
-      border-right:1px solid var(--border);
-      display:flex;
-      flex-direction:column;
-      align-items:center;
-      padding:14px 0;
-      gap:10px;
-      position:fixed;
-      left:0;
-      top:0;
-      bottom:0;
-      z-index:20;
+
+    button, input, textarea, select {
+      font: inherit;
     }
-    .nav-btn {
-      width:42px;
-      height:42px;
-      border:none;
-      border-radius:14px;
-      background:transparent;
-      color:var(--subtext);
-      cursor:pointer;
-      font-family:'Segoe UI Emoji', 'Apple Color Emoji', sans-serif;
-      font-size:22px;
+
+    a {
+      color: inherit;
+      text-decoration: none;
     }
-    .nav-btn:hover, .nav-btn.active {
-      color:#fff;
-      background:rgba(124,58,237,0.22);
-      box-shadow:0 0 0 1px rgba(124,58,237,0.3) inset;
+
+    #app {
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
     }
-    .main {
-      margin-left:60px;
-      width:calc(100% - 60px);
-      padding:24px;
+
+    #sidebar {
+      width: 240px;
+      min-width: 240px;
+      background: var(--sidebar);
+      display: flex;
+      flex-direction: column;
+      padding: 12px 8px;
+      border-right: 1px solid var(--border);
+      overflow-y: auto;
+      gap: 4px;
     }
-    .panel { display:none; }
-    .panel.active { display:block; }
+
+    .sidebar-logo {
+      font-size: 20px;
+      font-weight: 700;
+      padding: 8px 12px 16px;
+      letter-spacing: -0.01em;
+    }
+
+    .new-chat-btn {
+      width: 100%;
+      padding: 10px 16px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+      margin-bottom: 16px;
+    }
+
+    .new-chat-btn:hover,
+    .panel-action:hover,
+    #send-btn:hover,
+    .primary-btn:hover,
+    .file-action:hover {
+      background: var(--accent-hover);
+    }
+
+    .sidebar-section {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--subtext);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      padding: 12px 12px 4px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .new-proj-btn {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+    }
+
+    .nav-item {
+      display: block;
+      padding: 8px 12px;
+      color: var(--text);
+      font-size: 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      margin: 1px 0;
+    }
+
+    .nav-item:hover {
+      background: var(--card);
+    }
+
+    .nav-item.active {
+      background: var(--card);
+      font-weight: 500;
+    }
+
+    .project-link.active {
+      outline: 1px solid rgba(124, 58, 237, 0.55);
+    }
+
+    .project-meta {
+      display: block;
+      font-size: 11px;
+      color: var(--subtext);
+      margin-top: 2px;
+    }
+
+    .sidebar-footer {
+      margin-top: auto;
+      padding: 12px;
+      font-size: 12px;
+      color: var(--subtext);
+    }
+
+    #active-model-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: #1f1f1f;
+    }
+
+    #content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      min-width: 0;
+    }
+
+    .panel {
+      display: none;
+      flex: 1;
+      flex-direction: column;
+      overflow: hidden;
+      height: 100%;
+    }
+
+    .panel.active-panel {
+      display: flex;
+    }
+
     .panel-header {
-      display:flex;
-      justify-content:space-between;
-      align-items:flex-start;
-      gap:16px;
-      margin-bottom:20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 20px 32px 12px;
+      border-bottom: 1px solid var(--border);
+      gap: 16px;
     }
-    .panel-header h2 { margin:0 0 6px; font-size:20px; font-weight:600; letter-spacing:-0.01em; }
-    .panel-header p { margin:0; color:var(--subtext); }
-    .card {
-      background:var(--card);
-      border:1px solid var(--border);
-      border-radius:18px;
-      padding:18px;
+
+    .panel-header h2 {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
     }
-    .home-hero {
-      min-height:220px;
-      display:flex;
-      flex-direction:column;
-      justify-content:center;
-      align-items:center;
-      text-align:center;
-      gap:18px;
+
+    .panel-action,
+    .primary-btn,
+    .file-action {
+      border: none;
+      background: var(--accent);
+      color: white;
+      border-radius: 8px;
+      padding: 9px 14px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
     }
-    .hero-input, .input, .textarea, .select {
-      width:100%;
-      background:#111;
-      color:var(--text);
-      border:1px solid var(--border);
-      border-radius:14px;
-      padding:14px 16px;
-      font-size:15px;
+
+    .secondary-btn {
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text);
+      border-radius: 8px;
+      padding: 9px 14px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
     }
-    .hero-input::placeholder, .input::placeholder, .textarea::placeholder, .select::placeholder {
-      font-size:14px;
-      color:#888;
+
+    #panel-chat {
+      position: relative;
     }
-    .textarea { min-height:110px; resize:vertical; }
-    .button {
-      border:none;
-      border-radius:12px;
-      padding:11px 16px;
-      background:var(--accent);
-      color:#fff;
-      cursor:pointer;
-      font-size:14px;
-      font-weight:500;
+
+    #chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px 0 120px;
+      max-width: 800px;
+      width: 100%;
+      margin: 0 auto;
     }
-    .button.secondary { background:#252525; color:var(--text); }
-    .button.ghost { background:transparent; border:1px solid var(--border); color:var(--text); }
-    .button.danger { background:rgba(239,68,68,0.16); color:#fecaca; }
-    .button:disabled { opacity:0.55; cursor:not-allowed; }
-    .tool-grid {
-      display:grid;
-      grid-template-columns:repeat(3, minmax(0, 1fr));
-      gap:14px;
-      margin-top:22px;
+
+    .msg-row {
+      padding: 4px 24px;
+      margin: 8px 0;
     }
-    .tool-card {
-      cursor:pointer;
-      display:flex;
-      flex-direction:column;
-      gap:8px;
-      font-family:'Segoe UI Emoji', 'Apple Color Emoji', 'Inter', sans-serif;
-      text-align:left;
+
+    .msg-row.user-row {
+      display: flex;
+      justify-content: flex-end;
     }
-    .tool-card-title { font-size:15px; font-weight:600; }
-    .tool-card-desc { font-size:13px; color:#888; }
-    .chat-layout, .files-layout, .projects-layout {
-      display:grid;
-      grid-template-columns:280px minmax(0, 1fr);
-      gap:18px;
+
+    .msg-bubble {
+      max-width: 70%;
+      padding: 12px 18px;
+      border-radius: 18px;
+      font-size: 16px;
+      line-height: 1.7;
+      word-break: break-word;
+      white-space: pre-wrap;
     }
-    .chat-projects, .panel-stack { display:grid; gap:12px; }
-    .project-list, .list {
-      display:flex;
-      flex-direction:column;
-      gap:10px;
-      max-height:70vh;
-      overflow:auto;
+
+    .user-bubble {
+      background: var(--user-bubble);
+      border-radius: 18px 18px 4px 18px;
     }
-    .project-item, .list-item {
-      border:1px solid var(--border);
-      background:#121212;
-      border-radius:14px;
-      padding:12px 14px;
-      cursor:pointer;
+
+    .ai-bubble {
+      background: none;
+      padding-left: 0;
+      max-width: 85%;
     }
-    .project-item.active { border-color:var(--accent); background:rgba(124,58,237,0.12); }
-    .messages {
-      min-height:60vh;
-      max-height:70vh;
-      overflow:auto;
-      display:flex;
-      flex-direction:column;
-      gap:14px;
-      margin-bottom:14px;
+
+    .msg-text {
+      font-size: 16px;
+      line-height: 1.7;
     }
-    .message { display:flex; flex-direction:column; gap:6px; max-width:82%; }
-    .message.user { align-self:flex-end; }
-    .message.ai { align-self:flex-start; }
-    .msg-row { display:flex; flex-direction:column; gap:6px; max-width:82%; }
-    .user-row { align-self:flex-end; }
-    .ai-row { align-self:flex-start; }
-    .bubble, .msg-bubble {
-      border-radius:18px;
-      padding:14px 16px;
-      font-size:14px;
-      line-height:1.7;
-      word-break:break-word;
-      white-space:pre-wrap;
+
+    .msg-meta {
+      font-size: 11px;
+      color: var(--subtext);
+      margin-top: 4px;
+      padding: 0 2px;
     }
-    .message.user .bubble, .user-bubble { background:var(--accent); }
-    .message.ai .bubble, .ai-bubble { background:#1b1b1b; border:1px solid var(--border); }
-    .msg-text { font-size:14px; line-height:1.7; }
-    .meta, .timestamp { font-size:12px; color:#666; display:flex; gap:8px; align-items:center; }
-    .source-badge {
-      display:inline-flex;
-      align-items:center;
-      gap:6px;
-      color:#888;
+
+    #chat-input-wrap {
+      max-width: 800px;
+      width: 100%;
+      margin: 0 auto 16px;
+      padding: 0 24px;
+      display: flex;
+      align-items: flex-end;
+      gap: 8px;
+      position: sticky;
+      bottom: 0;
+      background: linear-gradient(to top, rgba(33,33,33,1) 72%, rgba(33,33,33,0));
     }
-    .composer {
-      display:grid;
-      grid-template-columns:minmax(0, 1fr) 160px 96px;
-      gap:10px;
-    }
+
     #chat-input {
-      resize:none;
-      overflow:hidden;
-      min-height:44px;
-      max-height:200px;
+      flex: 1;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 14px 18px;
+      color: var(--text);
+      font-size: 16px;
+      font-family: inherit;
+      resize: none;
+      outline: none;
+      min-height: 52px;
+      max-height: 200px;
+      overflow-y: auto;
+      line-height: 1.5;
     }
-    .kanban {
-      display:grid;
-      grid-template-columns:repeat(3, minmax(0, 1fr));
-      gap:16px;
+
+    #send-btn {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: white;
+      border: none;
+      font-size: 20px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
     }
-    .kanban-column { background:var(--card); border:1px solid var(--border); border-radius:18px; padding:16px; }
-    .kanban-column h3 { margin:0 0 12px; }
-    .task-card {
-      background:#121212;
-      border:1px solid var(--border);
-      border-radius:14px;
-      padding:12px;
-      margin-bottom:10px;
+
+    #send-btn:disabled {
+      background: var(--border);
+      cursor: not-allowed;
     }
-    .badge { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--subtext); }
-    .news-grid, .memory-grid, .notes-groups, .file-list { display:grid; gap:12px; }
-    .chips { display:flex; gap:8px; flex-wrap:wrap; }
-    .chip {
-      border:1px solid var(--border);
-      background:#141414;
-      border-radius:999px;
-      padding:6px 12px;
-      color:var(--subtext);
-      cursor:pointer;
-      font-size:12px;
+
+    .thinking {
+      display: flex;
+      gap: 5px;
+      align-items: center;
+      padding: 16px 0;
     }
-    .chip.active { border-color:var(--accent); color:#fff; }
-    .brain-grid {
-      display:grid;
-      grid-template-columns:repeat(3, minmax(0, 1fr));
-      gap:16px;
-      margin-top:16px;
-    }
-    .brain-card { min-height:180px; }
-    .brain-card h4, .verdict-card h4 { margin:0 0 10px; }
-    .verdict-card {
-      margin-top:16px;
-      background:rgba(124,58,237,0.18);
-      border:1px solid rgba(124,58,237,0.45);
-    }
-    .upload-drop {
-      border:1px dashed rgba(124,58,237,0.5);
-      border-radius:18px;
-      padding:26px;
-      text-align:center;
-      color:var(--subtext);
-    }
-    table { width:100%; border-collapse:collapse; }
-    th, td { text-align:left; padding:12px; border-bottom:1px solid var(--border); }
-    th { color:var(--subtext); font-size:13px; font-weight:600; }
-    .toast-stack {
-      position:fixed;
-      top:18px;
-      right:18px;
-      z-index:50;
-      display:grid;
-      gap:10px;
-    }
-    .toast {
-      min-width:260px;
-      background:#171717;
-      border:1px solid var(--border);
-      border-radius:14px;
-      padding:12px 14px;
-      box-shadow:0 12px 24px rgba(0,0,0,0.35);
-    }
-    .toast.success { border-color:rgba(34,197,94,0.4); }
-    .toast.error { border-color:rgba(239,68,68,0.4); }
-    .spinner-overlay {
-      position:fixed;
-      inset:0;
-      background:rgba(0,0,0,0.45);
-      display:none;
-      align-items:center;
-      justify-content:center;
-      z-index:40;
-    }
-    .spinner {
-      width:42px;
-      height:42px;
-      border-radius:999px;
-      border:3px solid rgba(255,255,255,0.12);
-      border-top-color:var(--accent-soft);
-      animation:spin 1s linear infinite;
-    }
-    .thinking { display:inline-flex; gap:5px; }
-    .thinking span {
-      width:7px;
-      height:7px;
-      border-radius:999px;
-      background:var(--accent-soft);
-      animation:bounce 1.2s infinite ease-in-out;
-    }
-    .msg-bubble.thinking {
-      display:flex;
-      gap:5px;
-      align-items:center;
-      padding:12px 16px;
-    }
+
     .dot {
-      width:8px;
-      height:8px;
-      background:#888;
-      border-radius:50%;
-      animation:bounce 1.2s infinite;
+      width: 8px;
+      height: 8px;
+      background: var(--subtext);
+      border-radius: 50%;
+      animation: bounce 1.2s infinite;
     }
-    .dot:nth-child(2) { animation-delay:0.2s; }
-    .dot:nth-child(3) { animation-delay:0.4s; }
-    .thinking span:nth-child(2) { animation-delay:0.15s; }
-    .thinking span:nth-child(3) { animation-delay:0.3s; }
-    .mobile-tabs {
-      display:none;
-      position:fixed;
-      left:0;
-      right:0;
-      bottom:0;
-      background:var(--sidebar);
-      border-top:1px solid var(--border);
-      padding:8px 10px;
-      z-index:25;
-      justify-content:space-between;
-    }
-    .mobile-tabs .nav-btn { width:40px; height:40px; }
-    .inline-row { display:flex; gap:10px; flex-wrap:wrap; }
-    .subtle { color:var(--subtext); font-size:13px; }
-    pre.code {
-      background:#121212;
-      border:1px solid var(--border);
-      border-radius:14px;
-      padding:14px;
-      overflow:auto;
-      white-space:pre-wrap;
-    }
-    @keyframes spin { to { transform:rotate(360deg); } }
+
+    .dot:nth-child(2) { animation-delay: 0.2s; }
+    .dot:nth-child(3) { animation-delay: 0.4s; }
+
     @keyframes bounce {
-      0%,60%,100% { transform:translateY(0); opacity:0.55; }
-      30% { transform:translateY(-6px); opacity:1; }
+      0%,60%,100% { transform: translateY(0); }
+      30% { transform: translateY(-6px); }
     }
+
+    .panel-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px 32px 32px;
+    }
+
+    .stack {
+      display: grid;
+      gap: 16px;
+    }
+
+    .surface {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 18px;
+    }
+
+    .note-input-wrap,
+    .task-input-wrap,
+    .brainstorm-input-wrap {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: 1fr;
+      margin-bottom: 20px;
+    }
+
+    .task-input-wrap {
+      grid-template-columns: minmax(0, 1fr) 160px 96px;
+      align-items: center;
+    }
+
+    .panel textarea,
+    .panel input,
+    .panel select {
+      width: 100%;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #262626;
+      color: var(--text);
+      padding: 12px 14px;
+      outline: none;
+    }
+
+    .notes-group {
+      display: grid;
+      gap: 10px;
+    }
+
+    .notes-group h3,
+    .task-group h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      color: var(--subtext);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .note-card,
+    .task-card,
+    .memory-card,
+    .news-card,
+    .file-card,
+    .brain-card,
+    .verdict-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px;
+    }
+
+    .note-card summary {
+      cursor: pointer;
+      font-weight: 500;
+    }
+
+    .note-meta,
+    .task-meta,
+    .memory-meta,
+    .news-meta,
+    .file-meta {
+      font-size: 12px;
+      color: var(--subtext);
+      margin-top: 6px;
+    }
+
+    .task-groups {
+      display: grid;
+      gap: 16px;
+    }
+
+    .task-item {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      padding: 12px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+
+    .task-item:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+
+    .task-item input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      margin-top: 3px;
+      accent-color: var(--accent);
+      flex: 0 0 auto;
+    }
+
+    .priority-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      margin-top: 8px;
+      background: rgba(255,255,255,0.08);
+      color: var(--subtext);
+    }
+
+    .priority-high { color: #fca5a5; }
+    .priority-medium { color: #fde68a; }
+    .priority-low { color: #86efac; }
+
+    .brain-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 20px;
+    }
+
+    .brain-card h4,
+    .verdict-card h4 {
+      margin: 0 0 10px;
+      font-size: 15px;
+    }
+
+    .verdict-card {
+      margin-top: 16px;
+      background: rgba(124, 58, 237, 0.12);
+    }
+
+    .news-card + .news-card,
+    .memory-card + .memory-card,
+    .file-card + .file-card {
+      margin-top: 12px;
+    }
+
+    .file-actions,
+    .row-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+
+    #drop-zone {
+      border: 1px dashed var(--border);
+      border-radius: 16px;
+      padding: 24px;
+      text-align: center;
+      color: var(--subtext);
+      cursor: pointer;
+      margin-bottom: 20px;
+      background: rgba(255,255,255,0.02);
+    }
+
+    #drop-zone.dragover {
+      border-color: var(--accent);
+      background: rgba(124,58,237,0.08);
+      color: var(--text);
+    }
+
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: #333;
+      color: white;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 14px;
+      display: none;
+      z-index: 999;
+      max-width: 320px;
+    }
+
+    #modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 998;
+    }
+
+    #modal-box {
+      background: var(--card);
+      padding: 24px;
+      border-radius: 16px;
+      min-width: 320px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      border: 1px solid var(--border);
+    }
+
+    #modal-box input {
+      padding: 10px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 15px;
+    }
+
+    #modal-box button {
+      padding: 10px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 15px;
+    }
+
+    .empty-state {
+      color: var(--subtext);
+      font-size: 14px;
+      padding: 18px 0;
+    }
+
     @media (max-width: 1024px) {
-      .tool-grid, .kanban, .brain-grid, .chat-layout, .files-layout, .projects-layout {
-        grid-template-columns:1fr;
+      .brain-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .task-input-wrap {
+        grid-template-columns: 1fr;
       }
     }
+
     @media (max-width: 768px) {
-      .sidebar { display:none; }
-      .main { margin-left:0; width:100%; padding:18px 14px 88px; }
-      .mobile-tabs { display:flex; }
-      .composer { grid-template-columns:1fr; }
-      .messages { max-height:none; min-height:40vh; }
+      #sidebar { display: none; }
+      #chat-messages { padding-bottom: 132px; }
+      #chat-input-wrap,
+      #chat-messages {
+        max-width: 100%;
+      }
+      .panel-body,
+      .panel-header {
+        padding-left: 18px;
+        padding-right: 18px;
+      }
+      .msg-row { padding-left: 18px; padding-right: 18px; }
+      .msg-bubble { max-width: 88%; }
     }
   </style>
 </head>
 <body>
-  <div class="workspace-shell">
-    <aside class="sidebar">
-      <button class="nav-btn active" data-panel="home" onclick="showPanel('home')" title="Home">🏠</button>
-      <button class="nav-btn" data-panel="chat" onclick="showPanel('chat')" title="Chat">💬</button>
-      <button class="nav-btn" data-panel="notes" onclick="showPanel('notes')" title="Notes">📝</button>
-      <button class="nav-btn" data-panel="tasks" onclick="showPanel('tasks')" title="Tasks">✅</button>
-      <button class="nav-btn" data-panel="memory" onclick="showPanel('memory')" title="Memory">🧠</button>
-      <button class="nav-btn" data-panel="brainstorm" onclick="showPanel('brainstorm')" title="Brainstorm">🔥</button>
-      <button class="nav-btn" data-panel="news" onclick="showPanel('news')" title="News">📰</button>
-      <button class="nav-btn" data-panel="files" onclick="showPanel('files')" title="Files">📁</button>
-      <button class="nav-btn" data-panel="projects" onclick="showPanel('projects')" title="Projects">🗂️</button>
-    </aside>
-    <main class="main">
-      <section class="panel" id="panel-home" style="display:block;">
-        <div class="card home-hero">
-          <div>
-            <h1 style="margin:0 0 8px;font-size:36px;">Ener-AI Workspace</h1>
-            <p class="subtle">Single-owner assistant. Web + Telegram = same memory, same tasks, same notes.</p>
-          </div>
-          <div style="width:min(760px,100%);display:grid;gap:10px;">
-            <input id="home-query" class="hero-input" placeholder="Ask Ener-AI anything, create anything">
-            <div class="inline-row" style="justify-content:center;">
-              <button class="button" id="home-send">Ask Ener-AI</button>
-              <button class="button secondary" onclick="showPanel('chat')">Open Chat</button>
-            </div>
-          </div>
-        </div>
-        <div class="tool-grid" id="home-tools">
-          <div class="card tool-card" onclick="showPanel('chat')">
-            <div style="font-size:24px">💬</div>
-            <div class="tool-card-title">AI Chat</div>
-            <div class="tool-card-desc">Talk with Ener-AI</div>
-          </div>
-          <div class="card tool-card" onclick="showPanel('notes')">
-            <div style="font-size:24px">📝</div>
-            <div class="tool-card-title">AI Notes</div>
-            <div class="tool-card-desc">Capture & categorize thoughts</div>
-          </div>
-          <div class="card tool-card" onclick="showPanel('tasks')">
-            <div style="font-size:24px">✅</div>
-            <div class="tool-card-title">AI Tasks</div>
-            <div class="tool-card-desc">Create and manage tasks</div>
-          </div>
-          <div class="card tool-card" onclick="showPanel('brainstorm')">
-            <div style="font-size:24px">🔥</div>
-            <div class="tool-card-title">AI Brainstorm</div>
-            <div class="tool-card-desc">3-agent debate system</div>
-          </div>
-          <div class="card tool-card" onclick="showPanel('news')">
-            <div style="font-size:24px">📰</div>
-            <div class="tool-card-title">AI News</div>
-            <div class="tool-card-desc">Daily news summary</div>
-          </div>
-          <div class="card tool-card" onclick="showPanel('memory')">
-            <div style="font-size:24px">🧠</div>
-            <div class="tool-card-title">AI Memory</div>
-            <div class="tool-card-desc">Long-term memory entries</div>
-          </div>
-          <div class="card tool-card" onclick="showPanel('files')">
-            <div style="font-size:24px">📁</div>
-            <div class="tool-card-title">AI Files</div>
-            <div class="tool-card-desc">Upload and summarize docs</div>
-          </div>
-          <div class="card tool-card" onclick="showPanel('projects')">
-            <div style="font-size:24px">🗂️</div>
-            <div class="tool-card-title">Projects</div>
-            <div class="tool-card-desc">Named conversation threads</div>
-          </div>
-        </div>
-      </section>
+<div id="app">
+  <aside id="sidebar">
+    <div class="sidebar-logo">⚡ Ener-AI</div>
 
-      <section class="panel" id="panel-chat" style="display:none;">
-        <div class="panel-header">
-          <div>
-            <h2>Chat</h2>
-            <p>Unified history from Telegram + Web using the same owner id.</p>
-          </div>
-        </div>
-        <div class="chat-layout">
-          <div class="card chat-projects">
-            <div class="inline-row">
-              <button class="button" id="new-project-btn">New Project</button>
-              <button class="button secondary" id="refresh-projects-btn">Refresh</button>
-            </div>
-            <div class="project-list" id="projects-list"></div>
-          </div>
-          <div class="card">
-            <div class="messages" id="chat-messages"></div>
-            <div class="composer">
-              <textarea id="chat-input" class="textarea" placeholder="พิมพ์ข้อความถึง Ener-AI..."></textarea>
-              <select id="model-select" class="select">
-                <option value="auto">Auto / Active</option>
-                <option value="haiku">Claude Haiku</option>
-                <option value="groq">Groq</option>
-                <option value="gemini">Gemini</option>
-                <option value="qwen3b">Qwen 3B</option>
-                <option value="qwen7b">Qwen 7B</option>
-              </select>
-              <button class="button" id="send-btn">Send</button>
-            </div>
-          </div>
-        </div>
-      </section>
+    <button class="new-chat-btn" onclick="newChat()">＋ New Chat</button>
 
-      <section class="panel" id="panel-notes" style="display:none;">
-        <div class="panel-header"><div><h2>Notes</h2><p>Brain-style capture into the same notes table.</p></div></div>
-        <div class="card panel-stack">
-          <div class="inline-row">
-            <input id="notes-search" class="input" placeholder="Search notes...">
-          </div>
-          <textarea id="notes-input" class="textarea" placeholder="Drop a thought..."></textarea>
-          <div class="inline-row">
-            <button class="button" id="notes-save-btn">Save with BrainAgent</button>
-            <button class="button secondary" id="notes-refresh-btn">Refresh</button>
-          </div>
-        </div>
-        <div class="notes-groups" id="notes-groups" style="margin-top:16px;"></div>
-      </section>
+    <div class="sidebar-section">TOOLS</div>
+    <nav id="tool-nav">
+      <a class="nav-item active" onclick="showPanel('chat')" data-panel="chat">💬 Chat</a>
+      <a class="nav-item" onclick="showPanel('notes')" data-panel="notes">📝 Notes</a>
+      <a class="nav-item" onclick="showPanel('tasks')" data-panel="tasks">✅ Tasks</a>
+      <a class="nav-item" onclick="showPanel('brainstorm')" data-panel="brainstorm">🔥 Brainstorm</a>
+      <a class="nav-item" onclick="showPanel('news')" data-panel="news">📰 News</a>
+      <a class="nav-item" onclick="showPanel('memory')" data-panel="memory">🧠 Memory</a>
+      <a class="nav-item" onclick="showPanel('files')" data-panel="files">📁 Files</a>
+    </nav>
 
-      <section class="panel" id="panel-tasks" style="display:none;">
-        <div class="panel-header"><div><h2>Tasks</h2><p>Kanban view backed by the existing tasks table.</p></div></div>
-        <div class="kanban" id="tasks-board"></div>
-      </section>
+    <div class="sidebar-section">
+      PROJECTS
+      <button class="new-proj-btn" onclick="showNewProjectModal()">＋</button>
+    </div>
+    <nav id="project-nav"></nav>
 
-      <section class="panel" id="panel-memory" style="display:none;">
-        <div class="panel-header"><div><h2>Memory</h2><p>Long-term memories shared with Telegram.</p></div></div>
-        <div class="memory-grid" id="memory-list"></div>
-      </section>
+    <div class="sidebar-footer">
+      <span id="active-model-badge">Auto / Active</span>
+    </div>
+  </aside>
 
-      <section class="panel" id="panel-brainstorm" style="display:none;">
-        <div class="panel-header"><div><h2>Brainstorm</h2><p>Run the 3-agent debate and inspect the final verdict.</p></div></div>
-        <div class="card panel-stack">
-          <textarea id="brainstorm-input" class="textarea" placeholder="ใส่หัวข้อที่อยากให้ถกกัน..."></textarea>
-          <div class="inline-row">
-            <button class="button" id="brainstorm-btn">Start Debate</button>
-          </div>
-        </div>
-        <div class="brain-grid" id="brainstorm-grid" style="margin-top:16px;"></div>
-        <div id="brainstorm-verdict"></div>
-      </section>
+  <main id="content">
+    <div id="panel-chat" class="panel active-panel">
+      <div id="chat-messages"></div>
+      <div id="chat-input-wrap">
+        <textarea id="chat-input" rows="1" placeholder="Message Ener-AI..."></textarea>
+        <button id="send-btn" onclick="sendMessage()">↑</button>
+      </div>
+    </div>
 
-      <section class="panel" id="panel-news" style="display:none;">
-        <div class="panel-header">
-          <div><h2>News</h2><p>Daily news cards from the shared news database.</p></div>
-          <div class="inline-row">
-            <button class="button secondary" id="news-fetch-btn">Fetch Latest</button>
+    <div id="panel-notes" class="panel">
+      <div class="panel-header"><h2>📝 Notes</h2></div>
+      <div class="panel-body">
+        <div class="note-input-wrap surface">
+          <textarea id="note-input" rows="3" placeholder="Drop a thought..."></textarea>
+          <div class="row-actions">
+            <button class="primary-btn" onclick="saveNote()">Save Note</button>
           </div>
         </div>
-        <div class="chips" id="news-filters"></div>
-        <div class="news-grid" id="news-list" style="margin-top:16px;"></div>
-      </section>
+        <div id="notes-list" class="stack"></div>
+      </div>
+    </div>
 
-      <section class="panel" id="panel-files" style="display:none;">
-        <div class="panel-header"><div><h2>Files</h2><p>Upload PDF, DOCX, TXT, MD and summarize or ask questions.</p></div></div>
-        <div class="files-layout">
-          <div class="card panel-stack">
-            <div class="upload-drop" id="upload-drop">
-              <p>Drop files here or choose a file</p>
-              <input id="file-input" type="file" accept=".pdf,.docx,.txt,.md">
-            </div>
-            <button class="button" id="upload-btn">Upload Selected File</button>
-          </div>
-          <div class="card">
-            <div class="file-list" id="files-list"></div>
-          </div>
+    <div id="panel-tasks" class="panel">
+      <div class="panel-header"><h2>✅ Tasks</h2></div>
+      <div class="panel-body">
+        <div class="task-input-wrap surface">
+          <input id="task-input" type="text" placeholder="Add a task...">
+          <select id="task-priority">
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+            <option value="low">Low</option>
+          </select>
+          <button class="primary-btn" onclick="createTask()">Add</button>
         </div>
-      </section>
+        <div id="tasks-list"></div>
+      </div>
+    </div>
 
-      <section class="panel" id="panel-projects" style="display:none;">
-        <div class="panel-header">
-          <div><h2>Projects</h2><p>Named labels for web conversations.</p></div>
-          <div class="inline-row"><button class="button" id="projects-create-btn">New Project</button></div>
+    <div id="panel-brainstorm" class="panel">
+      <div class="panel-header"><h2>🔥 Brainstorm</h2></div>
+      <div class="panel-body">
+        <div class="brainstorm-input-wrap surface">
+          <input id="brainstorm-input" type="text" placeholder="Enter topic to debate...">
+          <button class="primary-btn" onclick="runBrainstorm()">Start Debate</button>
         </div>
-        <div class="card">
-          <table>
-            <thead>
-              <tr><th>Name</th><th>Created</th><th>Messages</th><th>Last active</th><th></th></tr>
-            </thead>
-            <tbody id="projects-table"></tbody>
-          </table>
-        </div>
-      </section>
-    </main>
+        <div id="brainstorm-result"></div>
+      </div>
+    </div>
+
+    <div id="panel-news" class="panel">
+      <div class="panel-header">
+        <h2>📰 News</h2>
+        <button class="panel-action" onclick="fetchNews()">Fetch Latest</button>
+      </div>
+      <div class="panel-body">
+        <div id="news-list"></div>
+      </div>
+    </div>
+
+    <div id="panel-memory" class="panel">
+      <div class="panel-header"><h2>🧠 Memory</h2></div>
+      <div class="panel-body">
+        <div id="memory-list"></div>
+      </div>
+    </div>
+
+    <div id="panel-files" class="panel">
+      <div class="panel-header"><h2>📁 Files</h2></div>
+      <div class="panel-body">
+        <div id="drop-zone">Drag & drop PDF, DOCX, TXT or click to upload</div>
+        <input type="file" id="file-input" accept=".pdf,.docx,.txt,.md" style="display:none">
+        <div id="files-list"></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div id="modal-overlay" style="display:none" onclick="closeModal()">
+  <div id="modal-box" onclick="event.stopPropagation()">
+    <h3>New Project</h3>
+    <input id="proj-name-input" type="text" placeholder="Project name...">
+    <button onclick="createProject()">Create</button>
   </div>
+</div>
 
-  <nav class="mobile-tabs">
-    <button class="nav-btn active" data-panel="home" onclick="showPanel('home')" title="Home">🏠</button>
-    <button class="nav-btn" data-panel="chat" onclick="showPanel('chat')" title="Chat">💬</button>
-    <button class="nav-btn" data-panel="notes" onclick="showPanel('notes')" title="Notes">📝</button>
-    <button class="nav-btn" data-panel="tasks" onclick="showPanel('tasks')" title="Tasks">✅</button>
-    <button class="nav-btn" data-panel="files" onclick="showPanel('files')" title="Files">📁</button>
-  </nav>
+<div id="toast"></div>
 
-  <div class="toast-stack" id="toast-stack"></div>
-  <div class="spinner-overlay" id="spinner-overlay"><div class="spinner"></div></div>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  const state = {
+    streaming: false,
+    currentProject: null,
+    projectName: 'All Chats',
+    toastTimer: null,
+  };
 
-  <script>
-    try {
-    const state = {
-      activePanel: 'home',
-      selectedProjectId: null,
-      selectedProjectName: 'All',
-      newsFilter: 'all',
-      selectedFileId: null,
-    };
+  const chatMessages = document.getElementById('chat-messages');
+  const chatInput = document.getElementById('chat-input');
+  const sendBtn = document.getElementById('send-btn');
+  const projectNav = document.getElementById('project-nav');
+  const activeModelBadge = document.getElementById('active-model-badge');
+  const dropZone = document.getElementById('drop-zone');
+  const fileInput = document.getElementById('file-input');
 
-    const categoryLabels = {
-      all: 'ทั้งหมด',
-      ai: 'AI',
-      tools: 'Tools',
-      business: 'Business',
-      security: 'Security',
-      mystery: 'Mystery',
-      world: 'World'
-    };
+  function escapeHtml(text) {
+    return String(text || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
 
-    function showToast(message, kind='success') {
-      const stack = document.getElementById('toast-stack');
-      const el = document.createElement('div');
-      el.className = `toast ${kind}`;
-      el.textContent = message;
-      stack.appendChild(el);
-      setTimeout(() => el.remove(), 3200);
-    }
+  function renderMarkdown(text) {
+    let html = escapeHtml(text || '');
+    html = html.replace(/```([\\s\\S]*?)```/g, '<pre class="surface"><code>$1</code></pre>');
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+    html = html.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');
+    html = html.replace(/\\*([^*]+)\\*/g, '<em>$1</em>');
+    html = html.replace(/(^|<br>)- (.+?)(?=(<br>|$))/g, '$1<li>$2</li>');
+    html = html.replace(/(<li>.*?<\\/li>)/gs, '<ul>$1</ul>');
+    html = html.replace(/(^|<br>)(\\d+)\\. (.+?)(?=(<br>|$))/g, '$1<li>$3</li>');
+    html = html.replace(/(<li>.*?<\\/li>)/gs, (match) => match.includes('<ul>') ? match : '<ol>' + match + '</ol>');
+    html = html.replace(/\\n/g, '<br>');
+    return html;
+  }
 
-    function setLoading(isLoading) {
-      document.getElementById('spinner-overlay').style.display = isLoading ? 'flex' : 'none';
-      document.querySelectorAll('button, input, textarea, select').forEach((el) => {
-        if (el.id === 'file-input') return;
-        el.disabled = isLoading;
-      });
-    }
+  function showToast(msg) {
+    const toast = document.getElementById('toast');
+    toast.textContent = msg;
+    toast.style.display = 'block';
+    clearTimeout(state.toastTimer);
+    state.toastTimer = setTimeout(() => {
+      toast.style.display = 'none';
+    }, 3000);
+  }
 
-    async function api(url, options={}) {
-      const response = await fetch(url, Object.assign({
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin'
-      }, options));
-      if (response.status === 307 || response.redirected) {
-        window.location.href = '/admin/otp';
-        throw new Error('redirecting');
-      }
-      if (!response.ok) {
-        let detail = `Request failed (${response.status})`;
-        try {
-          const data = await response.json();
-          detail = data.detail || detail;
-        } catch (error) {}
-        throw new Error(detail);
-      }
-      const contentType = response.headers.get('content-type') || '';
-      return contentType.includes('application/json') ? response.json() : response.text();
-    }
+  function scrollToBottom() {
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  }
 
-    function showPanel(name) {
-      state.activePanel = name;
-      document.querySelectorAll('.panel').forEach((panel) => {
-        panel.style.display = 'none';
-      });
-      const target = document.getElementById('panel-' + name);
-      if (target) target.style.display = 'block';
-      document.querySelectorAll('.nav-btn').forEach((btn) => btn.classList.remove('active'));
-      const activeButtons = document.querySelectorAll('[data-panel="' + name + '"]');
-      activeButtons.forEach((btn) => btn.classList.add('active'));
-      if (name === 'chat') loadChatHistory();
-      if (name === 'notes') loadNotes();
-      if (name === 'tasks') loadTasks();
-      if (name === 'news') loadNews();
-      if (name === 'memory') loadMemory();
-      if (name === 'projects') loadProjects();
-      if (name === 'files') loadFiles();
-    }
-    window.showPanel = showPanel;
+  function setSendButtonState(loading) {
+    sendBtn.disabled = loading;
+    sendBtn.textContent = loading ? '...' : '↑';
+  }
 
-    function renderMarkdown(text) {
-      let html = String(text || '');
-      html = html.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      html = html.replace(/```([\\s\\S]*?)```/g, '<pre class="code">$1</pre>');
-      html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-      html = html.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');
-      html = html.replace(/\\*([^*]+)\\*/g, '<em>$1</em>');
-      html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
-      html = html.replace(/(<li>.*<\\/li>)/gs, '<ul>$1</ul>');
-      html = html.replace(/\\n/g, '<br>');
-      return html;
-    }
-
-    function formatSource(source) {
-      return source === 'web' ? '🌐 Web' : '💬 Telegram';
-    }
-
-    function escapeHtml(text) {
-      return String(text || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-    }
-
-    function scrollToBottom() {
-      const el = document.getElementById('chat-messages');
-      if (el) el.scrollTop = el.scrollHeight;
-    }
-
-    function appendUserBubble(text, meta='🌐 Web · now') {
-      const div = document.createElement('div');
-      div.className = 'msg-row user-row';
-      div.innerHTML = `
-        <div class="timestamp"><span class="source-badge">${meta}</span></div>
+  function appendUserBubble(text, meta='You • now') {
+    const row = document.createElement('div');
+    row.className = 'msg-row user-row';
+    row.innerHTML = `
+      <div>
         <div class="msg-bubble user-bubble">
           <div class="msg-text">${escapeHtml(text)}</div>
-        </div>`;
-      document.getElementById('chat-messages').appendChild(div);
-      scrollToBottom();
-      return div;
-    }
-
-    function appendThinkingBubble(id) {
-      const div = document.createElement('div');
-      div.id = id;
-      div.className = 'msg-row ai-row';
-      div.innerHTML = `
-        <div class="timestamp"><span class="source-badge">🌐 Web · thinking</span></div>
-        <div class="msg-bubble ai-bubble thinking">
-          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-        </div>`;
-      document.getElementById('chat-messages').appendChild(div);
-      scrollToBottom();
-      return div;
-    }
-
-    function appendAiBubble(text, meta='🌐 Web · now') {
-      const div = document.createElement('div');
-      div.className = 'msg-row ai-row';
-      div.innerHTML = `
-        <div class="timestamp"><span class="source-badge">${meta}</span></div>
-        <div class="msg-bubble ai-bubble">
-          <div class="msg-text">${renderMarkdown(text)}</div>
-        </div>`;
-      document.getElementById('chat-messages').appendChild(div);
-      scrollToBottom();
-      return div;
-    }
-
-    function setSendButtonState(loading) {
-      const btn = document.getElementById('send-btn');
-      if (!btn) return;
-      btn.disabled = loading;
-      btn.textContent = loading ? '...' : 'Send';
-      btn.style.opacity = loading ? '0.5' : '1';
-    }
-
-    async function loadProjectsList() {
-      const data = await api('/workspace/projects');
-      const container = document.getElementById('projects-list');
-      const projects = [{ id: null, name: 'All', message_count: data.total_messages || 0, last_active: '' }].concat(data.projects || []);
-      container.innerHTML = projects.map((project) => `
-        <div class="project-item ${project.id === state.selectedProjectId ? 'active' : ''}" data-id="${project.id ?? ''}">
-          <strong>${project.name}</strong>
-          <div class="subtle">${project.message_count || 0} messages</div>
         </div>
-      `).join('');
-      container.querySelectorAll('.project-item').forEach((item) => {
-        item.addEventListener('click', () => {
-          const raw = item.dataset.id;
-          state.selectedProjectId = raw ? Number(raw) : null;
-          state.selectedProjectName = item.querySelector('strong').textContent;
-          window._currentProject = state.selectedProjectId;
-          loadProjectsList();
-          loadChatHistory();
-        });
-      });
+        <div class="msg-meta">${escapeHtml(meta)}</div>
+      </div>
+    `;
+    chatMessages.appendChild(row);
+    scrollToBottom();
+    return row;
+  }
+
+  function appendAiBubble(text, meta='Ener-AI') {
+    const row = document.createElement('div');
+    row.className = 'msg-row ai-row';
+    row.innerHTML = `
+      <div class="msg-bubble ai-bubble">
+        <div class="msg-text">${renderMarkdown(text)}</div>
+        <div class="msg-meta">${escapeHtml(meta)}</div>
+      </div>
+    `;
+    chatMessages.appendChild(row);
+    scrollToBottom();
+    return row;
+  }
+
+  function appendThinkingBubble(id) {
+    const row = document.createElement('div');
+    row.id = id;
+    row.className = 'msg-row ai-row';
+    row.innerHTML = `
+      <div class="msg-bubble ai-bubble thinking">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      </div>
+    `;
+    chatMessages.appendChild(row);
+    scrollToBottom();
+    return row;
+  }
+
+  async function api(url, options={}) {
+    const response = await fetch(url, Object.assign({
+      headers: {'Content-Type': 'application/json'},
+      credentials: 'same-origin'
+    }, options));
+
+    if (response.status === 307 || response.redirected) {
+      window.location.href = '/admin/otp';
+      throw new Error('Session expired');
     }
 
-    async function loadChatHistory() {
-      const query = state.selectedProjectId ? `?project_id=${state.selectedProjectId}` : '';
-      const data = await api(`/workspace/chat/history${query}`);
-      const wrap = document.getElementById('chat-messages');
-      wrap.innerHTML = (data.messages || []).map((msg) => `
-        <div class="msg-row ${msg.role === 'user' ? 'user-row' : 'ai-row'}">
-          <div class="timestamp"><span class="source-badge">${formatSource(msg.source)}</span><span>${msg.created_at || ''}</span></div>
-          <div class="msg-bubble ${msg.role === 'user' ? 'user-bubble' : 'ai-bubble'}">
-            <div class="msg-text">${msg.role === 'assistant' ? renderMarkdown(msg.content) : escapeHtml(msg.content)}</div>
-          </div>
-        </div>
-      `).join('') || '<div class="subtle">ยังไม่มีข้อความ</div>';
-      scrollToBottom();
-    }
-
-    async function sendMessage() {
-      const input = document.getElementById('chat-input');
-      const msg = input.value.trim();
-      if (!msg || window._streaming) return;
-
-      input.value = '';
-      input.style.height = 'auto';
-      appendUserBubble(msg);
-      const thinkingId = 'think-' + Date.now();
-      appendThinkingBubble(thinkingId);
-
-      window._streaming = true;
-      setSendButtonState(true);
-      let aiBubble = null;
-      let fullText = '';
-
+    if (!response.ok) {
+      let detail = `Request failed (${response.status})`;
       try {
-        const response = await fetch('/workspace/chat/stream', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          credentials: 'same-origin',
-          body: JSON.stringify({
-            message: msg,
-            project_id: window._currentProject || null,
-            model: document.getElementById('model-select')?.value || 'auto'
-          }),
-        });
-        if (!response.ok || !response.body) {
-          throw new Error(`Request failed (${response.status})`);
-        }
+        const data = await response.json();
+        detail = data.detail || detail;
+      } catch (error) {}
+      throw new Error(detail);
+    }
 
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
+    const contentType = response.headers.get('content-type') || '';
+    return contentType.includes('application/json') ? response.json() : response.text();
+  }
 
-        while (true) {
-          const {done, value} = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, {stream: true});
-          const events = buffer.split('\n\n');
-          buffer = events.pop() || '';
+  async function loadActiveModelBadge() {
+    try {
+      const data = await api('/admin/api/status');
+      activeModelBadge.textContent = data.active_model_label || 'Auto / Active';
+    } catch (error) {
+      activeModelBadge.textContent = 'Auto / Active';
+    }
+  }
 
-          for (const event of events) {
-            const line = event.split('\n').find((item) => item.startsWith('data: '));
-            if (!line) continue;
-            const data = JSON.parse(line.slice(6));
+  async function showPanel(name) {
+    document.querySelectorAll('.panel').forEach((panel) => {
+      panel.classList.remove('active-panel');
+    });
+    const target = document.getElementById('panel-' + name);
+    if (target) target.classList.add('active-panel');
 
-            if (data.type === 'start') {
-              document.getElementById(thinkingId)?.remove();
-              aiBubble = appendAiBubble('');
-            } else if (data.type === 'token') {
-              if (!aiBubble) aiBubble = appendAiBubble('');
-              fullText += data.text || '';
-              aiBubble.querySelector('.msg-text').innerHTML = renderMarkdown(fullText);
-              scrollToBottom();
-            } else if (data.type === 'error') {
-              document.getElementById(thinkingId)?.remove();
-              appendAiBubble('เกิดข้อผิดพลาด: ' + (data.text || 'unknown'));
-            }
+    document.querySelectorAll('#tool-nav .nav-item').forEach((item) => {
+      item.classList.toggle('active', item.dataset.panel === name);
+    });
+
+    if (name === 'chat') await loadChatHistory();
+    if (name === 'notes') await loadNotes();
+    if (name === 'tasks') await loadTasks();
+    if (name === 'news') await loadNews();
+    if (name === 'memory') await loadMemory();
+    if (name === 'files') await loadFiles();
+  }
+
+  function newChat() {
+    chatMessages.innerHTML = '';
+    state.currentProject = null;
+    state.projectName = 'All Chats';
+    window._currentProject = null;
+    highlightProjectLink();
+    showPanel('chat');
+  }
+
+  async function sendMessage() {
+    const msg = chatInput.value.trim();
+    if (!msg || state.streaming) return;
+
+    chatInput.value = '';
+    chatInput.style.height = 'auto';
+    appendUserBubble(msg, state.projectName || 'You • web');
+
+    const thinkingId = 'thinking-' + Date.now();
+    appendThinkingBubble(thinkingId);
+
+    state.streaming = true;
+    setSendButtonState(true);
+
+    let aiBubble = null;
+    let fullText = '';
+
+    try {
+      const response = await fetch('/workspace/chat/stream', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          message: msg,
+          project_id: window._currentProject || null,
+          model: 'auto'
+        })
+      });
+
+      if (!response.ok || !response.body) {
+        throw new Error(`Request failed (${response.status})`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const {done, value} = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, {stream: true});
+        const chunks = buffer.split('\\n\\n');
+        buffer = chunks.pop() || '';
+
+        for (const chunk of chunks) {
+          const line = chunk.split('\\n').find((item) => item.startsWith('data: '));
+          if (!line) continue;
+          const data = JSON.parse(line.slice(6));
+
+          if (data.type === 'start') {
+            document.getElementById(thinkingId)?.remove();
+            aiBubble = appendAiBubble('', 'Ener-AI');
+          }
+          if (data.type === 'token') {
+            if (!aiBubble) aiBubble = appendAiBubble('', 'Ener-AI');
+            fullText += data.text || '';
+            aiBubble.querySelector('.msg-text').innerHTML = renderMarkdown(fullText);
+            scrollToBottom();
+          }
+          if (data.type === 'done') {
+            await loadProjects();
+          }
+          if (data.type === 'error') {
+            document.getElementById(thinkingId)?.remove();
+            showToast(data.text || 'Streaming error');
           }
         }
-
-        await loadProjectsList();
-      } catch (error) {
-        document.getElementById(thinkingId)?.remove();
-        appendAiBubble('Connection error. Please retry.');
-        showToast(error.message || 'ส่งข้อความไม่สำเร็จ', 'error');
-      } finally {
-        window._streaming = false;
-        setSendButtonState(false);
-        input.focus();
       }
+    } catch (error) {
+      document.getElementById(thinkingId)?.remove();
+      appendAiBubble('Connection error. Please retry.', 'Ener-AI');
+      showToast(error.message || 'Send failed');
+    } finally {
+      state.streaming = false;
+      setSendButtonState(false);
+      chatInput.focus();
     }
+  }
 
-    async function createProject() {
-      const name = window.prompt('Project name');
-      if (!name) return;
-      setLoading(true);
-      try {
-        await api('/workspace/projects/create', {
-          method: 'POST',
-          body: JSON.stringify({ name })
-        });
-        await loadProjectsList();
-        await loadProjectsTable();
-        showToast('สร้างโปรเจ็กต์แล้ว');
-      } catch (error) {
-        showToast(error.message || 'สร้างโปรเจ็กต์ไม่สำเร็จ', 'error');
-      } finally {
-        setLoading(false);
+  async function loadChatHistory() {
+    const query = window._currentProject ? `?project_id=${window._currentProject}` : '';
+    const data = await api(`/workspace/chat/history${query}`);
+    chatMessages.innerHTML = '';
+    const messages = data.messages || [];
+    if (!messages.length) {
+      chatMessages.innerHTML = '<div class="msg-row"><div class="empty-state">Start a conversation with Ener-AI.</div></div>';
+      return;
+    }
+    messages.forEach((msg) => {
+      const meta = `${msg.source === 'web' ? 'Web' : 'Telegram'} • ${msg.created_at || ''}`;
+      if (msg.role === 'user') {
+        appendUserBubble(msg.content || '', meta);
+      } else {
+        appendAiBubble(msg.content || '', meta);
       }
-    }
+    });
+    scrollToBottom();
+  }
 
-    async function loadProjects() {
-      await loadProjectsList();
-      await loadProjectsTable();
-    }
+  function highlightProjectLink() {
+    document.querySelectorAll('#project-nav .project-link').forEach((link) => {
+      const projectId = link.dataset.projectId ? Number(link.dataset.projectId) : null;
+      const active = projectId === state.currentProject;
+      link.classList.toggle('active', active);
+      link.classList.toggle('active-project', active);
+    });
+  }
 
-    async function loadProjectsTable() {
-      const data = await api('/workspace/projects');
-      const body = document.getElementById('projects-table');
-      body.innerHTML = (data.projects || []).map((project) => `
-        <tr>
-          <td><button class="button ghost project-open-btn" data-id="${project.id}">${project.name}</button></td>
-          <td>${project.created_at || ''}</td>
-          <td>${project.message_count || 0}</td>
-          <td>${project.last_active || '-'}</td>
-          <td><button class="button danger project-delete-btn" data-id="${project.id}">Delete</button></td>
-        </tr>
-      `).join('') || '<tr><td colspan="5" class="subtle">ยังไม่มีโปรเจ็กต์</td></tr>';
-      body.querySelectorAll('.project-open-btn').forEach((btn) => btn.addEventListener('click', () => {
-        state.selectedProjectId = Number(btn.dataset.id);
-        window._currentProject = state.selectedProjectId;
-        showPanel('chat');
-        loadProjectsList();
-      }));
-      body.querySelectorAll('.project-delete-btn').forEach((btn) => btn.addEventListener('click', async () => {
-        if (!window.confirm('ลบโปรเจ็กต์นี้?')) return;
-        setLoading(true);
-        try {
-          await api(`/workspace/projects/${btn.dataset.id}`, { method: 'DELETE' });
-          if (state.selectedProjectId === Number(btn.dataset.id)) state.selectedProjectId = null;
-          await loadProjectsList();
-          await loadProjectsTable();
-          showToast('ลบโปรเจ็กต์แล้ว');
-        } catch (error) {
-          showToast(error.message || 'ลบโปรเจ็กต์ไม่สำเร็จ', 'error');
-        } finally {
-          setLoading(false);
-        }
-      }));
-    }
+  async function loadProjects() {
+    const data = await api('/workspace/projects');
+    const projects = data.projects || [];
+    const items = [
+      {
+        id: null,
+        name: 'All Chats',
+        count: data.total_messages || 0,
+        lastActive: ''
+      },
+      ...projects.map((project) => ({
+        id: project.id,
+        name: project.name,
+        count: project.message_count || 0,
+        lastActive: project.last_active || ''
+      }))
+    ];
 
-    async function loadNotes() {
-      const data = await api('/workspace/notes');
-      const keyword = (document.getElementById('notes-search').value || '').toLowerCase();
-      const groups = {};
-      (data.notes || []).forEach((note) => {
-        const hay = `${note.content} ${note.category} ${note.ai_summary}`.toLowerCase();
-        if (keyword && !hay.includes(keyword)) return;
-        if (!groups[note.category]) groups[note.category] = [];
-        groups[note.category].push(note);
+    projectNav.innerHTML = items.map((project) => `
+      <a class="nav-item project-link" data-project-id="${project.id ?? ''}">
+        ${escapeHtml(project.name)}
+        <span class="project-meta">${project.count} messages${project.lastActive ? ' • ' + escapeHtml(project.lastActive) : ''}</span>
+      </a>
+    `).join('');
+
+    projectNav.querySelectorAll('.project-link').forEach((link) => {
+      link.addEventListener('click', () => {
+        const rawId = link.dataset.projectId;
+        const projectId = rawId ? Number(rawId) : null;
+        const projectName = link.childNodes[0]?.textContent?.trim() || 'All Chats';
+        selectProject(projectId, projectName);
       });
-      const wrap = document.getElementById('notes-groups');
-      wrap.innerHTML = Object.entries(groups).map(([category, notes]) => `
-        <div class="card">
-          <h3 style="margin:0 0 12px;">${category}</h3>
-          ${notes.map((note) => `
-            <details class="list-item">
-              <summary>${note.ai_summary || note.content.slice(0, 80)}</summary>
-              <div style="margin-top:8px;" class="subtle">${note.created_at || ''}</div>
-              <div style="margin-top:10px;white-space:pre-wrap;">${note.content}</div>
-            </details>
-          `).join('')}
-        </div>
-      `).join('') || '<div class="card subtle">ยังไม่มีโน้ต</div>';
+    });
+
+    highlightProjectLink();
+  }
+
+  function selectProject(id, name) {
+    state.currentProject = id;
+    state.projectName = name || 'All Chats';
+    window._currentProject = id;
+    highlightProjectLink();
+    chatMessages.innerHTML = '';
+    loadChatHistory();
+    showPanel('chat');
+  }
+
+  function showNewProjectModal() {
+    document.getElementById('modal-overlay').style.display = 'flex';
+    document.getElementById('proj-name-input').focus();
+  }
+
+  function closeModal() {
+    document.getElementById('modal-overlay').style.display = 'none';
+    document.getElementById('proj-name-input').value = '';
+  }
+
+  async function createProject() {
+    const input = document.getElementById('proj-name-input');
+    const name = input.value.trim();
+    if (!name) {
+      showToast('Project name required');
+      return;
     }
 
-    async function saveNote() {
-      const text = document.getElementById('notes-input').value.trim();
-      if (!text) return;
-      setLoading(true);
-      try {
-        const data = await api('/workspace/notes/save', {
-          method: 'POST',
-          body: JSON.stringify({ text })
-        });
-        document.getElementById('notes-input').value = '';
-        await loadNotes();
-        showToast(data.message || 'บันทึกโน้ตแล้ว');
-      } catch (error) {
-        showToast(error.message || 'บันทึกโน้ตไม่สำเร็จ', 'error');
-      } finally {
-        setLoading(false);
-      }
+    try {
+      await api('/workspace/projects/create', {
+        method: 'POST',
+        body: JSON.stringify({name})
+      });
+      await loadProjects();
+      closeModal();
+      showToast('Project created');
+    } catch (error) {
+      showToast(error.message || 'Create project failed');
+    }
+  }
+
+  async function loadNotes() {
+    const data = await api('/workspace/notes');
+    const notes = data.notes || [];
+    const grouped = {};
+    notes.forEach((note) => {
+      const category = note.category || 'note';
+      if (!grouped[category]) grouped[category] = [];
+      grouped[category].push(note);
+    });
+
+    const list = document.getElementById('notes-list');
+    if (!notes.length) {
+      list.innerHTML = '<div class="empty-state">No notes yet.</div>';
+      return;
     }
 
-    function renderTaskColumn(title, status, tasks) {
-      return `
-        <div class="kanban-column">
-          <div class="inline-row" style="justify-content:space-between;align-items:center;">
-            <h3>${title}</h3>
-            <button class="button secondary add-task-btn" data-status="${status}">+ Add</button>
-          </div>
-          <div class="list">${tasks.map((task) => `
-            <div class="task-card">
-              <strong>${task.title}</strong>
-              <div class="badge">${task.priority_badge} ${task.priority}</div>
-              <div class="subtle">${task.deadline_hint || ''}</div>
-              <div class="inline-row" style="margin-top:10px;">
-                ${status !== 'done' ? `<button class="button ghost task-move-btn" data-id="${task.id}" data-next="${status === 'open' ? 'in_progress' : 'done'}">${status === 'open' ? 'Start' : 'Done'}</button>` : ''}
-                ${status !== 'done' ? `<button class="button danger task-done-btn" data-id="${task.id}">Complete</button>` : ''}
+    list.innerHTML = Object.entries(grouped).map(([category, items]) => `
+      <div class="notes-group">
+        <h3>${escapeHtml(category)}</h3>
+        ${items.map((note) => `
+          <details class="note-card">
+            <summary>${escapeHtml(note.ai_summary || (note.content || '').slice(0, 120))}</summary>
+            <div class="note-meta">${escapeHtml(note.created_at || '')}</div>
+            <div style="margin-top:10px;">${renderMarkdown(note.content || '')}</div>
+          </details>
+        `).join('')}
+      </div>
+    `).join('');
+  }
+
+  async function saveNote() {
+    const input = document.getElementById('note-input');
+    const value = input.value.trim();
+    if (!value) return;
+
+    try {
+      await api('/workspace/notes/save', {
+        method: 'POST',
+        body: JSON.stringify({text: value})
+      });
+      input.value = '';
+      await loadNotes();
+      showToast('Note saved');
+    } catch (error) {
+      showToast(error.message || 'Save note failed');
+    }
+  }
+
+  async function loadTasks() {
+    const data = await api('/workspace/tasks');
+    const tasks = data.tasks || [];
+    const grouped = {open: [], in_progress: [], done: []};
+    tasks.forEach((task) => {
+      const status = task.status || 'open';
+      if (!grouped[status]) grouped[status] = [];
+      grouped[status].push(task);
+    });
+
+    const labels = {
+      open: 'Open',
+      in_progress: 'In Progress',
+      done: 'Done'
+    };
+
+    const list = document.getElementById('tasks-list');
+    list.innerHTML = Object.entries(grouped).map(([status, items]) => `
+      <div class="task-group">
+        <h3>${labels[status] || status}</h3>
+        <div class="surface">
+          ${items.length ? items.map((task) => `
+            <label class="task-item">
+              <input type="checkbox" ${task.status === 'done' ? 'checked' : ''} data-task-id="${task.id}">
+              <div>
+                <div>${escapeHtml(task.title || '')}</div>
+                <div class="task-meta">${escapeHtml(task.deadline_hint || '')}</div>
+                <div class="priority-badge priority-${escapeHtml(task.priority || 'medium')}">${escapeHtml(task.priority_badge || '')} ${escapeHtml(task.priority || 'medium')}</div>
               </div>
-            </div>
-          `).join('') || '<div class="subtle">ไม่มีรายการ</div>'}</div>
+            </label>
+          `).join('') : '<div class="empty-state">No tasks in this group.</div>'}
+        </div>
+      </div>
+    `).join('');
+
+    list.querySelectorAll('input[type="checkbox"][data-task-id]').forEach((checkbox) => {
+      checkbox.addEventListener('change', async () => {
+        const taskId = checkbox.dataset.taskId;
+        try {
+          await api(`/workspace/tasks/${taskId}/done`, {method: 'POST'});
+          await loadTasks();
+        } catch (error) {
+          showToast(error.message || 'Update task failed');
+        }
+      });
+    });
+  }
+
+  async function createTask() {
+    const input = document.getElementById('task-input');
+    const priority = document.getElementById('task-priority');
+    const title = input.value.trim();
+    if (!title) return;
+
+    try {
+      await api('/workspace/tasks/create', {
+        method: 'POST',
+        body: JSON.stringify({
+          title,
+          priority: priority.value || 'medium'
+        })
+      });
+      input.value = '';
+      priority.value = 'medium';
+      await loadTasks();
+      showToast('Task created');
+    } catch (error) {
+      showToast(error.message || 'Create task failed');
+    }
+  }
+
+  async function runBrainstorm() {
+    const input = document.getElementById('brainstorm-input');
+    const topic = input.value.trim();
+    if (!topic) return;
+
+    const result = document.getElementById('brainstorm-result');
+    result.innerHTML = '<div class="surface">Thinking...</div>';
+
+    try {
+      const data = await api('/workspace/brainstorm', {
+        method: 'POST',
+        body: JSON.stringify({topic})
+      });
+
+      const rounds = data.rounds || [];
+      const latest = rounds[rounds.length - 1] || {};
+      result.innerHTML = `
+        <div class="brain-grid">
+          <div class="brain-card"><h4>AI_A</h4><div>${renderMarkdown(latest.ai_a || '')}</div></div>
+          <div class="brain-card"><h4>AI_B</h4><div>${renderMarkdown(latest.ai_b || '')}</div></div>
+          <div class="brain-card"><h4>AI_C</h4><div>${renderMarkdown(latest.ai_c || '')}</div></div>
+        </div>
+        <div class="verdict-card">
+          <h4>Verdict</h4>
+          <div>${escapeHtml(data.verdict || '-')}</div>
+          <div class="task-meta">${escapeHtml(data.reason || '')}</div>
+          ${data.raw ? `<details style="margin-top:12px;"><summary>Raw output</summary><div style="margin-top:10px;">${renderMarkdown(data.raw)}</div></details>` : ''}
         </div>
       `;
+    } catch (error) {
+      result.innerHTML = '<div class="surface">Brainstorm failed.</div>';
+      showToast(error.message || 'Brainstorm failed');
     }
+  }
 
-    async function loadTasks() {
-      const data = await api('/workspace/tasks');
-      const byStatus = { open: [], in_progress: [], done: [] };
-      (data.tasks || []).forEach((task) => {
-        byStatus[task.status] = byStatus[task.status] || [];
-        byStatus[task.status].push(task);
+  async function loadNews() {
+    const data = await api('/workspace/news');
+    const items = data.news || [];
+    const list = document.getElementById('news-list');
+    if (!items.length) {
+      list.innerHTML = '<div class="empty-state">No news loaded yet.</div>';
+      return;
+    }
+    list.innerHTML = items.map((item) => `
+      <div class="news-card">
+        <div><strong>${escapeHtml(item.title || '')}</strong></div>
+        <div class="news-meta">${escapeHtml(item.source || '')} ${item.fetched_at ? '• ' + escapeHtml(item.fetched_at) : ''}</div>
+        <div style="margin-top:10px;">${escapeHtml(item.summary || '')}</div>
+        ${item.url ? `<div class="row-actions"><a class="secondary-btn" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">Open</a></div>` : ''}
+      </div>
+    `).join('');
+  }
+
+  async function fetchNews() {
+    try {
+      showToast('Fetching latest news...');
+      await api('/workspace/news/fetch', {method: 'POST'});
+      await loadNews();
+      showToast('News updated');
+    } catch (error) {
+      showToast(error.message || 'Fetch news failed');
+    }
+  }
+
+  async function loadMemory() {
+    const data = await api('/workspace/memory');
+    const items = data.memories || [];
+    const list = document.getElementById('memory-list');
+    if (!items.length) {
+      list.innerHTML = '<div class="empty-state">No long-term memories yet.</div>';
+      return;
+    }
+    list.innerHTML = items.map((item) => `
+      <div class="memory-card">
+        <div>${renderMarkdown(item.content || '')}</div>
+        <div class="memory-meta">${escapeHtml(item.memory_type || 'general')} ${item.created_at ? '• ' + escapeHtml(item.created_at) : ''}</div>
+      </div>
+    `).join('');
+  }
+
+  async function uploadFile(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+    await fetch('/workspace/files/upload', {
+      method: 'POST',
+      body: formData,
+      credentials: 'same-origin'
+    }).then((response) => {
+      if (!response.ok) throw new Error('Upload failed');
+      return response.json();
+    });
+  }
+
+  async function summarizeFile(fileId) {
+    try {
+      await api(`/workspace/files/${fileId}/summarize`, {method: 'POST'});
+      await loadFiles();
+      showToast('Summary ready');
+    } catch (error) {
+      showToast(error.message || 'Summarize failed');
+    }
+  }
+
+  async function askFile(fileId) {
+    const question = window.prompt('Ask about this file');
+    if (!question) return;
+    try {
+      const data = await api(`/workspace/files/${fileId}/ask`, {
+        method: 'POST',
+        body: JSON.stringify({question})
       });
-      const board = document.getElementById('tasks-board');
-      board.innerHTML =
-        renderTaskColumn('Todo', 'open', byStatus.open || []) +
-        renderTaskColumn('In Progress', 'in_progress', byStatus.in_progress || []) +
-        renderTaskColumn('Done', 'done', byStatus.done || []);
-
-      board.querySelectorAll('.add-task-btn').forEach((btn) => btn.addEventListener('click', async () => {
-        const title = window.prompt('Task title');
-        if (!title) return;
-        const deadline_hint = window.prompt('Deadline hint (optional)') || '';
-        setLoading(true);
-        try {
-          await api('/workspace/tasks/create', {
-            method: 'POST',
-            body: JSON.stringify({ title, deadline_hint, status: btn.dataset.status })
-          });
-          await loadTasks();
-          showToast('สร้าง task แล้ว');
-        } catch (error) {
-          showToast(error.message || 'สร้าง task ไม่สำเร็จ', 'error');
-        } finally {
-          setLoading(false);
-        }
-      }));
-      board.querySelectorAll('.task-move-btn').forEach((btn) => btn.addEventListener('click', async () => {
-        setLoading(true);
-        try {
-          await api(`/workspace/tasks/${btn.dataset.id}/status`, {
-            method: 'POST',
-            body: JSON.stringify({ status: btn.dataset.next })
-          });
-          await loadTasks();
-        } catch (error) {
-          showToast(error.message || 'อัปเดต task ไม่สำเร็จ', 'error');
-        } finally {
-          setLoading(false);
-        }
-      }));
-      board.querySelectorAll('.task-done-btn').forEach((btn) => btn.addEventListener('click', async () => {
-        setLoading(true);
-        try {
-          await api(`/workspace/tasks/${btn.dataset.id}/done`, { method: 'POST' });
-          await loadTasks();
-        } catch (error) {
-          showToast(error.message || 'ปิด task ไม่สำเร็จ', 'error');
-        } finally {
-          setLoading(false);
-        }
-      }));
+      showPanel('chat');
+      appendAiBubble(data.answer || '', 'Ener-AI • file answer');
+      showToast('Answer added to chat');
+    } catch (error) {
+      showToast(error.message || 'Ask file failed');
     }
+  }
 
-    async function loadMemory() {
-      const data = await api('/workspace/memory');
-      const wrap = document.getElementById('memory-list');
-      wrap.innerHTML = (data.memories || []).map((item) => `
-        <div class="card">
-          <div style="white-space:pre-wrap;">${item.content}</div>
-          <div class="subtle" style="margin-top:8px;">${item.created_at || ''}</div>
+  async function loadFiles() {
+    const data = await api('/workspace/files');
+    const files = data.files || [];
+    const list = document.getElementById('files-list');
+    if (!files.length) {
+      list.innerHTML = '<div class="empty-state">No uploaded files yet.</div>';
+      return;
+    }
+    list.innerHTML = files.map((file) => `
+      <div class="file-card">
+        <div><strong>${escapeHtml(file.filename || '')}</strong></div>
+        <div class="file-meta">${escapeHtml(String(file.size_bytes || 0))} bytes ${file.created_at ? '• ' + escapeHtml(file.created_at) : ''}</div>
+        ${file.summary ? `<div style="margin-top:10px;">${renderMarkdown(file.summary)}</div>` : ''}
+        <div class="file-actions">
+          <button class="file-action" onclick="summarizeFile(${file.id})">Summarize</button>
+          <button class="secondary-btn" onclick="askFile(${file.id})">Ask</button>
         </div>
-      `).join('') || '<div class="card subtle">ยังไม่มีความจำระยะยาว</div>';
-    }
+      </div>
+    `).join('');
+  }
 
-    async function runBrainstorm() {
-      const topic = document.getElementById('brainstorm-input').value.trim();
-      if (!topic) return;
-      document.getElementById('brainstorm-grid').innerHTML = `
-        <div class="card brain-card"><h4>AI_A</h4><div class="thinking"><span></span><span></span><span></span></div></div>
-        <div class="card brain-card"><h4>AI_B</h4><div class="thinking"><span></span><span></span><span></span></div></div>
-        <div class="card brain-card"><h4>AI_C</h4><div class="thinking"><span></span><span></span><span></span></div></div>
-      `;
-      setLoading(true);
-      try {
-        const data = await api('/workspace/brainstorm', {
-          method: 'POST',
-          body: JSON.stringify({ topic })
-        });
-        const rounds = data.rounds || [];
-        const latest = rounds[rounds.length - 1] || {};
-        document.getElementById('brainstorm-grid').innerHTML = `
-          <div class="card brain-card"><h4>AI_A</h4><div>${renderMarkdown(latest.ai_a || data.raw || '')}</div></div>
-          <div class="card brain-card"><h4>AI_B</h4><div>${renderMarkdown(latest.ai_b || '')}</div></div>
-          <div class="card brain-card"><h4>AI_C</h4><div>${renderMarkdown(latest.ai_c || '')}</div></div>
-        `;
-        document.getElementById('brainstorm-verdict').innerHTML = `
-          <div class="card verdict-card">
-            <h4>Final Verdict</h4>
-            <div>${data.verdict || '-'}</div>
-            <div class="subtle" style="margin-top:8px;">${data.reason || ''}</div>
-            <details style="margin-top:12px;"><summary>Raw debate</summary><pre class="code">${(data.raw || '').replace(/</g, '&lt;')}</pre></details>
-          </div>
-        `;
-      } catch (error) {
-        showToast(error.message || 'brainstorm ไม่สำเร็จ', 'error');
-      } finally {
-        setLoading(false);
-      }
+  dropZone.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    try {
+      await uploadFile(file);
+      fileInput.value = '';
+      await loadFiles();
+      showToast('File uploaded');
+    } catch (error) {
+      showToast(error.message || 'Upload failed');
     }
+  });
 
-    async function loadNews() {
-      const data = await api('/workspace/news');
-      const items = data.news || [];
-      const filters = ['all'].concat([...new Set(items.map((item) => item.category || 'ai'))]);
-      const chips = document.getElementById('news-filters');
-      chips.innerHTML = filters.map((name) => `<button class="chip ${name === state.newsFilter ? 'active' : ''}" data-name="${name}">${categoryLabels[name] || name}</button>`).join('');
-      chips.querySelectorAll('.chip').forEach((chip) => chip.addEventListener('click', () => {
-        state.newsFilter = chip.dataset.name;
-        loadNews();
-      }));
-      const filtered = state.newsFilter === 'all' ? items : items.filter((item) => (item.category || 'ai') === state.newsFilter);
-      document.getElementById('news-list').innerHTML = filtered.map((item) => `
-        <div class="card">
-          <strong>${item.title}</strong>
-          <div class="subtle" style="margin:8px 0;">${item.source || ''} · ${item.fetched_at || ''}</div>
-          <div>${item.summary || ''}</div>
-          <div class="inline-row" style="justify-content:space-between;margin-top:12px;">
-            <span class="badge">score: ${item.relevance || '-'}</span>
-            <a class="button ghost" href="${item.url || '#'}" target="_blank" rel="noopener noreferrer">Open</a>
-          </div>
-        </div>
-      `).join('') || '<div class="card subtle">ยังไม่มีข่าวในฐานข้อมูล</div>';
-    }
+  dropZone.addEventListener('dragover', (event) => {
+    event.preventDefault();
+    dropZone.classList.add('dragover');
+  });
 
-    async function fetchLatestNews() {
-      setLoading(true);
-      try {
-        await api('/workspace/news/fetch', { method: 'POST' });
-        await loadNews();
-        showToast('ดึงข่าวล่าสุดแล้ว');
-      } catch (error) {
-        showToast(error.message || 'ดึงข่าวไม่สำเร็จ', 'error');
-      } finally {
-        setLoading(false);
-      }
-    }
+  dropZone.addEventListener('dragleave', () => {
+    dropZone.classList.remove('dragover');
+  });
 
-    async function loadFiles() {
-      const data = await api('/workspace/files');
-      const wrap = document.getElementById('files-list');
-      wrap.innerHTML = (data.files || []).map((file) => `
-        <div class="list-item">
-          <strong>${file.filename}</strong>
-          <div class="subtle">${file.size_bytes || 0} bytes · ${file.created_at || ''}</div>
-          ${file.summary ? `<div style="margin:10px 0;">${renderMarkdown(file.summary)}</div>` : ''}
-          <div class="inline-row">
-            <button class="button secondary file-summary-btn" data-id="${file.id}">Summarize</button>
-            <button class="button ghost file-ask-btn" data-id="${file.id}">Ask</button>
-          </div>
-        </div>
-      `).join('') || '<div class="subtle">ยังไม่มีไฟล์อัปโหลด</div>';
-      wrap.querySelectorAll('.file-summary-btn').forEach((btn) => btn.addEventListener('click', () => summarizeFile(btn.dataset.id)));
-      wrap.querySelectorAll('.file-ask-btn').forEach((btn) => btn.addEventListener('click', () => askFile(btn.dataset.id)));
+  dropZone.addEventListener('drop', async (event) => {
+    event.preventDefault();
+    dropZone.classList.remove('dragover');
+    const file = event.dataTransfer.files[0];
+    if (!file) return;
+    try {
+      await uploadFile(file);
+      await loadFiles();
+      showToast('File uploaded');
+    } catch (error) {
+      showToast(error.message || 'Upload failed');
     }
+  });
 
-    async function uploadSelectedFile() {
-      const input = document.getElementById('file-input');
-      const file = input.files[0];
-      if (!file) return;
-      const formData = new FormData();
-      formData.append('file', file);
-      setLoading(true);
-      try {
-        const response = await fetch('/workspace/files/upload', {
-          method: 'POST',
-          body: formData,
-          credentials: 'same-origin'
-        });
-        if (!response.ok) throw new Error('อัปโหลดไฟล์ไม่สำเร็จ');
-        input.value = '';
-        await loadFiles();
-        showToast('อัปโหลดไฟล์แล้ว');
-      } catch (error) {
-        showToast(error.message || 'อัปโหลดไฟล์ไม่สำเร็จ', 'error');
-      } finally {
-        setLoading(false);
-      }
+  chatInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
     }
+  });
 
-    async function summarizeFile(fileId) {
-      setLoading(true);
-      try {
-        await api(`/workspace/files/${fileId}/summarize`, { method: 'POST' });
-        await loadFiles();
-        showToast('สรุปไฟล์แล้ว');
-      } catch (error) {
-        showToast(error.message || 'สรุปไฟล์ไม่สำเร็จ', 'error');
-      } finally {
-        setLoading(false);
-      }
-    }
+  chatInput.addEventListener('input', function() {
+    this.style.height = 'auto';
+    this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+  });
 
-    async function askFile(fileId) {
-      const question = window.prompt('Ask about this file');
-      if (!question) return;
-      setLoading(true);
-      try {
-        const data = await api(`/workspace/files/${fileId}/ask`, {
-          method: 'POST',
-          body: JSON.stringify({ question })
-        });
-        showPanel('chat');
-        appendAiBubble(data.answer || '', '🌐 Web · file answer');
-        showToast('ตอบคำถามจากไฟล์แล้ว');
-      } catch (error) {
-        showToast(error.message || 'ถามไฟล์ไม่สำเร็จ', 'error');
-      } finally {
-        setLoading(false);
-      }
+  document.getElementById('proj-name-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      createProject();
     }
+  });
 
-    async function initWorkspace() {
-      document.getElementById('home-send').addEventListener('click', () => {
-        const value = document.getElementById('home-query').value.trim();
-        showPanel('chat');
-        document.getElementById('chat-input').value = value;
-        if (value) sendMessage();
-      });
-      document.getElementById('send-btn').addEventListener('click', sendMessage);
-      document.getElementById('chat-input').addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-          e.preventDefault();
-          sendMessage();
-        }
-      });
-      document.getElementById('chat-input').addEventListener('input', function() {
-        this.style.height = 'auto';
-        this.style.height = Math.min(this.scrollHeight, 200) + 'px';
-      });
-      document.getElementById('new-project-btn').addEventListener('click', createProject);
-      document.getElementById('refresh-projects-btn').addEventListener('click', loadProjectsList);
-      document.getElementById('projects-create-btn').addEventListener('click', createProject);
-      document.getElementById('notes-save-btn').addEventListener('click', saveNote);
-      document.getElementById('notes-refresh-btn').addEventListener('click', loadNotes);
-      document.getElementById('notes-search').addEventListener('input', loadNotes);
-      document.getElementById('brainstorm-btn').addEventListener('click', runBrainstorm);
-      document.getElementById('news-fetch-btn').addEventListener('click', fetchLatestNews);
-      document.getElementById('upload-btn').addEventListener('click', uploadSelectedFile);
-      document.getElementById('upload-drop').addEventListener('dragover', (event) => {
-        event.preventDefault();
-        event.dataTransfer.dropEffect = 'copy';
-      });
-      document.getElementById('upload-drop').addEventListener('drop', (event) => {
-        event.preventDefault();
-        const files = event.dataTransfer.files;
-        if (files && files.length) {
-          document.getElementById('file-input').files = files;
-        }
-      });
-      await loadProjectsList();
-      window._currentProject = state.selectedProjectId;
-      await loadChatHistory();
-      showPanel('home');
-    }
+  window.showPanel = showPanel;
+  window.newChat = newChat;
+  window.sendMessage = sendMessage;
+  window.showNewProjectModal = showNewProjectModal;
+  window.closeModal = closeModal;
+  window.createProject = createProject;
+  window.selectProject = selectProject;
+  window.saveNote = saveNote;
+  window.createTask = createTask;
+  window.runBrainstorm = runBrainstorm;
+  window.fetchNews = fetchNews;
+  window.summarizeFile = summarizeFile;
+  window.askFile = askFile;
 
-    initWorkspace().catch((error) => showToast(error.message || 'โหลด workspace ไม่สำเร็จ', 'error'));
-    } catch (e) {
-      console.error('Workspace JS error:', e);
-    }
-  </script>
+  window._currentProject = null;
+  loadActiveModelBadge();
+  showPanel('chat');
+  loadProjects();
+  loadChatHistory();
+});
+</script>
 </body>
 </html>"""
     return HTMLResponse(content=html)
