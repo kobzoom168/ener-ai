@@ -1657,6 +1657,16 @@ def build_admin_html(overview: dict) -> HTMLResponse:
             + "</div></section>"
         )
 
+    live_log_tail_html = """
+    <div class="log-tail-box">
+      <div class="log-tail-header">
+        <span>📋 LIVE LOGS</span>
+        <span class="log-tail-status">● LIVE</span>
+      </div>
+      <div id="log-tail-content" class="log-tail-content"></div>
+    </div>
+    """
+
     cost_labels_json = json.dumps(cost_chart.get("labels", []), ensure_ascii=False)
     cost_values_json = json.dumps(cost_chart.get("values", []), ensure_ascii=False)
 
@@ -1887,6 +1897,35 @@ def build_admin_html(overview: dict) -> HTMLResponse:
     }}
     .error-row:last-child {{ border-bottom: 0; }}
     .error-time {{ color: var(--red); font-size: 0.82rem; }}
+    .log-tail-box {{
+      margin-top: 16px;
+      background: #0a0a0a;
+      border: 1px solid #222;
+      border-radius: 8px;
+      overflow: hidden;
+    }}
+    .log-tail-header {{
+      display: flex;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: #111;
+      border-bottom: 1px solid #222;
+      font-size: 11px;
+      color: #888;
+    }}
+    .log-tail-status {{ color: #00ff88; }}
+    .log-tail-content {{
+      height: 120px;
+      overflow-y: auto;
+      padding: 8px 12px;
+      font-family: monospace;
+      font-size: 11px;
+      line-height: 1.6;
+    }}
+    .log-line-error {{ color: #ff4444; }}
+    .log-line-warn {{ color: #ffaa00; }}
+    .log-line-info {{ color: #888; }}
+    .log-line-ok {{ color: #00ff88; }}
     @media (max-width: 1100px) {{
       .main-grid {{ grid-template-columns: 1fr; }}
       .stats-row {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
@@ -1928,9 +1967,18 @@ def build_admin_html(overview: dict) -> HTMLResponse:
     </section>
 
     {errors_html}
+    {live_log_tail_html}
   </main>
 
   <script>
+    function escapeHtml(text) {{
+      return String(text ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }}
+
     const chips = document.querySelectorAll(".filter-chip");
     const rows = document.querySelectorAll(".timeline-item");
     chips.forEach((chip) => {{
@@ -1983,6 +2031,38 @@ def build_admin_html(overview: dict) -> HTMLResponse:
         }},
       }});
     }}
+
+    async function fetchLogs() {{
+      try {{
+        const res = await fetch('/admin/api/logs?filter=ALL&lines=15', {{ cache: "no-store" }});
+        if (!res.ok) return;
+        const data = await res.json();
+        const el = document.getElementById('log-tail-content');
+        if (!el) return;
+
+        const entries = Array.isArray(data.logs)
+          ? data.logs.slice(-15)
+          : Array.isArray(data.lines)
+            ? data.lines.slice(-15).map((line) => `[${{line.time}}] ${{line.level}} ${{line.message}}`)
+            : [];
+
+        el.innerHTML = entries.map((line) => {{
+          let cls = 'log-line-info';
+          const lowered = String(line).toLowerCase();
+          if (lowered.includes('error')) cls = 'log-line-error';
+          else if (lowered.includes('warning') || lowered.includes('warn')) cls = 'log-line-warn';
+          else if (lowered.includes('200 ok') || lowered.includes('complete')) cls = 'log-line-ok';
+          return `<div class="${{cls}}">${{escapeHtml(line)}}</div>`;
+        }}).join('');
+
+        el.scrollTop = el.scrollHeight;
+      }} catch (error) {{
+        // keep dashboard usable even when log fetch fails
+      }}
+    }}
+
+    fetchLogs();
+    setInterval(fetchLogs, 10000);
   </script>
 </body>
 </html>"""
@@ -2648,4 +2728,16 @@ async def admin_api_logs(request: Request):
         lines = 200
     if filter_value not in {"ALL", "ERROR", "WARNING", "INFO"}:
         filter_value = "ALL"
-    return JSONResponse({"lines": await _load_log_entries(filter_value, lines)})
+    log_entries = await _load_log_entries(filter_value, lines)
+    return JSONResponse(
+        {
+            "lines": log_entries,
+            "logs": [
+                " ".join(
+                    part for part in [f"[{entry.get('time', '--:--')}]", entry.get("level", ""), entry.get("message", "")]
+                    if part
+                ).strip()
+                for entry in log_entries
+            ],
+        }
+    )
