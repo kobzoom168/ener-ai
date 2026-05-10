@@ -484,6 +484,8 @@ async def _is_valid_session(request: Request) -> bool:
 async def _require_admin(request: Request):
     if await _is_valid_session(request):
         return
+    if request.url.path.startswith("/admin/api/"):
+        raise HTTPException(status_code=401, detail="Session expired")
     _validate_admin_basic_auth(request)
     raise HTTPException(status_code=307, detail="OTP Required", headers={"Location": "/admin/otp"})
 
