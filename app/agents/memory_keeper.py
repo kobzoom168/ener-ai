@@ -22,6 +22,15 @@ EXTRACT_SYSTEM = build_system_prompt("""
 - การสนทนาที่ไม่เกี่ยวกับกบ
 - ข้อมูลชั่วคราว
 - ข้อมูล sensitive เช่น password, token, api key, secret
+- ข้อความที่เป็น negation เช่น "ไม่มีข้อมูล..." หรือ "ไม่ทราบ..."
+- เวลา วันที่ หรือตัวเลขโดดๆ
+- log หรือ system message
+- คำถามที่ยังไม่มีคำตอบ
+- ข้อความที่ไม่เกี่ยวกับตัวกบโดยตรง
+
+บันทึกเฉพาะ:
+- fact ที่ชัดเจนเกี่ยวกับกบ
+- confidence >= 0.8 เท่านั้น
 
 ตอบ JSON:
 {
@@ -59,6 +68,50 @@ _SENSITIVE_PATTERNS = [
     r"โทเคน",
     r"คีย์ลับ",
 ]
+_JUNK_PATTERNS = [
+    r"ไม่มีข้อมูล",
+    r"ไม่ทราบ",
+    r"^\d{2}:\d{2}",
+    r"^เวลา",
+    r"มีกี่",
+    r"ผู้ใช้ต้องการ",
+    r"^log",
+]
+_ENTITY_KEYWORDS = [
+    "หมา",
+    "สุนัข",
+    "dog",
+    "แมว",
+    "cat",
+    "สัตว์เลี้ยง",
+    "บ้าน",
+    "ที่อยู่",
+    "งาน",
+    "โรงพยาบาล",
+    "โปรเจกต์",
+    "อาหาร",
+    "สุขภาพ",
+    "ครอบครัว",
+    "ลูก",
+    "แฟน",
+    "ภรรยา",
+]
+_STOPWORDS = {
+    "กบ",
+    "พี่",
+    "เป็น",
+    "มี",
+    "อยู่",
+    "และ",
+    "ของ",
+    "ที่",
+    "นี้",
+    "นั้น",
+    "ครับ",
+    "ค่ะ",
+    "นะ",
+    "เลย",
+}
 
 
 def _is_sensitive_text(text: str) -> bool:
@@ -73,6 +126,81 @@ def _normalize_category(value: object) -> str:
     if category in {"personal", "preference", "health", "work", "belief", "goal"}:
         return category
     return "general"
+
+
+def _is_junk(content: str) -> bool:
+    text = " ".join(str(content or "").split()).strip()
+    if not text:
+        return True
+    if any(re.search(pattern, text, re.IGNORECASE) for pattern in _JUNK_PATTERNS):
+        return True
+    if re.fullmatch(r"[\d\s:/\-\.]+", text):
+        return True
+    if text.endswith("?") or text.endswith("？"):
+        return True
+    return False
+
+
+def _normalize_text(content: str) -> str:
+    return " ".join(str(content or "").strip().lower().split())
+
+
+def _entity_keys(content: str) -> set[str]:
+    lowered = _normalize_text(content)
+    keys = {keyword for keyword in _ENTITY_KEYWORDS if keyword in lowered}
+    for token in re.findall(r"[a-zA-Z0-9ก-๙]+", lowered):
+        if len(token) < 3 or token in _STOPWORDS or token.isdigit():
+            continue
+        keys.add(token)
+    return keys
+
+
+def _should_replace_existing(existing_content: str, new_content: str) -> bool:
+    existing_norm = _normalize_text(existing_content)
+    new_norm = _normalize_text(new_content)
+    if existing_norm == new_norm:
+        return False
+    if existing_norm in new_norm and len(new_norm) > len(existing_norm):
+        return True
+    if len(new_norm) > len(existing_norm) + 8:
+        return True
+    return False
+
+
+async def _find_semantic_match(db, content: str):
+    cursor = await db.execute(
+        "SELECT id, content, memory_type FROM long_term_memories ORDER BY id DESC"
+    )
+    rows = await cursor.fetchall()
+
+    content_norm = _normalize_text(content)
+    content_keys = _entity_keys(content)
+    if not content_keys:
+        return None
+
+    best_row = None
+    best_score = 0
+    for row in rows:
+        existing_content = str(row["content"] or "")
+        existing_norm = _normalize_text(existing_content)
+        if not existing_norm:
+            continue
+        if existing_norm == content_norm:
+            return row
+
+        existing_keys = _entity_keys(existing_content)
+        overlap = len(content_keys & existing_keys)
+        if overlap <= 0:
+            continue
+
+        score = overlap
+        if existing_norm in content_norm or content_norm in existing_norm:
+            score += 3
+        if score > best_score:
+            best_row = row
+            best_score = score
+
+    return best_row if best_score >= 2 else None
 
 
 async def _log_memory_keeper_event(
@@ -143,21 +271,27 @@ async def extract_from_recent_messages(chat_id: str, limit: int = 50) -> int:
                 confidence = float(mem.get("confidence", 0) or 0)
             except Exception:
                 confidence = 0
-            if confidence < 0.7:
+            if confidence < 0.8:
                 continue
 
             content = " ".join(str(mem.get("content", "")).split()).strip()
-            if not content or _is_sensitive_text(content):
+            if not content or _is_sensitive_text(content) or _is_junk(content):
                 continue
 
             category = _normalize_category(mem.get("category"))
+            semantic_match = await _find_semantic_match(db, content)
 
-            cursor = await db.execute(
-                "SELECT id FROM long_term_memories WHERE content LIKE ? LIMIT 1",
-                (f"%{content[:30]}%",),
-            )
-            existing = await cursor.fetchone()
-            if existing:
+            if semantic_match:
+                if _should_replace_existing(str(semantic_match["content"] or ""), content):
+                    await db.execute(
+                        """
+                        UPDATE long_term_memories
+                        SET content = ?, memory_type = ?
+                        WHERE id = ?
+                        """,
+                        (content, category, semantic_match["id"]),
+                    )
+                    saved += 1
                 continue
 
             await db.execute(
