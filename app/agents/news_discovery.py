@@ -115,22 +115,25 @@ async def _save_pending_sources(sources: list[dict]) -> None:
 
 @log_agent_run("NewsDiscoveryAgent", triggered_by="scheduler")
 async def discover_new_sources() -> str:
+    from app.core.ai import _gemini_grounded_search
+
     known_sources = await _existing_sources()
     queries = random.sample(SEARCH_QUERIES, k=min(3, len(SEARCH_QUERIES)))
     all_suggestions: list[dict] = []
 
     for query in queries:
+        search_result = await _gemini_grounded_search(
+            f"{query} site:feedburner.com OR inurl:/feed OR inurl:/rss"
+        )
+
         prompt = f"""
-ค้นหา: "{query}"
+จากผลการค้นหา Google นี้:
+{search_result[:2000]}
 
-แนะนำ 3 แหล่งข่าวที่น่าสนใจ ที่ยังไม่อยู่ในรายการนี้:
-{', '.join(sorted(known_sources))}
+แหล่งที่มีอยู่แล้ว (ห้ามซ้ำ): {', '.join(sorted(known_sources))}
 
-แหล่งที่แนะนำต้อง:
-1. มี RSS feed จริง
-2. อัปเดตสม่ำเสมอ
-3. เนื้อหาคุณภาพสูง
-4. เหมาะกับคนสาย IT + จิตวิญญาณ + ธุรกิจ
+สกัดเฉพาะแหล่งข่าวที่มี RSS feed จริงจากผลค้นหาด้านบน
+ห้ามแต่งหรือเดา URL ใดๆ ใช้เฉพาะข้อมูลที่เห็นในผลค้นหาเท่านั้น
 """
         try:
             result = await chat_json(
@@ -159,7 +162,7 @@ async def discover_new_sources() -> str:
                     "domain": domain,
                     "rss_url": rss_url,
                     "category": str(suggestion.get("category") or "general").strip() or "general",
-                    "reason": str(suggestion.get("reason") or "").strip() or "น่าสนใจและเข้ากับบริบทของกบ",
+                    "reason": str(suggestion.get("reason") or "").strip() or "พบจาก Google Search",
                     "quality_score": quality_score,
                 }
             )

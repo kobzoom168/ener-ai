@@ -3,9 +3,11 @@ import html
 import re
 import feedparser
 from datetime import datetime
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 from app.core.ai import chat_json
 from app.core.agents import log_agent_run
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.event_log import log_event
 from app.core.policy import build_system_prompt
@@ -487,6 +489,42 @@ async def fetch_and_summarize() -> str:
                     "category": _detect_category(topic_text),
                 }
             )
+
+    if len(items) < 8 and settings.gemini_api_key:
+        try:
+            from app.core.ai import _gemini_grounded_search
+            from datetime import date as _date
+
+            today_str = _date.today().strftime("%d %B %Y")
+            gemini_result = await _gemini_grounded_search(
+                f"ข่าวเทคโนโลยี AI ความมั่นคงไซเบอร์ ธุรกิจไทย น่าสนใจ วันนี้ {today_str}"
+            )
+            if gemini_result and "⚠️" not in gemini_result:
+                for line in gemini_result.split("\n"):
+                    line = line.strip()
+                    if not line.startswith("🔗"):
+                        continue
+                    url = line.replace("🔗", "").strip()
+                    if not url.startswith("http"):
+                        continue
+                    domain = urlparse(url).netloc.replace("www.", "")
+                    topic_text = gemini_result.lower()
+                    if not _matches_topic(topic_text) or url in seen_links:
+                        continue
+                    seen_links.add(url)
+                    items.append(
+                        {
+                            "title": f"[Gemini] {domain}",
+                            "url": url,
+                            "source": domain,
+                            "summary_source": gemini_result[:800],
+                            "topic_text": topic_text,
+                            "match_score": _keyword_score(topic_text),
+                            "category": _detect_category(topic_text),
+                        }
+                    )
+        except Exception:
+            pass
 
     items = _pick_top_items(items)
 
