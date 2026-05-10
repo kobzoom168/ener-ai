@@ -42,6 +42,9 @@ _ALLOWED_UPLOAD_PATHS = [
 ]
 _TERMINAL_TOKEN_TTL_SECONDS = 1800
 _terminal_tokens: dict[str, float] = {}
+_admin_otp_lock = asyncio.Lock()
+_terminal_otp_lock = asyncio.Lock()
+_OTP_SEND_COOLDOWN = 10
 _ADMIN_OTP_CODE_KEY = "admin_otp_code"
 _ADMIN_OTP_EXPIRE_KEY = "admin_otp_expire"
 _ADMIN_OTP_LAST_SENT_KEY = "admin_otp_last_sent"
@@ -1938,6 +1941,16 @@ def build_admin_html(overview: dict) -> HTMLResponse:
     }}
     .nav-link.active {{ border-color: var(--blue); color: var(--blue); }}
     .refresh-link {{ margin-left: auto; }}
+    #auto-refresh-select {{
+      border: 1px solid #222;
+      background: #111;
+      color: #00ff88;
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 0.85rem;
+      cursor: pointer;
+      margin-left: auto;
+    }}
     .card {{
       background: #111;
       border: 1px solid #222;
@@ -2308,7 +2321,13 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       <a class="nav-link" href="/admin/terminal" target="_blank" rel="noopener noreferrer">💻 Terminal</a>
       <button class="edit-btn" type="button" onclick="fetch('/admin/logout',{{method:'POST'}}).then(() => location.reload())">🚪 Logout</button>
       <button id="edit-btn" class="edit-btn" type="button" onclick="enterEditMode()">✏️ Edit</button>
-      <a class="refresh-link" href="/admin">Refresh</a>
+      <select id="auto-refresh-select" title="Auto Refresh">
+        <option value="0">⟳ Off</option>
+        <option value="15000">⟳ 15s</option>
+        <option value="30000" selected>⟳ 30s</option>
+        <option value="60000">⟳ 1m</option>
+        <option value="300000">⟳ 5m</option>
+      </select>
     </div>
   </div>
 
@@ -2923,6 +2942,25 @@ def build_admin_html(overview: dict) -> HTMLResponse:
 
     fetchLogs();
     setInterval(fetchLogs, 10000);
+
+    (function initAutoRefresh() {{
+      const sel = document.getElementById('auto-refresh-select');
+      const STORAGE_KEY = 'admin_auto_refresh';
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved !== null) {{
+        const opt = sel.querySelector(`option[value="${{saved}}"]`);
+        if (opt) opt.selected = true;
+      }}
+      let handle = null;
+      function apply() {{
+        if (handle) clearInterval(handle);
+        const ms = Number(sel.value);
+        localStorage.setItem(STORAGE_KEY, sel.value);
+        if (ms > 0) handle = setInterval(() => location.reload(), ms);
+      }}
+      sel.addEventListener('change', apply);
+      apply();
+    }})();
   </script>
 </body>
 </html>"""
@@ -3520,23 +3558,29 @@ async def otp_page(request: Request):
 
     _validate_admin_basic_auth(request)
     now = time.time()
-    otp_state = await _get_admin_otp_state()
-    otp_code = otp_state.get(_ADMIN_OTP_CODE_KEY, "")
-    try:
-        otp_expires_at = float(otp_state.get(_ADMIN_OTP_EXPIRE_KEY, "0") or 0)
-    except Exception:
-        otp_expires_at = 0.0
+    async with _admin_otp_lock:
+        otp_state = await _get_admin_otp_state()
+        otp_code = otp_state.get(_ADMIN_OTP_CODE_KEY, "")
+        try:
+            otp_expires_at = float(otp_state.get(_ADMIN_OTP_EXPIRE_KEY, "0") or 0)
+        except Exception:
+            otp_expires_at = 0.0
+        try:
+            last_sent = float(otp_state.get(_ADMIN_OTP_LAST_SENT_KEY, "0") or 0)
+        except Exception:
+            last_sent = 0.0
 
-    has_valid_otp = bool(otp_code) and otp_expires_at > now
+        has_valid_otp = bool(otp_code) and otp_expires_at > now
+        recently_sent = now - last_sent < _OTP_SEND_COOLDOWN
 
-    if not has_valid_otp:
-        otp = _generate_otp()
-        otp_expires_at = now + OTP_EXPIRE
-        await _store_admin_otp(otp, otp_expires_at, now)
-        await _send_otp_telegram(otp)
-        just_sent = True
-    else:
-        just_sent = False
+        if not has_valid_otp and not recently_sent:
+            otp = _generate_otp()
+            otp_expires_at = now + OTP_EXPIRE
+            await _store_admin_otp(otp, otp_expires_at, now)
+            await _send_otp_telegram(otp)
+            just_sent = True
+        else:
+            just_sent = False
 
     status_copy = "📱 ส่ง OTP ไป Telegram แล้ว" if just_sent else "📱 OTP ยังไม่หมดอายุ กรอกได้เลย"
     initial_seconds = max(1, min(OTP_EXPIRE, int(otp_expires_at - now)))
@@ -3737,21 +3781,27 @@ async def admin_logs(request: Request):
 async def terminal_page(request: Request):
     await _require_admin(request)
     now = time.time()
-    otp_state = await _get_terminal_otp_state()
-    otp_code = otp_state.get(_TERMINAL_OTP_CODE_KEY, "")
-    try:
-        otp_expires_at = float(otp_state.get(_TERMINAL_OTP_EXPIRE_KEY, "0") or 0)
-    except Exception:
-        otp_expires_at = 0.0
-    has_valid_otp = bool(otp_code) and otp_expires_at > now
-    if not has_valid_otp:
-        otp = _generate_otp()
-        otp_expires_at = now + OTP_EXPIRE
-        await _store_terminal_otp(otp, otp_expires_at, now)
-        await _send_otp_telegram(otp, title="Ener-AI Terminal OTP")
-        terminal_status_copy = "📱 ส่ง Terminal OTP ไป Telegram แล้ว"
-    else:
-        terminal_status_copy = "📱 Terminal OTP ยังไม่หมดอายุ กรอกได้เลย"
+    async with _terminal_otp_lock:
+        otp_state = await _get_terminal_otp_state()
+        otp_code = otp_state.get(_TERMINAL_OTP_CODE_KEY, "")
+        try:
+            otp_expires_at = float(otp_state.get(_TERMINAL_OTP_EXPIRE_KEY, "0") or 0)
+        except Exception:
+            otp_expires_at = 0.0
+        try:
+            last_sent = float(otp_state.get(_TERMINAL_OTP_LAST_SENT_KEY, "0") or 0)
+        except Exception:
+            last_sent = 0.0
+        has_valid_otp = bool(otp_code) and otp_expires_at > now
+        recently_sent = now - last_sent < _OTP_SEND_COOLDOWN
+        if not has_valid_otp and not recently_sent:
+            otp = _generate_otp()
+            otp_expires_at = now + OTP_EXPIRE
+            await _store_terminal_otp(otp, otp_expires_at, now)
+            await _send_otp_telegram(otp, title="Ener-AI Terminal OTP")
+            terminal_status_copy = "📱 ส่ง Terminal OTP ไป Telegram แล้ว"
+        else:
+            terminal_status_copy = "📱 Terminal OTP ยังไม่หมดอายุ กรอกได้เลย"
     initial_seconds = max(1, min(OTP_EXPIRE, int(otp_expires_at - now)))
     server_name = escape(str(getattr(settings, "server_host", "") or "my-ener.uk"))
     terminal_html = """<!DOCTYPE html>
