@@ -161,7 +161,78 @@ TOOLS = [
             },
         },
     },
+    {
+        "name": "search_web",
+        "description": (
+            "ค้นหาข้อมูลจากอินเทอร์เน็ตจริงๆ ใช้เมื่อกบถามเรื่องที่ต้องการข้อมูลปัจจุบัน "
+            "เช่น ร้านอาหาร สถานที่ ข่าว ราคา หรือข้อมูลที่ AI ไม่รู้แน่ชัด "
+            "ห้ามสร้าง URL ปลอม ให้ใช้ tool นี้แทนเสมอเมื่อต้องการ link จริง"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "คำค้นหา เช่น 'ร้านเหล้าแถวอุบลราชธานี พร้อมที่อยู่'"
+                },
+                "count": {
+                    "type": "integer",
+                    "description": "จำนวนผลลัพธ์ที่ต้องการ (1-10, default 5)",
+                },
+            },
+            "required": ["query"],
+        },
+    },
 ]
+
+
+async def _brave_search(query: str, count: int = 5) -> str:
+    """Call Brave Search API and return formatted results with real URLs."""
+    import httpx
+
+    from app.core.config import settings
+
+    api_key = settings.brave_api_key
+    if not api_key:
+        return "⚠️ ยังไม่ได้ตั้งค่า BRAVE_API_KEY ใน .env"
+
+    count = max(1, min(10, int(count or 5)))
+    headers = {
+        "Accept": "application/json",
+        "Accept-Encoding": "gzip",
+        "X-Subscription-Token": api_key,
+    }
+    params = {"q": query, "count": count, "country": "TH", "search_lang": "th"}
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                "https://api.search.brave.com/res/v1/web/search",
+                headers=headers,
+                params=params,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as exc:
+        return f"⚠️ ค้นหาไม่สำเร็จ: {exc}"
+
+    results = data.get("web", {}).get("results", [])
+    if not results:
+        return f"ไม่พบผลลัพธ์สำหรับ: {query}"
+
+    lines = [f"🔍 ผลการค้นหา: {query}\n"]
+    for i, result in enumerate(results, 1):
+        title = str(result.get("title", "")).strip()
+        url = str(result.get("url", "")).strip()
+        desc = str(result.get("description", "")).strip()[:120]
+        lines.append(f"{i}. {title}")
+        if desc:
+            lines.append(f"   {desc}")
+        if url:
+            lines.append(f"   🔗 {url}")
+        lines.append("")
+
+    return "\n".join(lines)
 
 
 async def execute_tool(tool_name: str, tool_input: dict) -> str:
@@ -263,5 +334,12 @@ async def execute_tool(tool_name: str, tool_input: dict) -> str:
             spread=str(payload.get("spread", "single")).strip() or "single",
             _agent_triggered_by="agent",
         )
+
+    if tool_name == "search_web":
+        query = str(payload.get("query", "")).strip()
+        count = int(payload.get("count", 5))
+        if not query:
+            return "กรุณาระบุคำค้นหา"
+        return await _brave_search(query, count)
 
     return f"ไม่รู้จัก tool: {tool_name}"
