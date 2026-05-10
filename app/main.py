@@ -3916,7 +3916,7 @@ def build_workspace_html() -> HTMLResponse:
       bottom:0;
       z-index:20;
     }
-    .nav-icon {
+    .nav-btn {
       width:42px;
       height:42px;
       border:none;
@@ -3924,9 +3924,10 @@ def build_workspace_html() -> HTMLResponse:
       background:transparent;
       color:var(--subtext);
       cursor:pointer;
+      font-family:'Segoe UI Emoji', 'Apple Color Emoji', sans-serif;
       font-size:22px;
     }
-    .nav-icon:hover, .nav-icon.active {
+    .nav-btn:hover, .nav-btn.active {
       color:#fff;
       background:rgba(124,58,237,0.22);
       box-shadow:0 0 0 1px rgba(124,58,237,0.3) inset;
@@ -3996,7 +3997,14 @@ def build_workspace_html() -> HTMLResponse:
       gap:14px;
       margin-top:22px;
     }
-    .tool-card { cursor:pointer; display:flex; flex-direction:column; gap:8px; }
+    .tool-card {
+      cursor:pointer;
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+      font-family:'Segoe UI Emoji', 'Apple Color Emoji', 'Inter', sans-serif;
+      text-align:left;
+    }
     .tool-card-title { font-size:15px; font-weight:600; }
     .tool-card-desc { font-size:13px; color:#888; }
     .chat-layout, .files-layout, .projects-layout {
@@ -4186,7 +4194,7 @@ def build_workspace_html() -> HTMLResponse:
       z-index:25;
       justify-content:space-between;
     }
-    .mobile-tabs .nav-icon { width:40px; height:40px; }
+    .mobile-tabs .nav-btn { width:40px; height:40px; }
     .inline-row { display:flex; gap:10px; flex-wrap:wrap; }
     .subtle { color:var(--subtext); font-size:13px; }
     pre.code {
@@ -4219,18 +4227,18 @@ def build_workspace_html() -> HTMLResponse:
 <body>
   <div class="workspace-shell">
     <aside class="sidebar">
-      <button class="nav-icon active" title="Home" data-panel="home">🏠</button>
-      <button class="nav-icon" title="Chat" data-panel="chat">💬</button>
-      <button class="nav-icon" title="Notes" data-panel="notes">📝</button>
-      <button class="nav-icon" title="Tasks" data-panel="tasks">✅</button>
-      <button class="nav-icon" title="Memory" data-panel="memory">🧠</button>
-      <button class="nav-icon" title="Brainstorm" data-panel="brainstorm">🔥</button>
-      <button class="nav-icon" title="News" data-panel="news">📰</button>
-      <button class="nav-icon" title="Files" data-panel="files">📁</button>
-      <button class="nav-icon" title="Projects" data-panel="projects">🗂️</button>
+      <button class="nav-btn active" data-panel="home" onclick="showPanel('home')" title="Home">🏠</button>
+      <button class="nav-btn" data-panel="chat" onclick="showPanel('chat')" title="Chat">💬</button>
+      <button class="nav-btn" data-panel="notes" onclick="showPanel('notes')" title="Notes">📝</button>
+      <button class="nav-btn" data-panel="tasks" onclick="showPanel('tasks')" title="Tasks">✅</button>
+      <button class="nav-btn" data-panel="memory" onclick="showPanel('memory')" title="Memory">🧠</button>
+      <button class="nav-btn" data-panel="brainstorm" onclick="showPanel('brainstorm')" title="Brainstorm">🔥</button>
+      <button class="nav-btn" data-panel="news" onclick="showPanel('news')" title="News">📰</button>
+      <button class="nav-btn" data-panel="files" onclick="showPanel('files')" title="Files">📁</button>
+      <button class="nav-btn" data-panel="projects" onclick="showPanel('projects')" title="Projects">🗂️</button>
     </aside>
     <main class="main">
-      <section class="panel active" id="panel-home">
+      <section class="panel" id="panel-home" style="display:block;">
         <div class="card home-hero">
           <div>
             <h1 style="margin:0 0 8px;font-size:36px;">Ener-AI Workspace</h1>
@@ -4240,14 +4248,55 @@ def build_workspace_html() -> HTMLResponse:
             <input id="home-query" class="hero-input" placeholder="Ask Ener-AI anything, create anything">
             <div class="inline-row" style="justify-content:center;">
               <button class="button" id="home-send">Ask Ener-AI</button>
-              <button class="button secondary" data-open-panel="chat">Open Chat</button>
+              <button class="button secondary" onclick="showPanel('chat')">Open Chat</button>
             </div>
           </div>
         </div>
-        <div class="tool-grid" id="home-tools"></div>
+        <div class="tool-grid" id="home-tools">
+          <div class="card tool-card" onclick="showPanel('chat')">
+            <div style="font-size:24px">💬</div>
+            <div class="tool-card-title">AI Chat</div>
+            <div class="tool-card-desc">Talk with Ener-AI</div>
+          </div>
+          <div class="card tool-card" onclick="showPanel('notes')">
+            <div style="font-size:24px">📝</div>
+            <div class="tool-card-title">AI Notes</div>
+            <div class="tool-card-desc">Capture & categorize thoughts</div>
+          </div>
+          <div class="card tool-card" onclick="showPanel('tasks')">
+            <div style="font-size:24px">✅</div>
+            <div class="tool-card-title">AI Tasks</div>
+            <div class="tool-card-desc">Create and manage tasks</div>
+          </div>
+          <div class="card tool-card" onclick="showPanel('brainstorm')">
+            <div style="font-size:24px">🔥</div>
+            <div class="tool-card-title">AI Brainstorm</div>
+            <div class="tool-card-desc">3-agent debate system</div>
+          </div>
+          <div class="card tool-card" onclick="showPanel('news')">
+            <div style="font-size:24px">📰</div>
+            <div class="tool-card-title">AI News</div>
+            <div class="tool-card-desc">Daily news summary</div>
+          </div>
+          <div class="card tool-card" onclick="showPanel('memory')">
+            <div style="font-size:24px">🧠</div>
+            <div class="tool-card-title">AI Memory</div>
+            <div class="tool-card-desc">Long-term memory entries</div>
+          </div>
+          <div class="card tool-card" onclick="showPanel('files')">
+            <div style="font-size:24px">📁</div>
+            <div class="tool-card-title">AI Files</div>
+            <div class="tool-card-desc">Upload and summarize docs</div>
+          </div>
+          <div class="card tool-card" onclick="showPanel('projects')">
+            <div style="font-size:24px">🗂️</div>
+            <div class="tool-card-title">Projects</div>
+            <div class="tool-card-desc">Named conversation threads</div>
+          </div>
+        </div>
       </section>
 
-      <section class="panel" id="panel-chat">
+      <section class="panel" id="panel-chat" style="display:none;">
         <div class="panel-header">
           <div>
             <h2>Chat</h2>
@@ -4280,7 +4329,7 @@ def build_workspace_html() -> HTMLResponse:
         </div>
       </section>
 
-      <section class="panel" id="panel-notes">
+      <section class="panel" id="panel-notes" style="display:none;">
         <div class="panel-header"><div><h2>Notes</h2><p>Brain-style capture into the same notes table.</p></div></div>
         <div class="card panel-stack">
           <div class="inline-row">
@@ -4295,17 +4344,17 @@ def build_workspace_html() -> HTMLResponse:
         <div class="notes-groups" id="notes-groups" style="margin-top:16px;"></div>
       </section>
 
-      <section class="panel" id="panel-tasks">
+      <section class="panel" id="panel-tasks" style="display:none;">
         <div class="panel-header"><div><h2>Tasks</h2><p>Kanban view backed by the existing tasks table.</p></div></div>
         <div class="kanban" id="tasks-board"></div>
       </section>
 
-      <section class="panel" id="panel-memory">
+      <section class="panel" id="panel-memory" style="display:none;">
         <div class="panel-header"><div><h2>Memory</h2><p>Long-term memories shared with Telegram.</p></div></div>
         <div class="memory-grid" id="memory-list"></div>
       </section>
 
-      <section class="panel" id="panel-brainstorm">
+      <section class="panel" id="panel-brainstorm" style="display:none;">
         <div class="panel-header"><div><h2>Brainstorm</h2><p>Run the 3-agent debate and inspect the final verdict.</p></div></div>
         <div class="card panel-stack">
           <textarea id="brainstorm-input" class="textarea" placeholder="ใส่หัวข้อที่อยากให้ถกกัน..."></textarea>
@@ -4317,7 +4366,7 @@ def build_workspace_html() -> HTMLResponse:
         <div id="brainstorm-verdict"></div>
       </section>
 
-      <section class="panel" id="panel-news">
+      <section class="panel" id="panel-news" style="display:none;">
         <div class="panel-header">
           <div><h2>News</h2><p>Daily news cards from the shared news database.</p></div>
           <div class="inline-row">
@@ -4328,7 +4377,7 @@ def build_workspace_html() -> HTMLResponse:
         <div class="news-grid" id="news-list" style="margin-top:16px;"></div>
       </section>
 
-      <section class="panel" id="panel-files">
+      <section class="panel" id="panel-files" style="display:none;">
         <div class="panel-header"><div><h2>Files</h2><p>Upload PDF, DOCX, TXT, MD and summarize or ask questions.</p></div></div>
         <div class="files-layout">
           <div class="card panel-stack">
@@ -4344,7 +4393,7 @@ def build_workspace_html() -> HTMLResponse:
         </div>
       </section>
 
-      <section class="panel" id="panel-projects">
+      <section class="panel" id="panel-projects" style="display:none;">
         <div class="panel-header">
           <div><h2>Projects</h2><p>Named labels for web conversations.</p></div>
           <div class="inline-row"><button class="button" id="projects-create-btn">New Project</button></div>
@@ -4362,17 +4411,18 @@ def build_workspace_html() -> HTMLResponse:
   </div>
 
   <nav class="mobile-tabs">
-    <button class="nav-icon active" title="Home" data-panel="home">🏠</button>
-    <button class="nav-icon" title="Chat" data-panel="chat">💬</button>
-    <button class="nav-icon" title="Notes" data-panel="notes">📝</button>
-    <button class="nav-icon" title="Tasks" data-panel="tasks">✅</button>
-    <button class="nav-icon" title="Files" data-panel="files">📁</button>
+    <button class="nav-btn active" data-panel="home" onclick="showPanel('home')" title="Home">🏠</button>
+    <button class="nav-btn" data-panel="chat" onclick="showPanel('chat')" title="Chat">💬</button>
+    <button class="nav-btn" data-panel="notes" onclick="showPanel('notes')" title="Notes">📝</button>
+    <button class="nav-btn" data-panel="tasks" onclick="showPanel('tasks')" title="Tasks">✅</button>
+    <button class="nav-btn" data-panel="files" onclick="showPanel('files')" title="Files">📁</button>
   </nav>
 
   <div class="toast-stack" id="toast-stack"></div>
   <div class="spinner-overlay" id="spinner-overlay"><div class="spinner"></div></div>
 
   <script>
+    try {
     const state = {
       activePanel: 'home',
       selectedProjectId: null,
@@ -4380,18 +4430,6 @@ def build_workspace_html() -> HTMLResponse:
       newsFilter: 'all',
       selectedFileId: null,
     };
-
-    const toolCards = [
-      ['💬', 'AI Chat', 'Talk with Ener-AI in the shared owner context', 'chat'],
-      ['📝', 'AI Notes', 'Capture and categorize thoughts with BrainAgent', 'notes'],
-      ['✅', 'AI Tasks', 'Create and manage tasks from the same task table', 'tasks'],
-      ['🔥', 'AI Brainstorm', 'Run 3-agent debate and final verdict', 'brainstorm'],
-      ['📰', 'AI News', 'Review the daily news database and fetch latest', 'news'],
-      ['🔮', 'AI Tarot', 'Open chat and ask for tarot reading', 'chat', '/tarot ขอคำทำนายให้หน่อย'],
-      ['💻', 'AI Code', 'Open chat for coding help using the shared context', 'chat', 'ช่วยเขียนโค้ดให้หน่อย'],
-      ['📣', 'AI Content', 'Open chat for content ideas and captions', 'chat', 'ช่วยคิด content ให้หน่อย'],
-      ['🧠', 'AI Memory', 'Inspect long-term memory entries', 'memory'],
-    ];
 
     const categoryLabels = {
       all: 'ทั้งหมด',
@@ -4441,21 +4479,25 @@ def build_workspace_html() -> HTMLResponse:
       return contentType.includes('application/json') ? response.json() : response.text();
     }
 
-    function switchPanel(panelId) {
-      state.activePanel = panelId;
-      document.querySelectorAll('.panel').forEach((panel) => panel.classList.remove('active'));
-      document.getElementById(`panel-${panelId}`).classList.add('active');
-      document.querySelectorAll('[data-panel]').forEach((btn) => {
-        btn.classList.toggle('active', btn.dataset.panel === panelId);
+    function showPanel(name) {
+      state.activePanel = name;
+      document.querySelectorAll('.panel').forEach((panel) => {
+        panel.style.display = 'none';
       });
-      if (panelId === 'chat') loadChatHistory();
-      if (panelId === 'notes') loadNotes();
-      if (panelId === 'tasks') loadTasks();
-      if (panelId === 'memory') loadMemory();
-      if (panelId === 'news') loadNews();
-      if (panelId === 'files') loadFiles();
-      if (panelId === 'projects') loadProjectsTable();
+      const target = document.getElementById('panel-' + name);
+      if (target) target.style.display = 'block';
+      document.querySelectorAll('.nav-btn').forEach((btn) => btn.classList.remove('active'));
+      const activeButtons = document.querySelectorAll('[data-panel="' + name + '"]');
+      activeButtons.forEach((btn) => btn.classList.add('active'));
+      if (name === 'chat') loadChatHistory();
+      if (name === 'notes') loadNotes();
+      if (name === 'tasks') loadTasks();
+      if (name === 'news') loadNews();
+      if (name === 'memory') loadMemory();
+      if (name === 'projects') loadProjects();
+      if (name === 'files') loadFiles();
     }
+    window.showPanel = showPanel;
 
     function renderMarkdown(text) {
       let html = String(text || '');
@@ -4468,27 +4510,6 @@ def build_workspace_html() -> HTMLResponse:
       html = html.replace(/(<li>.*<\\/li>)/gs, '<ul>$1</ul>');
       html = html.replace(/\\n/g, '<br>');
       return html;
-    }
-
-    function renderHomeTools() {
-      const wrap = document.getElementById('home-tools');
-      wrap.innerHTML = toolCards.map(([icon, title, desc, panel, prompt]) => `
-        <div class="card tool-card" data-panel-target="${panel}" data-prompt="${prompt || ''}">
-          <div style="font-size:24px">${icon}</div>
-          <div class="tool-card-title">${title}</div>
-          <div class="tool-card-desc">${desc}</div>
-        </div>
-      `).join('');
-      wrap.querySelectorAll('.tool-card').forEach((card) => {
-        card.addEventListener('click', () => {
-          const panel = card.dataset.panelTarget;
-          const prompt = card.dataset.prompt;
-          switchPanel(panel);
-          if (panel === 'chat' && prompt) {
-            document.getElementById('chat-input').value = prompt;
-          }
-        });
-      });
     }
 
     function formatSource(source) {
@@ -4687,6 +4708,11 @@ def build_workspace_html() -> HTMLResponse:
       }
     }
 
+    async function loadProjects() {
+      await loadProjectsList();
+      await loadProjectsTable();
+    }
+
     async function loadProjectsTable() {
       const data = await api('/workspace/projects');
       const body = document.getElementById('projects-table');
@@ -4702,7 +4728,7 @@ def build_workspace_html() -> HTMLResponse:
       body.querySelectorAll('.project-open-btn').forEach((btn) => btn.addEventListener('click', () => {
         state.selectedProjectId = Number(btn.dataset.id);
         window._currentProject = state.selectedProjectId;
-        switchPanel('chat');
+        showPanel('chat');
         loadProjectsList();
       }));
       body.querySelectorAll('.project-delete-btn').forEach((btn) => btn.addEventListener('click', async () => {
@@ -4994,7 +5020,7 @@ def build_workspace_html() -> HTMLResponse:
           method: 'POST',
           body: JSON.stringify({ question })
         });
-        switchPanel('chat');
+        showPanel('chat');
         appendAiBubble(data.answer || '', '🌐 Web · file answer');
         showToast('ตอบคำถามจากไฟล์แล้ว');
       } catch (error) {
@@ -5004,17 +5030,10 @@ def build_workspace_html() -> HTMLResponse:
       }
     }
 
-    function bindNav() {
-      document.querySelectorAll('[data-panel]').forEach((btn) => btn.addEventListener('click', () => switchPanel(btn.dataset.panel)));
-      document.querySelectorAll('[data-open-panel]').forEach((btn) => btn.addEventListener('click', () => switchPanel(btn.dataset.openPanel)));
-    }
-
     async function initWorkspace() {
-      bindNav();
-      renderHomeTools();
       document.getElementById('home-send').addEventListener('click', () => {
         const value = document.getElementById('home-query').value.trim();
-        switchPanel('chat');
+        showPanel('chat');
         document.getElementById('chat-input').value = value;
         if (value) sendMessage();
       });
@@ -5052,9 +5071,13 @@ def build_workspace_html() -> HTMLResponse:
       await loadProjectsList();
       window._currentProject = state.selectedProjectId;
       await loadChatHistory();
+      showPanel('home');
     }
 
     initWorkspace().catch((error) => showToast(error.message || 'โหลด workspace ไม่สำเร็จ', 'error'));
+    } catch (e) {
+      console.error('Workspace JS error:', e);
+    }
   </script>
 </body>
 </html>"""
