@@ -72,6 +72,21 @@ async def _save_vision_messages(chat_id: str, prompt: str, result: str) -> None:
         await db.commit()
 
 
+async def _save_multi_vision_messages(chat_id: str, image_count: int, prompt: str, result: str) -> None:
+    from app.core.database import get_db
+
+    async with get_db() as db:
+        await db.execute(
+            "INSERT INTO messages (chat_id, role, content) VALUES (?, ?, ?)",
+            (chat_id, "user", f"[ส่ง {image_count} รูป] {prompt or 'วิเคราะห์รูป'}"),
+        )
+        await db.execute(
+            "INSERT INTO messages (chat_id, role, content) VALUES (?, ?, ?)",
+            (chat_id, "assistant", result),
+        )
+        await db.commit()
+
+
 async def _analyze_with_haiku(image_bytes: bytes, prompt: str) -> str:
     if not settings.anthropic_api_key:
         return "ไม่มี API key สำหรับวิเคราะห์รูปครับ"
@@ -124,6 +139,58 @@ async def analyze_image(image_bytes: bytes, prompt: str = "", chat_id: str = "")
             event_type="task_failed",
             summary=f"วิเคราะห์รูปไม่ได้: {str(exc)[:100]}",
             tags=["vision", "error"],
+            result="failure",
+            learned=str(exc)[:200],
+        )
+        return f"วิเคราะห์รูปไม่ได้ครับ: {exc}"
+
+
+@log_agent_run("VisionAgent")
+async def analyze_multiple_images(images: list[bytes], prompt: str = "", chat_id: str = "") -> str:
+    if not images:
+        return "ไม่มีรูปให้วิเคราะห์ครับ"
+    if not settings.anthropic_api_key:
+        return "ไม่มี API key สำหรับวิเคราะห์รูปครับ"
+
+    client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+    content = []
+    for image_bytes in images:
+        content.append(
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/jpeg",
+                    "data": base64.b64encode(image_bytes).decode(),
+                },
+            }
+        )
+
+    user_prompt = prompt or f"วิเคราะห์รูปทั้ง {len(images)} รูปนี้เป็นภาษาไทย เปรียบเทียบและสรุปให้ครบ"
+    content.append({"type": "text", "text": user_prompt})
+
+    try:
+        response = await client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=1500,
+            system=VISION_SYSTEM,
+            messages=[{"role": "user", "content": content}],
+        )
+        result = _extract_anthropic_text(response) or "ไม่สามารถวิเคราะห์รูปได้"
+        if chat_id:
+            await _save_multi_vision_messages(chat_id, len(images), prompt, result)
+        await _log_vision_event(
+            event_type="task_done",
+            summary=f"วิเคราะห์หลายรูป: {len(images)} รูป",
+            tags=["vision", "image", "multi-image", "haiku"],
+            result="success",
+        )
+        return result
+    except Exception as exc:
+        await _log_vision_event(
+            event_type="task_failed",
+            summary=f"วิเคราะห์หลายรูปไม่ได้: {str(exc)[:100]}",
+            tags=["vision", "multi-image", "error"],
             result="failure",
             learned=str(exc)[:200],
         )

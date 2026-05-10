@@ -1,3 +1,5 @@
+import asyncio
+from collections import defaultdict
 import hashlib
 import io
 import logging
@@ -14,13 +16,18 @@ from telegram.ext import (
 from app.agents import github_agent, gmail_agent, log_keeper, memory_curator, memory_keeper
 from app.agents.monitor_agent import cmd_errors, cmd_logs, cmd_server, cmd_status
 from app.agents.news_discovery import approve_source, list_active_sources, list_pending_sources
-from app.agents.vision_agent import analyze_image as vision_analyze
+from app.agents.vision_agent import (
+    analyze_image as vision_analyze,
+    analyze_multiple_images as vision_analyze_multiple,
+)
 from app.core.config import settings
 from app.core.policy import ALLOWED_CHAT_IDS, OWNER_LOCATION
 from app.core.tts import text_to_audio_bytes, text_to_voice_bytes
 from app.agents.main_agent import MAIN_AGENT
 
 logger = logging.getLogger(__name__)
+_media_group_cache: dict[str, list] = defaultdict(list)
+_media_group_tasks: dict[str, asyncio.Task] = {}
 
 
 async def _reply_text_with_markdown_fallback(
@@ -171,26 +178,79 @@ async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.photo:
         return
 
-    photo = update.message.photo[-1]
+    message = update.message
+    photo = message.photo[-1]
     file_obj = await ctx.bot.get_file(photo.file_id)
     photo_bytes = io.BytesIO()
     await file_obj.download_to_memory(photo_bytes)
     image_data = photo_bytes.getvalue()
-    caption = update.message.caption or ""
-    chat_id = str(update.effective_chat.id)
+    caption = message.caption or ""
+    media_group_id = message.media_group_id
 
-    thinking = await update.message.reply_text("🔍 กำลังวิเคราะห์รูป...", parse_mode=None)
-    result = await vision_analyze(
-        image_data,
+    if not media_group_id:
+        thinking = await message.reply_text("🔍 กำลังวิเคราะห์รูป...", parse_mode=None)
+        chat_id = str(update.effective_chat.id)
+        result = await vision_analyze(
+            image_data,
+            caption,
+            chat_id=chat_id,
+            _agent_triggered_by="user",
+        )
+        try:
+            await thinking.delete()
+        except Exception:
+            pass
+        await _reply_smart(update, result)
+        return
+
+    _media_group_cache[media_group_id].append(
+        {
+            "image_data": image_data,
+            "caption": caption,
+            "update": update,
+        }
+    )
+
+    existing_task = _media_group_tasks.get(media_group_id)
+    if existing_task:
+        existing_task.cancel()
+
+    _media_group_tasks[media_group_id] = asyncio.create_task(
+        _process_media_group(media_group_id)
+    )
+
+
+async def _process_media_group(group_id: str):
+    try:
+        await asyncio.sleep(2)
+    except asyncio.CancelledError:
+        return
+
+    photos = _media_group_cache.pop(group_id, [])
+    _media_group_tasks.pop(group_id, None)
+    if not photos:
+        return
+
+    base_update = photos[0]["update"]
+    thinking = await base_update.message.reply_text(
+        f"🔍 กำลังวิเคราะห์ {len(photos)} รูป...",
+        parse_mode=None,
+    )
+
+    caption = next((item["caption"] for item in photos if item["caption"]), "")
+    chat_id = str(base_update.effective_chat.id)
+    result = await vision_analyze_multiple(
+        [item["image_data"] for item in photos],
         caption,
         chat_id=chat_id,
         _agent_triggered_by="user",
     )
+
     try:
         await thinking.delete()
     except Exception:
         pass
-    await _reply_smart(update, result)
+    await _reply_smart(base_update, result)
 
 
 def _is_allowed(update: Update) -> bool:
