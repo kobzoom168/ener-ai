@@ -315,8 +315,16 @@ async def _gemini_grounded_search(query: str) -> str:
 
         client = genai.Client(api_key=settings.gemini_api_key)
         config = types.GenerateContentConfig(
-            tools=[types.Tool(google_search=types.GoogleSearch())]
+            tools=[types.Tool(google_search=types.GoogleSearch())],
+            system_instruction=(
+                "ตอบเป็นภาษาไทยเท่านั้น "
+                "สรุปผลการค้นหาเป็นรายการสั้นๆ ไม่เกิน 5 รายการ "
+                "แต่ละรายการมีแค่: ชื่อ, ที่อยู่สั้นๆ, และลิงก์ (ถ้ามี) "
+                "ห้ามอธิบายยาว ห้ามใช้ markdown เช่น ** หรือ ``` "
+                "ตอบกระชับ อ่านง่าย เหมือนแนะนำเพื่อน"
+            ),
         )
+        formatted_query = f"{query} (สรุปสั้นๆ ไม่เกิน 5 รายการ)"
 
         _GROUNDING_MODELS = [
             "gemini-2.5-flash-preview-05-20",
@@ -331,7 +339,7 @@ async def _gemini_grounded_search(query: str) -> str:
                 def _generate(m=model_name):
                     return client.models.generate_content(
                         model=m,
-                        contents=query,
+                        contents=formatted_query,
                         config=config,
                     )
 
