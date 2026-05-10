@@ -2262,7 +2262,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       <a class="nav-link" href="/admin/metrics">Metrics</a>
       <a class="nav-link" href="/admin/logs">Logs</a>
       <a class="nav-link" href="/admin/terminal" target="_blank" rel="noopener noreferrer">💻 Terminal</a>
-      <button class="edit-btn" type="button" onclick="fetch('/admin/logout',{method:'POST'}).then(() => location.reload())">🚪 Logout</button>
+      <button class="edit-btn" type="button" onclick="fetch('/admin/logout',{{method:'POST'}}).then(() => location.reload())">🚪 Logout</button>
       <button id="edit-btn" class="edit-btn" type="button" onclick="enterEditMode()">✏️ Edit</button>
       <a class="refresh-link" href="/admin">Refresh</a>
     </div>
