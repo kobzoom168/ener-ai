@@ -46,6 +46,7 @@ _otp_store: dict[str, float] = {}
 _session_store: dict[str, float] = {}
 OTP_EXPIRE = 300
 SESSION_EXPIRE = 7200
+_last_otp_sent: float = 0.0
 _RANGE_OPTIONS = ["1h", "3h", "10h", "24h", "7d"]
 _AGENT_ORDER = [
     "MainChatAgent",
@@ -3407,17 +3408,29 @@ async def admin_dashboard(request: Request):
 
 @app.get("/admin/otp")
 async def otp_page(request: Request):
+    global _last_otp_sent
     if _is_valid_session(request):
         return RedirectResponse("/admin", status_code=303)
 
     _validate_admin_basic_auth(request)
-    otp = _generate_otp()
-    _otp_store.clear()
-    _otp_store[otp] = time.time() + OTP_EXPIRE
-    await _send_otp_telegram(otp)
+    now = time.time()
+    _prune_otp_store(now)
+    has_valid_otp = any(exp > now for exp in _otp_store.values())
+
+    if not has_valid_otp:
+        otp = _generate_otp()
+        _otp_store.clear()
+        _otp_store[otp] = now + OTP_EXPIRE
+        await _send_otp_telegram(otp)
+        _last_otp_sent = now
+        just_sent = True
+    else:
+        just_sent = False
+
+    status_copy = "📱 ส่ง OTP ไป Telegram แล้ว" if just_sent else "📱 OTP ยังไม่หมดอายุ กรอกได้เลย"
 
     return HTMLResponse(
-        """<!DOCTYPE html>
+        f"""<!DOCTYPE html>
 <html lang="th">
 <head>
   <meta charset="utf-8">
@@ -3470,7 +3483,7 @@ async def otp_page(request: Request):
   <div class="otp-box">
     <h2>🔐 Admin Access</h2>
     <p>OTP ส่งไป Telegram แล้วครับ</p>
-    <div class="sent-msg">📱 ดู Telegram เพื่อรับรหัส 6 หลัก</div>
+    <div class="sent-msg">{status_copy}</div>
 
     <form method="POST" action="/admin/otp/verify">
       <input type="text" name="otp" class="otp-input"
@@ -3502,11 +3515,21 @@ async def otp_page(request: Request):
 
     async function resend() {
       const res = await fetch('/admin/otp/resend', { method: 'POST' });
-      if (res.ok) {
+      if (!res.ok) {
+        document.getElementById('msg').textContent = '❌ ส่ง OTP ไม่สำเร็จ';
+        document.getElementById('msg').style.color = '#ff4444';
+        return;
+      }
+
+      const data = await res.json();
+      if (data.ok) {
         document.getElementById('msg').textContent = '✅ ส่ง OTP ใหม่แล้ว';
         document.getElementById('msg').style.color = '#00ff88';
         seconds = 300;
         document.getElementById('timer').style.color = '#ffaa00';
+      } else if (typeof data.wait === 'number') {
+        document.getElementById('msg').textContent = `กรุณารอ ${{data.wait}} วินาที`;
+        document.getElementById('msg').style.color = '#ffaa00';
       }
     }
   </script>
@@ -3550,10 +3573,17 @@ async def verify_otp(request: Request):
 
 @app.post("/admin/otp/resend")
 async def resend_otp(request: Request):
+    global _last_otp_sent
     _validate_admin_basic_auth(request)
+    now = time.time()
+    if now - _last_otp_sent < 60:
+        remaining = int(60 - (now - _last_otp_sent))
+        return {"ok": False, "wait": remaining}
+
     otp = _generate_otp()
     _otp_store.clear()
-    _otp_store[otp] = time.time() + OTP_EXPIRE
+    _otp_store[otp] = now + OTP_EXPIRE
+    _last_otp_sent = now
     await _send_otp_telegram(otp)
     return {"ok": True}
 
