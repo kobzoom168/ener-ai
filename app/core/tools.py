@@ -147,6 +147,20 @@ TOOLS = [
             },
         },
     },
+    {
+        "name": "draw_tarot_with_question",
+        "description": "ซุ่มไพ่ทาโรต์ทำนาย ใช้เมื่อกบถามเรื่องดวง ไพ่ ทำนาย เสี่ยงทาย พลังงาน โชค",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "question": {"type": "string"},
+                "spread": {
+                    "type": "string",
+                    "enum": ["single", "three"],
+                },
+            },
+        },
+    },
 ]
 
 
@@ -237,6 +251,13 @@ async def execute_tool(tool_name: str, tool_input: dict) -> str:
         )
 
     if tool_name == "draw_tarot":
+        return await read_cards(
+            question=str(payload.get("question", "")).strip(),
+            spread=str(payload.get("spread", "single")).strip() or "single",
+            _agent_triggered_by="agent",
+        )
+
+    if tool_name == "draw_tarot_with_question":
         return await read_cards(
             question=str(payload.get("question", "")).strip(),
             spread=str(payload.get("spread", "single")).strip() or "single",

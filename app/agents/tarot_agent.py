@@ -60,6 +60,38 @@ def _build_full_deck() -> list[tuple[str, str]]:
 FULL_DECK = _build_full_deck()
 
 
+def _spread_count(spread: str) -> int:
+    return {
+        "single": 1,
+        "three": 3,
+        "celtic": 5,
+    }.get(spread, 1)
+
+
+def _spread_labels(n: int) -> list[str]:
+    spread_labels = {
+        1: [""],
+        3: ["อดีต/รากเหง้า", "ปัจจุบัน", "อนาคต/แนวโน้ม"],
+        5: ["สถานการณ์", "อุปสรรค", "รากเหง้า", "อนาคต", "ผลลัพธ์"],
+    }
+    return spread_labels.get(n, [""] * n)
+
+
+async def _save_tarot_messages(chat_id: str, prompt: str, result: str) -> None:
+    from app.core.database import get_db
+
+    async with get_db() as db:
+        await db.execute(
+            "INSERT INTO messages (chat_id, role, content) VALUES (?, ?, ?)",
+            (chat_id, "user", prompt),
+        )
+        await db.execute(
+            "INSERT INTO messages (chat_id, role, content) VALUES (?, ?, ?)",
+            (chat_id, "assistant", result),
+        )
+        await db.commit()
+
+
 async def _log_tarot_event(
     event_type: str,
     summary: str,
@@ -97,20 +129,9 @@ async def draw_cards(n: int = 1) -> list[dict]:
 
 @log_agent_run("TarotAgent")
 async def read_cards(question: str = "", spread: str = "single") -> str:
-    spread_map = {
-        "single": 1,
-        "three": 3,
-        "celtic": 5,
-    }
-    n = spread_map.get(spread, 1)
+    n = _spread_count(spread)
     cards = await draw_cards(n)
-
-    spread_labels = {
-        1: [""],
-        3: ["อดีต/รากเหง้า", "ปัจจุบัน", "อนาคต/แนวโน้ม"],
-        5: ["สถานการณ์", "อุปสรรค", "รากเหง้า", "อนาคต", "ผลลัพธ์"],
-    }
-    labels = spread_labels.get(n, [""] * n)
+    labels = _spread_labels(n)
 
     cards_text = "\n".join(
         [
@@ -155,3 +176,107 @@ async def read_cards(question: str = "", spread: str = "single") -> str:
             learned=str(exc)[:200],
         )
         return f"พี่จั่วไพ่ให้ไม่ได้ตอนนี้ครับ: {exc}"
+
+
+@log_agent_run("TarotAgent")
+async def read_with_image(
+    image_bytes: bytes,
+    question: str = "",
+    spread: str = "single",
+    chat_id: str = "",
+) -> str:
+    import base64
+    import anthropic
+
+    from app.core.config import settings
+
+    if not settings.anthropic_api_key:
+        return "ไม่มี API key สำหรับอ่านไพ่จากรูปครับ"
+
+    n = _spread_count(spread)
+    cards = await draw_cards(n)
+    labels = {
+        1: [""],
+        3: ["อดีต", "ปัจจุบัน", "อนาคต"],
+        5: ["สถานการณ์", "อุปสรรค", "รากเหง้า", "อนาคต", "ผลลัพธ์"],
+    }.get(n, [""] * n)
+
+    card_lines = "\n".join(
+        [
+            f"{labels[i] + ': ' if labels[i] else ''}{card['name']} ({card['position']})"
+            for i, card in enumerate(cards)
+        ]
+    )
+
+    client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+    content = [
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/jpeg",
+                "data": base64.b64encode(image_bytes).decode(),
+            },
+        },
+        {
+            "type": "text",
+            "text": f"""พี่ซุ่มไพ่ทาโรต์ได้มา:
+{card_lines}
+
+{"คำถาม: " + question if question else ""}
+
+ให้ดูรูปที่ส่งมาประกอบด้วย:
+- ถ้าเป็นพระเครื่อง/เครื่องราง → อ่านพลังงานจากวัตถุ แล้วเชื่อมกับไพ่
+- ถ้าเป็นไพ่ทาโรต์ที่วางไว้ → วิเคราะห์ไพ่ที่เห็น + ไพ่ที่ซุ่มเพิ่ม
+- ถ้าเป็นสภาพแวดล้อม → อ่านพลังงานพื้นที่ แล้วเชื่อมกับไพ่
+- ถ้าเป็นสิ่งอื่น → อ่านความหมายแฝง แล้วเชื่อมกับไพ่
+
+ตีความรวมกันให้กบ แบบผู้รู้ด้านจิตวิญญาณ
+ตอบภาษาไทย กระชับแต่ลึก""",
+        },
+    ]
+
+    try:
+        response = await client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=1500,
+            system=TAROT_SYSTEM,
+            messages=[{"role": "user", "content": content}],
+        )
+        interpretation = ""
+        for block in getattr(response, "content", []) or []:
+            text = getattr(block, "text", "")
+            if text:
+                interpretation += text
+        interpretation = interpretation.strip() or "พี่อ่านพลังงานได้ไม่ชัด ลองส่งใหม่อีกรอบนะ"
+
+        card_display = "\n".join(
+            [
+                f"🃏 {labels[i] + ': ' if labels[i] else ''}{card['name']} {card['position']}"
+                for i, card in enumerate(cards)
+            ]
+        )
+        result = f"🔮 ไพ่ที่ซุ่มได้:\n{card_display}\n\n{interpretation}"
+
+        if chat_id:
+            await _save_tarot_messages(
+                chat_id,
+                f"[ส่งรูป + ซุ่มไพ่] {question or 'ดูพลังงาน'}",
+                result,
+            )
+
+        await _log_tarot_event(
+            "task_done",
+            f"read tarot with image {spread}",
+            "success",
+            learned=f"cards={n}",
+        )
+        return result
+    except Exception as exc:
+        await _log_tarot_event(
+            "task_failed",
+            f"read tarot with image failed: {spread}",
+            "failure",
+            learned=str(exc)[:200],
+        )
+        return f"พี่อ่านไพ่จากรูปไม่ได้ตอนนี้ครับ: {exc}"

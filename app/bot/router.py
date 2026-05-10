@@ -16,7 +16,7 @@ from telegram.ext import (
 from app.agents import github_agent, gmail_agent, log_keeper, memory_curator, memory_keeper
 from app.agents.monitor_agent import cmd_errors, cmd_logs, cmd_server, cmd_status
 from app.agents.news_discovery import approve_source, list_active_sources, list_pending_sources
-from app.agents.tarot_agent import read_cards
+from app.agents.tarot_agent import read_cards, read_with_image
 from app.agents.vision_agent import (
     analyze_image as vision_analyze,
     analyze_multiple_images as vision_analyze_multiple,
@@ -29,6 +29,20 @@ from app.agents.main_agent import MAIN_AGENT
 logger = logging.getLogger(__name__)
 _media_group_cache: dict[str, list] = defaultdict(list)
 _media_group_tasks: dict[str, asyncio.Task] = {}
+TAROT_KEYWORDS = [
+    "ไพ่",
+    "ซุ่ม",
+    "ดวง",
+    "ทำนาย",
+    "เสี่ยง",
+    "พลังงาน",
+    "ทาโรต์",
+    "tarot",
+    "อนาคต",
+    "โชค",
+    "เคราะห์",
+    "ฤกษ์",
+]
 
 
 async def _reply_text_with_markdown_fallback(
@@ -189,14 +203,32 @@ async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     media_group_id = message.media_group_id
 
     if not media_group_id:
-        thinking = await message.reply_text("🔍 กำลังวิเคราะห์รูป...", parse_mode=None)
         chat_id = str(update.effective_chat.id)
-        result = await vision_analyze(
-            image_data,
-            caption,
-            chat_id=chat_id,
-            _agent_triggered_by="user",
-        )
+
+        if _is_tarot_request(caption):
+            spread = "single"
+            lowered = caption.lower()
+            if "3" in caption or "สาม" in caption or "three" in lowered:
+                spread = "three"
+            elif "5" in caption or "ห้า" in caption or "celtic" in lowered:
+                spread = "celtic"
+
+            thinking = await message.reply_text("🔮 กำลังซุ่มไพ่และอ่านพลังงานรูป...", parse_mode=None)
+            result = await read_with_image(
+                image_data,
+                question=caption,
+                spread=spread,
+                chat_id=chat_id,
+                _agent_triggered_by="user",
+            )
+        else:
+            thinking = await message.reply_text("🔍 กำลังวิเคราะห์รูป...", parse_mode=None)
+            result = await vision_analyze(
+                image_data,
+                caption,
+                chat_id=chat_id,
+                _agent_triggered_by="user",
+            )
         try:
             await thinking.delete()
         except Exception:
@@ -240,12 +272,32 @@ async def _process_media_group(group_id: str):
 
     caption = next((item["caption"] for item in photos if item["caption"]), "")
     chat_id = str(base_update.effective_chat.id)
-    result = await vision_analyze_multiple(
-        [item["image_data"] for item in photos],
-        caption,
-        chat_id=chat_id,
-        _agent_triggered_by="user",
-    )
+    if _is_tarot_request(caption):
+        lowered = caption.lower()
+        spread = "single"
+        if "3" in caption or "สาม" in caption or "three" in lowered:
+            spread = "three"
+        elif "5" in caption or "ห้า" in caption or "celtic" in lowered:
+            spread = "celtic"
+
+        try:
+            await thinking.edit_text("🔮 กำลังซุ่มไพ่และอ่านพลังงานรูป...", parse_mode=None)
+        except Exception:
+            pass
+        result = await read_with_image(
+            photos[0]["image_data"],
+            question=caption,
+            spread=spread,
+            chat_id=chat_id,
+            _agent_triggered_by="user",
+        )
+    else:
+        result = await vision_analyze_multiple(
+            [item["image_data"] for item in photos],
+            caption,
+            chat_id=chat_id,
+            _agent_triggered_by="user",
+        )
 
     try:
         await thinking.delete()
@@ -257,6 +309,11 @@ async def _process_media_group(group_id: str):
 def _is_allowed(update: Update) -> bool:
     chat_id = str(update.effective_chat.id)
     return chat_id in [str(x) for x in ALLOWED_CHAT_IDS]
+
+
+def _is_tarot_request(text: str) -> bool:
+    lowered = str(text or "").lower()
+    return any(keyword.lower() in lowered for keyword in TAROT_KEYWORDS)
 
 
 async def cmd_note(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -693,8 +750,9 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/ener — วิเคราะห์พระ/ener report\n"
         "/content — สร้าง caption/script\n\n"
         "**🔮 Tarot**\n"
-        "/tarot — จั่วไพ่ทาโรต์ทำนาย\n"
-        "/ดวง — เหมือน /tarot\n\n"
+        "/tarot [คำถาม] — ซุ่มไพ่ทาโรต์\n"
+        "/ดวง [คำถาม] — เหมือน /tarot\n"
+        "ส่งรูป + ไพ่/ดวง/พลังงาน → ซุ่มไพ่ + อ่านรูปรวม\n\n"
         "**💻 Code & GitHub**\n"
         "/code — เขียน/review/debug code\n"
         "/github — ดู PRs + Issues\n"
