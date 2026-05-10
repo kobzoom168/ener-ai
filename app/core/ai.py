@@ -307,7 +307,7 @@ async def _call_gemini(
 
 
 async def _gemini_grounded_search(query: str) -> str:
-    """Search the web using Gemini with Google Search Grounding."""
+    """Search the web using Gemini 2.5 Flash with Google Search Grounding."""
     if not settings.gemini_api_key:
         return "⚠️ ยังไม่ได้ตั้งค่า GEMINI_API_KEY"
     try:
@@ -318,14 +318,32 @@ async def _gemini_grounded_search(query: str) -> str:
             tools=[types.Tool(google_search=types.GoogleSearch())]
         )
 
-        def _generate():
-            return client.models.generate_content(
-                model="gemini-1.5-flash",
-                contents=query,
-                config=config,
-            )
+        _GROUNDING_MODELS = [
+            "gemini-2.5-flash-preview-05-20",
+            "gemini-2.5-flash",
+            "gemini-2.5-pro-preview-05-06",
+        ]
 
-        response = await asyncio.to_thread(_generate)
+        response = None
+        last_exc = None
+        for model_name in _GROUNDING_MODELS:
+            try:
+                def _generate(m=model_name):
+                    return client.models.generate_content(
+                        model=m,
+                        contents=query,
+                        config=config,
+                    )
+
+                response = await asyncio.to_thread(_generate)
+                break
+            except Exception as exc:
+                last_exc = exc
+                continue
+
+        if response is None:
+            raise last_exc or RuntimeError("No grounding model available")
+
         text = getattr(response, "text", "") or ""
 
         sources = []
