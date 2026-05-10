@@ -3912,17 +3912,22 @@ def build_workspace_html() -> HTMLResponse:
       display: flex;
       height: 100vh;
       overflow: hidden;
+      width: 100%;
     }
 
     #sidebar {
       width: 240px;
       min-width: 240px;
+      max-width: 240px;
+      height: 100vh;
+      overflow-y: auto;
+      flex-shrink: 0;
       background: var(--sidebar);
       display: flex;
       flex-direction: column;
       padding: 12px 8px;
       border-right: 1px solid var(--border);
-      overflow-y: auto;
+      box-sizing: border-box;
       gap: 4px;
     }
 
@@ -4029,18 +4034,19 @@ def build_workspace_html() -> HTMLResponse:
 
     #content {
       flex: 1;
+      min-width: 0;
+      height: 100vh;
+      overflow: hidden;
       display: flex;
       flex-direction: column;
-      overflow: hidden;
-      min-width: 0;
     }
 
     .panel {
       display: none;
-      flex: 1;
       flex-direction: column;
-      overflow: hidden;
+      flex: 1;
       height: 100%;
+      overflow: hidden;
     }
 
     .panel.active-panel {
@@ -4088,36 +4094,52 @@ def build_workspace_html() -> HTMLResponse:
     }
 
     #panel-chat {
-      position: relative;
+      display: none;
+      flex-direction: column;
+      height: 100%;
+      overflow: hidden;
+    }
+
+    #panel-chat.active-panel {
+      display: flex;
     }
 
     #chat-messages {
       flex: 1;
       overflow-y: auto;
-      padding: 24px 0 120px;
-      max-width: 800px;
+      overflow-x: hidden;
+      padding: 24px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
       width: 100%;
-      margin: 0 auto;
+      box-sizing: border-box;
+      max-width: 100%;
     }
 
     .msg-row {
-      padding: 4px 24px;
-      margin: 8px 0;
+      display: flex;
+      width: 100%;
+      padding: 4px 0;
+      box-sizing: border-box;
     }
 
-    .msg-row.user-row {
-      display: flex;
+    .user-row {
       justify-content: flex-end;
+    }
+
+    .ai-row {
+      justify-content: flex-start;
     }
 
     .msg-bubble {
       max-width: 70%;
-      padding: 12px 18px;
+      padding: 12px 16px;
       border-radius: 18px;
-      font-size: 16px;
+      font-size: 15px;
       line-height: 1.7;
       word-break: break-word;
-      white-space: pre-wrap;
+      box-sizing: border-box;
     }
 
     .user-bubble {
@@ -4126,7 +4148,8 @@ def build_workspace_html() -> HTMLResponse:
     }
 
     .ai-bubble {
-      background: none;
+      background: transparent;
+      border-radius: 0;
       padding-left: 0;
       max-width: 85%;
     }
@@ -4144,26 +4167,26 @@ def build_workspace_html() -> HTMLResponse:
     }
 
     #chat-input-wrap {
-      max-width: 800px;
-      width: 100%;
-      margin: 0 auto 16px;
-      padding: 0 24px;
       display: flex;
       align-items: flex-end;
       gap: 8px;
-      position: sticky;
-      bottom: 0;
-      background: linear-gradient(to top, rgba(33,33,33,1) 72%, rgba(33,33,33,0));
+      padding: 12px 16px 20px;
+      width: 100%;
+      max-width: 800px;
+      margin: 0 auto;
+      box-sizing: border-box;
+      flex-shrink: 0;
     }
 
     #chat-input {
       flex: 1;
+      min-width: 0;
       background: var(--card);
       border: 1px solid var(--border);
       border-radius: 16px;
       padding: 14px 18px;
       color: var(--text);
-      font-size: 16px;
+      font-size: 15px;
       font-family: inherit;
       resize: none;
       outline: none;
@@ -4171,21 +4194,23 @@ def build_workspace_html() -> HTMLResponse:
       max-height: 200px;
       overflow-y: auto;
       line-height: 1.5;
+      box-sizing: border-box;
     }
 
     #send-btn {
       width: 44px;
       height: 44px;
+      min-width: 44px;
       border-radius: 50%;
       background: var(--accent);
       color: white;
       border: none;
       font-size: 20px;
       cursor: pointer;
+      flex-shrink: 0;
       display: flex;
       align-items: center;
       justify-content: center;
-      flex-shrink: 0;
     }
 
     #send-btn:disabled {
