@@ -90,11 +90,42 @@ TOOLS = [
             "required": ["topic"],
         },
     },
+    {
+        "name": "read_github_file",
+        "description": "อ่านไฟล์ code จาก GitHub repository ของกบ",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string", "description": "ชื่อ repo เช่น ener-ai"},
+                "path": {"type": "string", "description": "path ไฟล์ เช่น app/main.py"},
+            },
+            "required": ["repo", "path"],
+        },
+    },
+    {
+        "name": "list_github_repos",
+        "description": "ดู repositories ทั้งหมดของกบบน GitHub",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "list_github_prs",
+        "description": "ดู Pull Requests ที่เปิดอยู่",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string", "description": "ชื่อ repo (optional)"},
+            },
+        },
+    },
 ]
 
 
 async def execute_tool(tool_name: str, tool_input: dict) -> str:
     from app.agents import brainstorm, content_agent, ener_agent
+    from app.agents.github_agent import list_prs, list_repos, read_file
     from app.agents import task as task_agent
     from app.agents.memory import search_memory
 
@@ -155,5 +186,19 @@ async def execute_tool(tool_name: str, tool_input: dict) -> str:
             f"{topic} platform: {platform}",
             _agent_triggered_by="agent",
         )
+
+    if tool_name == "read_github_file":
+        return await read_file(
+            str(payload["repo"]).strip(),
+            str(payload["path"]).strip(),
+            _agent_triggered_by="agent",
+        )
+
+    if tool_name == "list_github_repos":
+        return await list_repos(_agent_triggered_by="agent")
+
+    if tool_name == "list_github_prs":
+        repo_name = str(payload.get("repo", "")).strip() or None
+        return await list_prs(repo_name, _agent_triggered_by="agent")
 
     return f"ไม่รู้จัก tool: {tool_name}"
