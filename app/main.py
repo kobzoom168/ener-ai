@@ -3899,8 +3899,9 @@ def build_workspace_html() -> HTMLResponse:
       margin: 0;
     }
 
-    button, input, textarea, select {
-      font: inherit;
+    input, textarea, button, select {
+      font-size: 16px;
+      font-family: inherit;
     }
 
     a {
@@ -3932,7 +3933,7 @@ def build_workspace_html() -> HTMLResponse:
     }
 
     .sidebar-logo {
-      font-size: 20px;
+      font-size: 22px;
       font-weight: 700;
       padding: 8px 12px 16px;
       letter-spacing: -0.01em;
@@ -3946,7 +3947,7 @@ def build_workspace_html() -> HTMLResponse:
       border: none;
       border-radius: 8px;
       font-size: 15px;
-      font-weight: 500;
+      font-weight: 600;
       cursor: pointer;
       margin-bottom: 16px;
     }
@@ -3960,7 +3961,7 @@ def build_workspace_html() -> HTMLResponse:
     }
 
     .sidebar-section {
-      font-size: 11px;
+      font-size: 12px;
       font-weight: 600;
       color: var(--subtext);
       text-transform: uppercase;
@@ -3989,7 +3990,7 @@ def build_workspace_html() -> HTMLResponse:
       display: block;
       padding: 8px 12px;
       color: var(--text);
-      font-size: 14px;
+      font-size: 15px;
       border-radius: 6px;
       cursor: pointer;
       margin: 1px 0;
@@ -4026,6 +4027,7 @@ def build_workspace_html() -> HTMLResponse:
       display: inline-flex;
       align-items: center;
       gap: 6px;
+      font-size: 13px;
       padding: 6px 10px;
       border-radius: 999px;
       border: 1px solid var(--border);
@@ -4064,7 +4066,7 @@ def build_workspace_html() -> HTMLResponse:
 
     .panel-header h2 {
       margin: 0;
-      font-size: 20px;
+      font-size: 22px;
       font-weight: 600;
       letter-spacing: -0.01em;
     }
@@ -4136,8 +4138,8 @@ def build_workspace_html() -> HTMLResponse:
       max-width: 70%;
       padding: 12px 16px;
       border-radius: 18px;
-      font-size: 15px;
-      line-height: 1.7;
+      font-size: 16px;
+      line-height: 1.75;
       word-break: break-word;
       box-sizing: border-box;
     }
@@ -4160,7 +4162,7 @@ def build_workspace_html() -> HTMLResponse:
     }
 
     .msg-meta {
-      font-size: 11px;
+      font-size: 12px;
       color: var(--subtext);
       margin-top: 4px;
       padding: 0 2px;
@@ -4186,15 +4188,24 @@ def build_workspace_html() -> HTMLResponse:
       border-radius: 16px;
       padding: 14px 18px;
       color: var(--text);
-      font-size: 15px;
+      font-size: 16px;
       font-family: inherit;
       resize: none;
       outline: none;
       min-height: 52px;
       max-height: 200px;
       overflow-y: auto;
-      line-height: 1.5;
+      line-height: 1.6;
       box-sizing: border-box;
+    }
+
+    .tool-card-title {
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .tool-card-desc {
+      font-size: 14px;
     }
 
     #send-btn {
