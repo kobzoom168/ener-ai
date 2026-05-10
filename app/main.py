@@ -795,7 +795,13 @@ def _format_number(value: int | float, decimals: int = 0) -> str:
 
 def _format_baht(value: int | float) -> str:
     try:
-        number = float(value)
+        raw = str(value).strip()
+        if raw.startswith("$"):
+            number = float(raw[1:]) * 33
+        elif raw.upper().endswith("USD"):
+            number = float(raw[:-3].strip()) * 33
+        else:
+            number = float(value)
     except Exception:
         number = 0.0
     return f"฿{number:,.2f}"
@@ -2231,9 +2237,19 @@ def build_metrics_html(status: dict, metrics: dict) -> HTMLResponse:
     let callsChart = null;
     let costChart = null;
 
-    function formatMetricValue(value, suffix = "") {{
+    const USD_TO_THB = 33;
+
+    function toBaht(value, suffix = "") {{
       const amount = Number(value || 0);
-      if (suffix === "฿") return `฿${{amount.toFixed(2)}}`;
+      if (suffix === "$" || suffix === "USD") return amount * USD_TO_THB;
+      return amount;
+    }}
+
+    function formatMetricValue(value, suffix = "") {{
+      if (suffix === "฿" || suffix === "$" || suffix === "USD") {{
+        return `฿${{toBaht(value, suffix).toFixed(2)}}`;
+      }}
+      const amount = Number(value || 0);
       if (!suffix) return `${{amount.toFixed(1)}}`;
       return `${{amount.toFixed(1)}}${{suffix}}`;
     }}
@@ -2286,11 +2302,11 @@ def build_metrics_html(status: dict, metrics: dict) -> HTMLResponse:
       }});
     }}
 
-    function makeBarChart(el, labels, datasets) {{
+    function makeBarChart(el, labels, datasets, options = {{}}) {{
       return new Chart(document.getElementById(el), {{
         type: "bar",
         data: {{ labels, datasets }},
-        options: graphOptions()
+        options: {{ ...graphOptions(), ...options }}
       }});
     }}
 
@@ -2331,7 +2347,26 @@ def build_metrics_html(status: dict, metrics: dict) -> HTMLResponse:
           label: "Cost",
           data: Object.values(metrics.cost_daily),
           backgroundColor: "#fade2a"
-        }}]);
+        }}], {{
+          plugins: {{
+            ...graphOptions().plugins,
+            tooltip: {{
+              callbacks: {{
+                label: (ctx) => `฿${{Number(ctx.raw || 0).toFixed(2)}}`,
+              }},
+            }},
+          }},
+          scales: {{
+            ...graphOptions().scales,
+            y: {{
+              ...graphOptions().scales.y,
+              ticks: {{
+                ...graphOptions().scales.y.ticks,
+                callback: (value) => `฿${{Number(value).toFixed(0)}}`,
+              }},
+            }},
+          }},
+        }});
       }} else {{
         cpuChart.data.labels = metrics.labels;
         cpuChart.data.datasets[0].data = metrics.cpu;
