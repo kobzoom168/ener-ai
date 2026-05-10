@@ -359,9 +359,23 @@ async def _gemini_grounded_search(query: str) -> str:
                     if uri:
                         sources.append(f"• {title or uri}\n  🔗 {uri}")
 
+        import re as _re
+
+        text = _re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+        text = _re.sub(r"\*(.+?)\*", r"\1", text)
+        text = _re.sub(r"```[\s\S]*?```", "", text)
+        text = _re.sub(r"`(.+?)`", r"\1", text)
+        text = _re.sub(r"#{1,6}\s", "", text)
+
+        sources = sources[:5]
         if sources:
             text += "\n\n📚 แหล่งที่มา:\n" + "\n".join(sources)
-        return text or "ไม่พบผลลัพธ์"
+
+        MAX_CHARS = 3500
+        if len(text) > MAX_CHARS:
+            text = text[:MAX_CHARS].rsplit("\n", 1)[0] + "\n\n..."
+
+        return text.strip() or "ไม่พบผลลัพธ์"
     except Exception as exc:
         return f"⚠️ ค้นหาไม่สำเร็จ: {exc}"
 
