@@ -783,6 +783,31 @@ def _dashboard_timestamp(raw: str | None) -> str:
     return text
 
 
+def _format_number(value: int | float, decimals: int = 0) -> str:
+    try:
+        number = float(value)
+    except Exception:
+        return "0"
+    if decimals <= 0:
+        return f"{int(round(number)):,}"
+    return f"{number:,.{decimals}f}"
+
+
+def _format_baht(value: int | float) -> str:
+    try:
+        number = float(value)
+    except Exception:
+        number = 0.0
+    return f"฿{number:,.2f}"
+
+
+def _humanize_action(action: str) -> str:
+    raw = str(action or "").strip("_ ")
+    if not raw:
+        return "Unknown"
+    return raw.replace("_", " ")
+
+
 def _scheduler_next_run(job_id: str) -> str:
     if scheduler is None:
         return "Unknown"
@@ -864,33 +889,19 @@ def _extract_command_label(text: str) -> str:
 
 async def _load_admin_overview() -> dict:
     now = datetime.now(_BANGKOK)
-    refreshed_at = now.strftime("%d/%m/%Y %H:%M")
     today = now.date().isoformat()
-    status: dict
-    metrics: dict
-    agent_payload: dict
 
     try:
         status = await _load_admin_status()
     except Exception:
         status = {
-            "active_model": "unknown",
-            "active_model_label": "Unknown",
+            "active_model": "haiku",
+            "active_model_label": "Claude Haiku",
             "model_availability": {},
             "today_cost_thb": 0.0,
             "today_calls": 0,
             "month_cost_thb": 0.0,
-            "health": {
-                "summary": "Unknown",
-                "sqlite": "Unknown",
-                "api": "Unknown",
-                "disk": "Unknown",
-                "webhook": "Unknown",
-                "ollama": "Unknown",
-                "uptime": "Unknown",
-            },
-            "last_backup_time": "Unknown",
-            "recent_conversations": [],
+            "health": {"summary": "0/3 OK", "uptime": "Unknown"},
         }
 
     try:
@@ -903,722 +914,268 @@ async def _load_admin_overview() -> dict:
                 "ram_used_mb": 0,
                 "ram_total_mb": 0,
                 "disk_percent": 0.0,
-                "network_in_mb": 0.0,
-                "network_out_mb": 0.0,
             },
             "ai_usage": {
-                "total_calls": 0,
-                "total_cost_thb": 0.0,
-                "avg_response_ms": 0.0,
-                "top_model_label": "Unknown",
+                "cost_7d_labels": [],
+                "cost_7d_values": [],
             },
         }
 
     try:
         agent_payload = await _load_agent_stats_payload()
     except Exception:
-        agent_payload = {
-            "main_agent": {"name": "Main Agent", "status": "ONLINE", "uptime": "Unknown"},
-            "stats": [],
-            "failures": [],
-            "costs": [],
-        }
+        agent_payload = {"stats": [], "failures": []}
 
     overview = {
-        "topbar": {
-            "title": "Ener-AI Admin",
-            "environment": "Production",
-            "server": "Hetzner CPX22",
-            "timezone": "Bangkok Time",
-            "active_model": status.get("active_model_label", "Unknown"),
-            "voice": "Unknown",
-            "health": status.get("health", {}).get("summary", "Unknown"),
-            "health_tone": _status_tone(status.get("health", {}).get("sqlite", "unknown")),
-            "cost_today": f"฿{float(status.get('today_cost_thb', 0.0)):.2f}",
-            "last_refresh": refreshed_at,
-        },
-        "kpis": [],
-        "brain_status": [],
-        "timeline": [],
+        "topbar": {},
+        "stats": [],
         "model_panel": {},
-        "agent_usage": [],
-        "scheduler_health": [],
-        "server_health": {},
-        "recent_logs": [],
-        "agent_os": agent_payload,
+        "cost_breakdown": [],
+        "cost_chart": {
+            "labels": metrics.get("ai_usage", {}).get("cost_7d_labels", []),
+            "values": metrics.get("ai_usage", {}).get("cost_7d_values", []),
+        },
+        "timeline": [],
+        "top_commands": [],
+        "server": {},
+        "top_agents": [],
+        "errors": [],
     }
 
     async with get_db() as db:
-        try:
-            voice_row = await (
-                await db.execute(
-                    "SELECT value FROM memories WHERE key = ? LIMIT 1",
-                    (f"voice_mode_{settings.telegram_chat_id}",),
-                )
-            ).fetchone()
-            voice_enabled = bool(voice_row and voice_row["value"] == "on")
-            overview["topbar"]["voice"] = "Voice ON" if voice_enabled else "Voice OFF"
-        except Exception:
-            overview["topbar"]["voice"] = "Voice Unknown"
-
-        try:
-            message_count_row = await (
-                await db.execute(
-                    "SELECT COUNT(*) AS total FROM messages WHERE date(created_at, '+7 hours') = ?",
-                    (today,),
-                )
-            ).fetchone()
-            task_count_row = await (
-                await db.execute(
-                    "SELECT COUNT(*) AS total FROM tasks WHERE COALESCE(status, 'open') NOT IN ('done', 'closed')"
-                )
-            ).fetchone()
-            note_count_row = await (
-                await db.execute(
-                    "SELECT COUNT(*) AS total FROM notes WHERE date(created_at, '+7 hours') = ?",
-                    (today,),
-                )
-            ).fetchone()
-            memory_count_row = await (
-                await db.execute(
-                    """
-                    SELECT
-                        (SELECT COUNT(*) FROM long_term_memories) + (SELECT COUNT(*) FROM beliefs) AS total
-                    """
-                )
-            ).fetchone()
-            cron_health_tone = "unknown"
-            server_health_tone = "unknown"
-            open_tasks = int(task_count_row["total"]) if task_count_row else 0
-            memories_active = int(memory_count_row["total"]) if memory_count_row else 0
-            overview["kpis"] = [
-                {
-                    "label": "AI Calls Today",
-                    "value": str(int(status.get("today_calls", 0))),
-                    "meta": "Rows in ai_runs (Bangkok today)",
-                    "tone": "ok" if int(status.get("today_calls", 0)) > 0 else "unknown",
-                },
-                {
-                    "label": "Cost Today",
-                    "value": f"฿{float(status.get('today_cost_thb', 0.0)):.2f}",
-                    "meta": f"Month ฿{float(status.get('month_cost_thb', 0.0)):.2f}",
-                    "tone": "ok",
-                },
-                {
-                    "label": "Messages Today",
-                    "value": str(int(message_count_row["total"]) if message_count_row else 0),
-                    "meta": "messages today",
-                    "tone": "ok" if int(message_count_row["total"]) > 0 else "empty",
-                },
-                {
-                    "label": "Open Tasks",
-                    "value": str(open_tasks),
-                    "meta": "status not done/closed",
-                    "tone": "warning" if open_tasks > 0 else "ok",
-                },
-                {
-                    "label": "Notes Today",
-                    "value": str(int(note_count_row["total"]) if note_count_row else 0),
-                    "meta": "notes created today",
-                    "tone": "ok" if int(note_count_row["total"]) > 0 else "empty",
-                },
-                {
-                    "label": "Memories Active",
-                    "value": str(memories_active),
-                    "meta": "long-term memories + beliefs",
-                    "tone": "ok" if memories_active > 0 else "empty",
-                },
-                {
-                    "label": "Cron Health",
-                    "value": "Unknown",
-                    "meta": "scheduler status inferred",
-                    "tone": cron_health_tone,
-                },
-                {
-                    "label": "Server Health",
-                    "value": "Unknown",
-                    "meta": "latest server metrics",
-                    "tone": server_health_tone,
-                },
-            ]
-        except Exception:
-            overview["kpis"] = [
-                {"label": "AI Calls Today", "value": "No data", "meta": "Query failed", "tone": "unknown"},
-                {"label": "Cost Today", "value": "No data", "meta": "Query failed", "tone": "unknown"},
-                {"label": "Messages Today", "value": "No data", "meta": "Query failed", "tone": "unknown"},
-                {"label": "Open Tasks", "value": "No data", "meta": "Query failed", "tone": "unknown"},
-                {"label": "Notes Today", "value": "No data", "meta": "Query failed", "tone": "unknown"},
-                {"label": "Memories Active", "value": "No data", "meta": "Query failed", "tone": "unknown"},
-                {"label": "Cron Health", "value": "Unknown", "meta": "Query failed", "tone": "unknown"},
-                {"label": "Server Health", "value": "Unknown", "meta": "Query failed", "tone": "unknown"},
-            ]
-
-        try:
-            brain_queries = {
-                "ltm": await (
-                    await db.execute(
-                        """
-                        SELECT COUNT(*) AS total, MAX(datetime(created_at, '+7 hours')) AS latest
-                        FROM long_term_memories
-                        """
-                    )
-                ).fetchone(),
-                "beliefs": await (
-                    await db.execute(
-                        """
-                        SELECT COUNT(*) AS total, MAX(datetime(created_at, '+7 hours')) AS latest
-                        FROM beliefs
-                        """
-                    )
-                ).fetchone(),
-                "digests": await (
-                    await db.execute(
-                        """
-                        SELECT COUNT(*) AS total, MAX(period_start) AS latest
-                        FROM digests
-                        WHERE digest_type = 'daily'
-                        """
-                    )
-                ).fetchone(),
-                "messages": await (
-                    await db.execute(
-                        """
-                        SELECT COUNT(*) AS total, MAX(datetime(created_at, '+7 hours')) AS latest
-                        FROM messages
-                        """
-                    )
-                ).fetchone(),
-                "lessons": await (
-                    await db.execute(
-                        """
-                        SELECT COUNT(*) AS total, MAX(datetime(created_at, '+7 hours')) AS latest
-                        FROM lessons_learned
-                        """
-                    )
-                ).fetchone(),
-            }
-            latest_digest = brain_queries["digests"]["latest"] if brain_queries["digests"] else None
-            digest_tone = "empty"
-            if latest_digest:
-                latest_digest_date = datetime.fromisoformat(str(latest_digest))
-                digest_tone = "ok" if (now.date() - latest_digest_date.date()).days <= 1 else "warning"
-            overview["brain_status"] = [
-                {
-                    "name": "Long-term Memory",
-                    "count": f"{int(brain_queries['ltm']['total'])} items",
-                    "status": "OK" if int(brain_queries["ltm"]["total"]) > 0 else "Empty",
-                    "tone": "ok" if int(brain_queries["ltm"]["total"]) > 0 else "empty",
-                    "note": "Used in every AI context",
-                    "latest": _dashboard_timestamp(brain_queries["ltm"]["latest"]),
-                    "href": "#workspace-panel",
-                    "action": "View section",
-                },
-                {
-                    "name": "Beliefs",
-                    "count": f"{int(brain_queries['beliefs']['total'])} items",
-                    "status": "OK" if int(brain_queries["beliefs"]["total"]) > 0 else "Empty",
-                    "tone": "ok" if int(brain_queries["beliefs"]["total"]) > 0 else "empty",
-                    "note": "Preferences and identity layer",
-                    "latest": _dashboard_timestamp(brain_queries["beliefs"]["latest"]),
-                    "href": "#workspace-panel",
-                    "action": "View section",
-                },
-                {
-                    "name": "Daily Summary",
-                    "count": _dashboard_timestamp(latest_digest),
-                    "status": "OK" if digest_tone == "ok" else ("Warning" if digest_tone == "warning" else "Empty"),
-                    "tone": digest_tone,
-                    "note": "7-day digest source",
-                    "latest": _dashboard_timestamp(latest_digest),
-                    "href": "#brain-panel",
-                    "action": "Review digest",
-                },
-                {
-                    "name": "Recent Messages",
-                    "count": f"{min(int(brain_queries['messages']['total']), 20)} visible",
-                    "status": "OK" if int(brain_queries["messages"]["total"]) > 0 else "Empty",
-                    "tone": "ok" if int(brain_queries["messages"]["total"]) > 0 else "empty",
-                    "note": "Immediate chat context",
-                    "latest": _dashboard_timestamp(brain_queries["messages"]["latest"]),
-                    "href": "#timeline-panel",
-                    "action": "See timeline",
-                },
-                {
-                    "name": "Lessons Learned",
-                    "count": f"{int(brain_queries['lessons']['total'])} items",
-                    "status": "OK" if int(brain_queries["lessons"]["total"]) > 0 else "Empty",
-                    "tone": "ok" if int(brain_queries["lessons"]["total"]) > 0 else "empty",
-                    "note": "Mistake memory",
-                    "latest": _dashboard_timestamp(brain_queries["lessons"]["latest"]),
-                    "href": "#workspace-panel",
-                    "action": "View section",
-                },
-            ]
-        except Exception:
-            overview["brain_status"] = [
-                {
-                    "name": "Brain Status",
-                    "count": "Unknown",
-                    "status": "Unknown",
-                    "tone": "unknown",
-                    "note": "Panel query failed",
-                    "latest": "No data",
-                    "href": "#workspace-panel",
-                    "action": "View section",
-                }
-            ]
-
-        try:
-            timeline_events = []
-            audit_rows = await (
-                await db.execute(
-                    """
-                    SELECT datetime(created_at, '+7 hours') AS local_created_at, action, details
-                    FROM audit_logs
-                    WHERE date(created_at, '+7 hours') = ?
-                    ORDER BY id DESC
-                    LIMIT 60
-                    """,
-                    (today,),
-                )
-            ).fetchall()
-            for row in audit_rows:
-                summarized = _summarize_audit_event(row["action"], row["details"] or "")
-                if not summarized:
-                    continue
-                timeline_events.append(
-                    {
-                        "sort_key": row["local_created_at"],
-                        "time": _format_short_time(row["local_created_at"]),
-                        "type": summarized["type"],
-                        "title": summarized["title"],
-                        "message": summarized["message"],
-                        "tone": summarized["tone"],
-                        "meta": row["action"],
-                    }
-                )
-
-            ai_run_rows = await (
-                await db.execute(
-                    """
-                    SELECT datetime(created_at, '+7 hours') AS local_created_at, model, estimated_cost_thb, success
-                    FROM ai_runs
-                    WHERE date(created_at, '+7 hours') = ?
-                    ORDER BY id DESC
-                    LIMIT 30
-                    """,
-                    (today,),
-                )
-            ).fetchall()
-            for row in ai_run_rows:
-                timeline_events.append(
-                    {
-                        "sort_key": row["local_created_at"],
-                        "time": _format_short_time(row["local_created_at"]),
-                        "type": "chat" if row["success"] else "error",
-                        "title": f"AI Run: {get_model_label(row['model'])}",
-                        "message": f"{'Success' if row['success'] else 'Failed'} · ฿{float(row['estimated_cost_thb'] or 0):.2f}",
-                        "tone": "ok" if row["success"] else "danger",
-                        "meta": row["model"],
-                    }
-                )
-
-            message_rows = await (
-                await db.execute(
-                    """
-                    SELECT datetime(created_at, '+7 hours') AS local_created_at, content
-                    FROM messages
-                    WHERE date(created_at, '+7 hours') = ? AND role = 'user'
-                    ORDER BY id DESC
-                    LIMIT 20
-                    """,
-                    (today,),
-                )
-            ).fetchall()
-            for row in message_rows:
-                timeline_events.append(
-                    {
-                        "sort_key": row["local_created_at"],
-                        "time": _format_short_time(row["local_created_at"]),
-                        "type": "chat",
-                        "title": "Chat Message",
-                        "message": _truncate_text(_sanitize_admin_text(row["content"]), 80),
-                        "tone": "ok",
-                        "meta": "user",
-                    }
-                )
-
-            digest_rows = await (
-                await db.execute(
-                    """
-                    SELECT datetime(created_at, '+7 hours') AS local_created_at, digest_type, content
-                    FROM digests
-                    WHERE date(created_at, '+7 hours') = ?
-                    ORDER BY id DESC
-                    LIMIT 10
-                    """,
-                    (today,),
-                )
-            ).fetchall()
-            for row in digest_rows:
-                timeline_events.append(
-                    {
-                        "sort_key": row["local_created_at"],
-                        "time": _format_short_time(row["local_created_at"]),
-                        "type": "cron",
-                        "title": f"Digest Created: {str(row['digest_type']).title()}",
-                        "message": _truncate_text(_sanitize_admin_text(row["content"]), 80),
-                        "tone": "ok",
-                        "meta": row["digest_type"],
-                    }
-                )
-
-            timeline_events.sort(key=lambda item: item["sort_key"], reverse=True)
-            overview["timeline"] = timeline_events[:40]
-        except Exception:
-            overview["timeline"] = []
-
-        try:
-            usage_counts = {
-                "chat mode": 0,
-                "/note": 0,
-                "/task": 0,
-                "/tasks": 0,
-                "/done": 0,
-                "/today": 0,
-                "/week": 0,
-                "/news": 0,
-                "/think": 0,
-                "/learn": 0,
-                "/park": 0,
-                "/search": 0,
-                "/voice": 0,
-                "/remember": 0,
-                "/forget": 0,
-                "/memory": 0,
-                "/cost": 0,
-            }
-            chat_rows = await (
-                await db.execute(
-                    """
-                    SELECT content
-                    FROM messages
-                    WHERE date(created_at, '+7 hours') = ? AND role = 'user'
-                    ORDER BY id DESC
-                    LIMIT 200
-                    """,
-                    (today,),
-                )
-            ).fetchall()
-            for row in chat_rows:
-                usage_counts[_extract_command_label(row["content"])] = usage_counts.get(
-                    _extract_command_label(row["content"]), 0
-                ) + 1
-
-            audit_rows = await (
-                await db.execute(
-                    """
-                    SELECT action, details
-                    FROM audit_logs
-                    WHERE date(created_at, '+7 hours') = ?
-                    ORDER BY id DESC
-                    LIMIT 200
-                    """,
-                    (today,),
-                )
-            ).fetchall()
-            audit_map = {
-                "note_saved": "/note",
-                "task_created": "/task",
-                "task_done": "/done",
-                "lesson_recorded": "/learn",
-                "brainstorm_completed": "/think",
-                "news_fetch_completed": "/news",
-                "memory_searched": "/search",
-                "idea_parked": "/park",
-                "long_term_memory_deleted": "/forget",
-                "long_term_memory_viewed": "/memory",
-                "cost_viewed": "/cost",
-                "voice_mode_updated": "/voice",
-            }
-            for row in audit_rows:
-                command = audit_map.get(row["action"])
-                if row["action"] == "long_term_memory_saved" and "type=manual" in str(row["details"]):
-                    command = "/remember"
-                if not command:
-                    continue
-                usage_counts[command] = usage_counts.get(command, 0) + 1
-
-            overview["agent_usage"] = [
-                {"label": label, "count": count}
-                for label, count in sorted(usage_counts.items(), key=lambda item: item[1], reverse=True)
-                if count > 0
-            ][:12]
-        except Exception:
-            overview["agent_usage"] = []
-
-        scheduler_rows = []
-        try:
-            scheduler_audit_actions = sorted(
-                {
-                    action
-                    for meta in _SCHEDULER_JOB_META
-                    for action in (meta["success_actions"] + meta["failure_actions"])
-                }
+        message_count_row = await (
+            await db.execute(
+                "SELECT COUNT(*) AS total FROM messages WHERE date(created_at, '+7 hours') = ?",
+                (today,),
             )
-            audit_rows = await (
-                await db.execute(
-                    f"""
-                    SELECT action, datetime(created_at, '+7 hours') AS local_created_at, details
-                    FROM audit_logs
-                    WHERE action IN ({",".join("?" for _ in scheduler_audit_actions)})
-                    ORDER BY id DESC
-                    LIMIT 200
-                    """,
-                    tuple(scheduler_audit_actions),
-                )
-            ).fetchall()
-            audit_rows = [dict(row) for row in audit_rows]
-            latest_metric_row = await (
-                await db.execute(
-                    """
-                    SELECT datetime(recorded_at, '+7 hours') AS local_recorded_at
-                    FROM server_metrics
-                    ORDER BY id DESC
-                    LIMIT 1
-                    """
-                )
-            ).fetchone()
-            for meta in _SCHEDULER_JOB_META:
-                last_success = _latest_time(audit_rows, meta["success_actions"])
-                last_failure = _latest_time(audit_rows, meta["failure_actions"])
-                if meta["id"] == "server_metrics":
-                    last_run = latest_metric_row["local_recorded_at"] if latest_metric_row else None
-                    tone = "ok" if last_run else "unknown"
-                    status_label = "OK" if last_run else "Unknown"
-                elif meta["id"] == "health_check":
-                    last_run = last_failure or last_success
-                    if last_failure and (not last_success or last_failure >= last_success):
-                        tone = "warning"
-                        status_label = "Warning"
-                    elif last_success:
-                        tone = "ok"
-                        status_label = "OK"
-                    else:
-                        tone = "unknown"
-                        status_label = "Unknown"
-                else:
-                    last_run = last_failure or last_success
-                    if last_failure and (not last_success or last_failure >= last_success):
-                        tone = "danger"
-                        status_label = "Error"
-                    elif last_success:
-                        tone = "ok"
-                        status_label = "OK"
-                    else:
-                        tone = "unknown"
-                        status_label = "Unknown"
-                scheduler_rows.append(
-                    {
-                        "name": meta["name"],
-                        "schedule": meta["schedule"],
-                        "last_run": _dashboard_timestamp(last_run),
-                        "next_run": _scheduler_next_run(meta["id"]),
-                        "status": status_label,
-                        "tone": tone,
-                    }
-                )
-        except Exception:
-            scheduler_rows = [
-                {
-                    "name": meta["name"],
-                    "schedule": meta["schedule"],
-                    "last_run": "Unknown",
-                    "next_run": "Unknown",
-                    "status": "Unknown",
-                    "tone": "unknown",
-                }
-                for meta in _SCHEDULER_JOB_META
-            ]
-        overview["scheduler_health"] = scheduler_rows
+        ).fetchone()
+        task_count_row = await (
+            await db.execute(
+                "SELECT COUNT(*) AS total FROM tasks WHERE COALESCE(status, 'open') NOT IN ('done', 'closed')"
+            )
+        ).fetchone()
+        avg_response_row = await (
+            await db.execute(
+                """
+                SELECT COALESCE(AVG(duration_ms), 0) AS avg_ms
+                FROM agent_runs
+                WHERE date(created_at, '+7 hours') = ? AND success = 1
+                """,
+                (today,),
+            )
+        ).fetchone()
+        top_commands_rows = await (
+            await db.execute(
+                """
+                SELECT action, COUNT(*) AS total
+                FROM audit_logs
+                WHERE date(created_at, '+7 hours') = ?
+                GROUP BY action
+                ORDER BY total DESC, action
+                LIMIT 3
+                """,
+                (today,),
+            )
+        ).fetchall()
+        cost_rows = await (
+            await db.execute(
+                """
+                SELECT agent_name, COUNT(*) AS runs, COALESCE(SUM(cost_thb), 0) AS total_cost
+                FROM agent_runs
+                WHERE date(created_at, '+7 hours') = ?
+                GROUP BY agent_name
+                ORDER BY total_cost DESC, runs DESC, agent_name
+                LIMIT 8
+                """,
+                (today,),
+            )
+        ).fetchall()
+        audit_rows = await (
+            await db.execute(
+                """
+                SELECT datetime(created_at, '+7 hours') AS local_created_at, action, details
+                FROM audit_logs
+                WHERE date(created_at, '+7 hours') = ?
+                ORDER BY id DESC
+                LIMIT 40
+                """,
+                (today,),
+            )
+        ).fetchall()
+        ai_run_rows = await (
+            await db.execute(
+                """
+                SELECT datetime(created_at, '+7 hours') AS local_created_at, model, estimated_cost_thb, success
+                FROM ai_runs
+                WHERE date(created_at, '+7 hours') = ?
+                ORDER BY id DESC
+                LIMIT 20
+                """,
+                (today,),
+            )
+        ).fetchall()
+        message_rows = await (
+            await db.execute(
+                """
+                SELECT datetime(created_at, '+7 hours') AS local_created_at, content
+                FROM messages
+                WHERE date(created_at, '+7 hours') = ? AND role = 'user'
+                ORDER BY id DESC
+                LIMIT 20
+                """,
+                (today,),
+            )
+        ).fetchall()
+        error_rows = await (
+            await db.execute(
+                """
+                SELECT agent_name, error_msg, datetime(created_at, '+7 hours') AS local_created_at
+                FROM agent_runs
+                WHERE date(created_at, '+7 hours') = ? AND success = 0
+                ORDER BY id DESC
+                LIMIT 8
+                """,
+                (today,),
+            )
+        ).fetchall()
 
-        try:
-            latest_server_row = await (
-                await db.execute(
-                    """
-                    SELECT
-                        datetime(recorded_at, '+7 hours') AS local_recorded_at,
-                        cpu_percent,
-                        ram_percent,
-                        disk_percent
-                    FROM server_metrics
-                    ORDER BY id DESC
-                    LIMIT 1
-                    """
-                )
-            ).fetchone()
-            last_health_row = await (
-                await db.execute(
-                    """
-                    SELECT action, datetime(created_at, '+7 hours') AS local_created_at
-                    FROM audit_logs
-                    WHERE action IN ('health_check_probe', 'health_warning_sent')
-                    ORDER BY id DESC
-                    LIMIT 1
-                    """
-                )
-            ).fetchone()
-            cpu_percent = float(metrics.get("realtime", {}).get("cpu_percent", 0.0))
-            ram_percent = float(metrics.get("realtime", {}).get("ram_percent", 0.0))
-            disk_percent = float(metrics.get("realtime", {}).get("disk_percent", 0.0))
+    message_total = int(message_count_row["total"] or 0) if message_count_row else 0
+    open_tasks = int(task_count_row["total"] or 0) if task_count_row else 0
+    avg_response_ms = float(avg_response_row["avg_ms"] or 0.0) if avg_response_row else 0.0
 
-            def _metric_tone(value: float) -> str:
-                if value > 90:
-                    return "danger"
-                if value > 80:
-                    return "warning"
-                return "ok"
-
-            server_rows = [
-                {
-                    "label": "CPU",
-                    "value": f"{cpu_percent:.0f}%",
-                    "width": min(max(cpu_percent, 0.0), 100.0),
-                    "tone": _metric_tone(cpu_percent),
-                    "detail": "Current load",
-                },
-                {
-                    "label": "RAM",
-                    "value": f"{ram_percent:.0f}%",
-                    "width": min(max(ram_percent, 0.0), 100.0),
-                    "tone": _metric_tone(ram_percent),
-                    "detail": f"{metrics.get('realtime', {}).get('ram_used_mb', 0)} / {metrics.get('realtime', {}).get('ram_total_mb', 0)} MB",
-                },
-                {
-                    "label": "Disk",
-                    "value": f"{disk_percent:.0f}%",
-                    "width": min(max(disk_percent, 0.0), 100.0),
-                    "tone": _metric_tone(disk_percent),
-                    "detail": "Current usage",
-                },
-            ]
-            overview["server_health"] = {
-                "rows": server_rows,
-                "uptime": status.get("health", {}).get("uptime", "Unknown"),
-                "last_backup": status.get("last_backup_time", "Unknown"),
-                "last_health_check": _dashboard_timestamp(last_health_row["local_created_at"]) if last_health_row else "Unknown",
-                "health_check_status": "Warning" if last_health_row and last_health_row["action"] == "health_warning_sent" else ("OK" if last_health_row else "Unknown"),
-                "latest_metrics_time": _dashboard_timestamp(latest_server_row["local_recorded_at"]) if latest_server_row else "Unknown",
-            }
-        except Exception:
-            overview["server_health"] = {
-                "rows": [],
-                "uptime": "Unknown",
-                "last_backup": "Unknown",
-                "last_health_check": "Unknown",
-                "health_check_status": "Unknown",
-                "latest_metrics_time": "Unknown",
-            }
-
-    model_rows = []
     availability = status.get("model_availability", {})
-    active_model = status.get("active_model", "")
+    active_model = status.get("active_model", "haiku")
+    model_rows = []
     for row in _MODEL_PANEL_ROWS:
-        available = bool(availability.get(row["key"], False))
-        is_active = active_model == row["key"]
-        status_label = "Active" if is_active else ("Available" if available else "Unavailable")
-        tone = "ok" if is_active else ("unknown" if available else "empty")
         model_rows.append(
             {
-                **row,
-                "available": available,
-                "active": is_active,
-                "status_label": status_label,
-                "tone": tone,
+                "key": row["key"],
+                "name": row["name"],
+                "active": row["key"] == active_model,
+                "available": bool(availability.get(row["key"], False)),
+                "cost": row["cost"],
             }
         )
+
+    top_agents = []
+    for row in agent_payload.get("stats", [])[:6]:
+        if int(row.get("total_runs", 0) or 0) <= 0:
+            continue
+        top_agents.append(
+            {
+                "name": row["agent_name"],
+                "runs": int(row.get("total_runs", 0) or 0),
+                "avg_ms": int(row.get("avg_ms", 0) or 0),
+            }
+        )
+
+    timeline_events = []
+    for row in audit_rows:
+        summarized = _summarize_audit_event(row["action"], row["details"] or "")
+        if not summarized:
+            continue
+        timeline_events.append(
+            {
+                "sort_key": row["local_created_at"],
+                "time": _format_short_time(row["local_created_at"]),
+                "type": summarized["type"],
+                "title": summarized["title"],
+                "message": summarized["message"],
+                "tone": summarized["tone"],
+                "meta": _humanize_action(row["action"]),
+            }
+        )
+    for row in ai_run_rows:
+        timeline_events.append(
+            {
+                "sort_key": row["local_created_at"],
+                "time": _format_short_time(row["local_created_at"]),
+                "type": "chat" if row["success"] else "error",
+                "title": get_model_label(row["model"]),
+                "message": f"฿{float(row['estimated_cost_thb'] or 0):.2f} {'✅' if row['success'] else '❌'}",
+                "tone": "ok" if row["success"] else "danger",
+                "meta": "ai_run",
+            }
+        )
+    for row in message_rows:
+        timeline_events.append(
+            {
+                "sort_key": row["local_created_at"],
+                "time": _format_short_time(row["local_created_at"]),
+                "type": "chat",
+                "title": "Chat",
+                "message": _truncate_text(_sanitize_admin_text(row["content"]), 80),
+                "tone": "ok",
+                "meta": "message",
+            }
+        )
+    timeline_events.sort(key=lambda item: item["sort_key"], reverse=True)
+
+    overview["topbar"] = {
+        "model": status.get("active_model_label", "Unknown"),
+        "cost_today": _format_baht(status.get("today_cost_thb", 0.0)),
+        "health": status.get("health", {}).get("summary", "0/3 OK"),
+        "time": now.strftime("%H:%M"),
+    }
+    overview["stats"] = [
+        {
+            "label": "AI CALLS",
+            "value": _format_number(status.get("today_calls", 0)),
+            "meta": "วันนี้",
+        },
+        {
+            "label": "COST",
+            "value": _format_baht(status.get("today_cost_thb", 0.0)),
+            "meta": f"เดือน {_format_baht(status.get('month_cost_thb', 0.0))}",
+        },
+        {
+            "label": "MSGS",
+            "value": _format_number(message_total),
+            "meta": "วันนี้",
+        },
+        {
+            "label": "TASKS",
+            "value": _format_number(open_tasks),
+            "meta": "open",
+        },
+    ]
     overview["model_panel"] = {
+        "active_model": status.get("active_model_label", "Unknown"),
         "rows": model_rows,
-        "routing": [
-            ("Chat mode", status.get("active_model_label", "Unknown")),
-            ("/news", "Gemini Flash"),
-            ("/think", "Multi-model"),
-            ("Local fallback", "Qwen 3B"),
+        "avg_response_ms": int(round(avg_response_ms)),
+        "top_commands": [
+            {"label": _humanize_action(row["action"]), "count": int(row["total"] or 0)}
+            for row in top_commands_rows
+            if int(row["total"] or 0) > 0
         ],
     }
-
-    cron_tones = [row["tone"] for row in overview["scheduler_health"]]
-    if any(tone == "danger" for tone in cron_tones):
-        cron_label = "Action needed"
-        cron_tone = "danger"
-    elif any(tone == "warning" for tone in cron_tones):
-        cron_label = "Warning"
-        cron_tone = "warning"
-    elif any(tone == "ok" for tone in cron_tones):
-        cron_label = "Healthy"
-        cron_tone = "ok"
-    else:
-        cron_label = "Unknown"
-        cron_tone = "unknown"
-
-    server_tones = [row["tone"] for row in overview.get("server_health", {}).get("rows", [])]
-    if any(tone == "danger" for tone in server_tones):
-        server_label = "Action needed"
-        server_tone = "danger"
-    elif any(tone == "warning" for tone in server_tones):
-        server_label = "Warning"
-        server_tone = "warning"
-    elif any(tone == "ok" for tone in server_tones):
-        server_label = "Healthy"
-        server_tone = "ok"
-    else:
-        server_label = "Unknown"
-        server_tone = "unknown"
-
-    if overview["kpis"]:
-        overview["kpis"][-2]["value"] = cron_label
-        overview["kpis"][-2]["tone"] = cron_tone
-        overview["kpis"][-1]["value"] = server_label
-        overview["kpis"][-1]["tone"] = server_tone
-
-    try:
-        raw_logs = await _load_log_entries("ALL", 120)
-        recent_logs = []
-        for entry in reversed(raw_logs):
-            level = entry["level"]
-            message = str(entry["message"])
-            lowered = message.lower()
-            if level == "INFO" and not any(
-                keyword in lowered
-                for keyword in ["failed", "warning", "error", "exception", "backup", "health_warning", "traceback"]
-            ):
-                continue
-            recent_logs.append(
-                {
-                    "time": entry["time"],
-                    "level": level,
-                    "tone": "danger" if level == "ERROR" else ("warning" if level == "WARNING" else "ok"),
-                    "source": _truncate_text(message.split()[0], 24),
-                    "message": _truncate_text(message, 96),
-                }
-            )
-            if len(recent_logs) >= 8:
-                break
-        if not recent_logs:
-            for entry in reversed(raw_logs[-5:]):
-                recent_logs.append(
-                    {
-                        "time": entry["time"],
-                        "level": entry["level"],
-                        "tone": "ok",
-                        "source": _truncate_text(str(entry["message"]).split()[0], 24),
-                        "message": _truncate_text(entry["message"], 96),
-                    }
-                )
-        overview["recent_logs"] = recent_logs
-    except Exception:
-        overview["recent_logs"] = []
-
+    overview["cost_breakdown"] = [
+        {
+            "agent_name": row["agent_name"],
+            "runs": int(row["runs"] or 0),
+            "total_cost": float(row["total_cost"] or 0.0),
+        }
+        for row in cost_rows
+        if int(row["runs"] or 0) > 0 or float(row["total_cost"] or 0.0) > 0
+    ]
+    overview["timeline"] = timeline_events[:30]
+    overview["server"] = {
+        "cpu_percent": float(metrics.get("realtime", {}).get("cpu_percent", 0.0) or 0.0),
+        "ram_percent": float(metrics.get("realtime", {}).get("ram_percent", 0.0) or 0.0),
+        "disk_percent": float(metrics.get("realtime", {}).get("disk_percent", 0.0) or 0.0),
+        "ram_used_mb": int(metrics.get("realtime", {}).get("ram_used_mb", 0) or 0),
+        "ram_total_mb": int(metrics.get("realtime", {}).get("ram_total_mb", 0) or 0),
+        "uptime": status.get("health", {}).get("uptime", "Unknown"),
+    }
+    overview["top_agents"] = top_agents
+    overview["errors"] = [
+        {
+            "time": _format_short_time(row["local_created_at"]),
+            "agent": row["agent_name"],
+            "message": _truncate_text(_sanitize_admin_text(row["error_msg"] or "Unknown error"), 120),
+        }
+        for row in error_rows
+    ]
     return overview
 
 
@@ -1916,802 +1473,451 @@ def _render_workspace_placeholders() -> str:
 
 def build_admin_html(overview: dict) -> HTMLResponse:
     topbar = overview.get("topbar", {})
-    kpis_html = _render_kpis(overview.get("kpis", []))
-    brain_html = _render_brain_status(overview.get("brain_status", []))
-    timeline_html = _render_timeline(overview.get("timeline", []))
-    model_html = _render_model_panel(overview.get("model_panel", {}))
-    usage_html = _render_agent_usage(overview.get("agent_usage", []))
-    agent_status_html = _render_agent_status_panel(overview.get("agent_os", {}))
-    agent_failures_html = _render_agent_failures_panel(overview.get("agent_os", {}))
-    agent_costs_html = _render_agent_costs_panel(overview.get("agent_os", {}))
-    scheduler_html = _render_scheduler_health(overview.get("scheduler_health", []))
-    server_html = _render_server_health(overview.get("server_health", {}))
-    logs_html = _render_recent_logs(overview.get("recent_logs", []))
-    sidebar_html = _render_sidebar_items()
-    workspace_html = _render_workspace_placeholders()
+    stats = overview.get("stats", [])
+    model_panel = overview.get("model_panel", {})
+    cost_breakdown = overview.get("cost_breakdown", [])
+    cost_chart = overview.get("cost_chart", {})
+    timeline = overview.get("timeline", [])
+    server = overview.get("server", {})
+    top_agents = overview.get("top_agents", [])
+    errors = overview.get("errors", [])
+
+    def _progress_class(value: float) -> str:
+        if value >= 80:
+            return "danger"
+        if value >= 60:
+            return "warning"
+        return "ok"
+
+    stats_html = "".join(
+        f"""
+        <section class="card stat-card">
+          <div class="stat-label">{escape(str(item.get("label", "")))}</div>
+          <div class="stat-number">{escape(str(item.get("value", "0")))}</div>
+          <div class="stat-meta">{escape(str(item.get("meta", "")))}</div>
+        </section>
+        """
+        for item in stats
+    )
+
+    model_switch_html = "".join(
+        f"""
+        <form method="post" action="/admin/switch-model" class="model-pill-form">
+          <input type="hidden" name="model" value="{escape(row["key"], quote=True)}">
+          <button class="model-pill {'active' if row['active'] else ''}" type="submit" {'disabled' if not row['available'] else ''}>
+            {escape(row["name"])}
+          </button>
+        </form>
+        """
+        for row in model_panel.get("rows", [])
+    )
+
+    top_commands_html = ""
+    if model_panel.get("top_commands"):
+        top_commands_html = (
+            '<div class="subsection"><div class="subheading">Top Commands Today</div><div class="mini-list">'
+            + "".join(
+                f'<div class="mini-row"><span>{escape(str(item["label"]))}</span><strong>{_format_number(item["count"])}</strong></div>'
+                for item in model_panel.get("top_commands", [])
+            )
+            + "</div></div>"
+        )
+
+    left_cards_html = f"""
+      <section class="card">
+        <div class="card-title">🤖 MODEL</div>
+        <div class="card-subtitle">Active: {escape(str(model_panel.get("active_model", "Unknown")))}</div>
+        <div class="model-pills">{model_switch_html}</div>
+        <div class="mini-row muted-row"><span>Avg response</span><strong>{_format_number(model_panel.get("avg_response_ms", 0))} ms</strong></div>
+        {top_commands_html}
+      </section>
+    """
+
+    if cost_breakdown or cost_chart.get("labels"):
+        max_cost = max([float(item.get("total_cost", 0.0) or 0.0) for item in cost_breakdown] + [0.0])
+        breakdown_rows = "".join(
+            f"""
+            <div class="cost-row">
+              <div>
+                <div class="row-title">{escape(str(item["agent_name"]))}</div>
+                <div class="row-meta">{_format_number(item["runs"])} runs</div>
+              </div>
+              <div class="row-cost">{_format_baht(item["total_cost"])}</div>
+            </div>
+            <div class="agent-bar"><div class="agent-bar-fill" style="width:{(float(item['total_cost']) / max_cost * 100) if max_cost else 0:.1f}%"></div></div>
+            """
+            for item in cost_breakdown
+        )
+        left_cards_html += f"""
+          <section class="card">
+            <div class="card-title">💰 COST BREAKDOWN</div>
+            <div class="list-stack">{breakdown_rows}</div>
+            <div class="chart-block">
+              <div class="subheading">7-Day Cost</div>
+              <canvas id="cost7dChart" height="90"></canvas>
+            </div>
+          </section>
+        """
+
+    timeline_html = ""
+    if timeline:
+        rows_html = "".join(
+            f"""
+            <div class="timeline-item" data-type="{escape(str(item['type']), quote=True)}">
+              <div class="timeline-time">{escape(str(item['time']))}</div>
+              <div class="timeline-body">
+                <div class="timeline-head">
+                  <div class="timeline-title">{escape(str(item['title']))}</div>
+                  <div class="timeline-tone {escape(str(item['tone']))}"></div>
+                </div>
+                <div class="timeline-message">{escape(str(item['message']))}</div>
+              </div>
+            </div>
+            """
+            for item in timeline
+        )
+        timeline_html = f"""
+          <section class="card timeline-card">
+            <div class="card-title">📊 TODAY</div>
+            <div class="timeline-filters">
+              <button class="filter-chip active" type="button" data-filter="all">All</button>
+              <button class="filter-chip" type="button" data-filter="chat">Chat</button>
+              <button class="filter-chip" type="button" data-filter="task">Task</button>
+              <button class="filter-chip" type="button" data-filter="memory">Memory</button>
+              <button class="filter-chip" type="button" data-filter="cron">Cron</button>
+              <button class="filter-chip" type="button" data-filter="error">Error</button>
+            </div>
+            <div class="timeline-stream">{rows_html}</div>
+          </section>
+        """
+
+    server_rows = []
+    for label, key, detail in [
+        ("CPU", "cpu_percent", f"{float(server.get('cpu_percent', 0.0) or 0.0):.0f}%"),
+        (
+            "RAM",
+            "ram_percent",
+            f"{int(server.get('ram_used_mb', 0) or 0)} / {int(server.get('ram_total_mb', 0) or 0)} MB",
+        ),
+        ("Disk", "disk_percent", f"{float(server.get('disk_percent', 0.0) or 0.0):.0f}%"),
+    ]:
+        value = float(server.get(key, 0.0) or 0.0)
+        server_rows.append(
+            f"""
+            <div class="server-row">
+              <div class="server-line">
+                <span>{label}</span>
+                <strong>{value:.0f}%</strong>
+              </div>
+              <div class="agent-bar">
+                <div class="agent-bar-fill {_progress_class(value)}" style="width:{value:.1f}%"></div>
+              </div>
+              <div class="row-meta">{escape(detail)}</div>
+            </div>
+            """
+        )
+
+    top_agents_html = ""
+    if top_agents:
+        top_agents_html = (
+            '<div class="subsection"><div class="subheading">🤖 TOP AGENTS</div><div class="mini-list">'
+            + "".join(
+                f'<div class="mini-row"><span>{escape(str(item["name"]))}</span><strong>{_format_number(item["runs"])} runs</strong></div>'
+                f'<div class="row-meta">{_format_number(item["avg_ms"])} ms avg</div>'
+                for item in top_agents[:6]
+            )
+            + "</div></div>"
+        )
+
+    right_html = f"""
+      <section class="card">
+        <div class="card-title">🖥 SERVER</div>
+        {''.join(server_rows)}
+        <div class="row-meta">Uptime {escape(str(server.get("uptime", "Unknown")))}</div>
+        {top_agents_html}
+      </section>
+    """
+
+    errors_html = ""
+    if errors:
+        errors_html = (
+            '<section class="card errors-card"><div class="card-title">Recent Errors</div><div class="list-stack">'
+            + "".join(
+                f'<div class="error-row"><div class="error-time">{escape(str(item["time"]))}</div><div><div class="row-title">{escape(str(item["agent"]))}</div><div class="row-meta">{escape(str(item["message"]))}</div></div></div>'
+                for item in errors
+            )
+            + "</div></section>"
+        )
+
+    cost_labels_json = json.dumps(cost_chart.get("labels", []), ensure_ascii=False)
+    cost_values_json = json.dumps(cost_chart.get("values", []), ensure_ascii=False)
+
     html = f"""<!doctype html>
 <html lang="th">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Ener-AI Admin</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
   <style>
     :root {{
-      color-scheme: dark;
-      --bg: #0b1020;
-      --sidebar: #10182d;
-      --panel: #121a2c;
-      --panel-2: #0f1727;
-      --border: #24304a;
-      --text: #eef3ff;
-      --muted: #9aa8c7;
-      --ok: #73bf69;
-      --warn: #fade2a;
-      --danger: #ff7383;
-      --unknown: #7f8ca8;
-      --empty: #4f5d7a;
-      --accent: #7c9cff;
-      --shadow: 0 20px 50px rgba(0, 0, 0, 0.22);
+      --bg: #000000;
+      --card: #111111;
+      --border: #222222;
+      --text: #ffffff;
+      --muted: #888888;
+      --green: #00ff88;
+      --yellow: #ffaa00;
+      --red: #ff4444;
+      --blue: #4488ff;
     }}
-    * {{
-      box-sizing: border-box;
-    }}
-    html {{
-      scroll-behavior: smooth;
-    }}
+    * {{ box-sizing: border-box; }}
     body {{
+      background: #000;
+      color: #fff;
+      font-family: 'JetBrains Mono', monospace, sans-serif;
       margin: 0;
-      background: radial-gradient(circle at top, #13203b 0%, var(--bg) 36%);
-      color: var(--text);
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     }}
-    a {{
-      color: inherit;
-      text-decoration: none;
-    }}
-    button {{
-      font: inherit;
-    }}
-    .admin-shell {{
-      min-height: 100vh;
-      display: grid;
-      grid-template-columns: 260px minmax(0, 1fr);
-    }}
-    .admin-sidebar {{
+    a {{ color: inherit; text-decoration: none; }}
+    button {{ font: inherit; }}
+    .wrap {{ padding: 0 20px 24px; }}
+    .topbar {{
       position: sticky;
       top: 0;
-      height: 100vh;
-      padding: 22px 16px;
-      background: rgba(16, 24, 45, 0.92);
-      border-right: 1px solid var(--border);
-      backdrop-filter: blur(18px);
-    }}
-    .sidebar-brand {{
-      margin-bottom: 18px;
-    }}
-    .sidebar-eyebrow {{
-      color: var(--muted);
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      margin-bottom: 8px;
-    }}
-    .sidebar-title {{
-      font-size: 22px;
-      font-weight: 700;
-      margin-bottom: 8px;
-    }}
-    .sidebar-copy {{
-      color: var(--muted);
-      font-size: 13px;
-      line-height: 1.6;
-      margin-bottom: 18px;
-    }}
-    .sidebar-nav {{
-      display: grid;
-      gap: 6px;
-    }}
-    .sidebar-link {{
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 11px 12px;
-      border-radius: 12px;
-      border: 1px solid transparent;
-      color: #dce5ff;
-      background: transparent;
-    }}
-    .sidebar-link:hover {{
-      border-color: var(--border);
-      background: rgba(255, 255, 255, 0.03);
-    }}
-    .sidebar-link.active {{
-      background: rgba(124, 156, 255, 0.14);
-      border-color: rgba(124, 156, 255, 0.35);
-    }}
-    .muted-link {{
-      color: #c2cce6;
-    }}
-    .sidebar-badge {{
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 40px;
-      padding: 2px 8px;
-      border-radius: 999px;
-      border: 1px solid rgba(127, 140, 168, 0.32);
-      background: rgba(127, 140, 168, 0.12);
-      color: var(--muted);
-      font-size: 10px;
-      line-height: 1.4;
-      text-transform: lowercase;
-    }}
-    .sidebar-footer {{
-      margin-top: 18px;
-      padding-top: 18px;
-      border-top: 1px solid var(--border);
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.7;
-    }}
-    .admin-main {{
-      min-width: 0;
-      padding: 20px;
-    }}
-    .admin-topbar {{
+      z-index: 100;
+      background: #000;
+      border-bottom: 1px solid #222;
+      padding: 14px 20px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 16px;
-      margin-bottom: 18px;
       flex-wrap: wrap;
     }}
-    .topbar-title {{
-      font-size: 28px;
-      font-weight: 700;
+    .brand {{ display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }}
+    .brand-title {{ font-size: 1.1rem; font-weight: 700; }}
+    .top-chips, .top-nav {{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }}
+    .chip, .nav-link, .refresh-link {{
+      border: 1px solid #222;
+      background: #111;
+      color: #fff;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 0.9rem;
     }}
-    .topbar-subtitle {{
-      color: var(--muted);
-      font-size: 13px;
-      margin-top: 6px;
+    .nav-link.active {{ border-color: var(--blue); color: var(--blue); }}
+    .refresh-link {{ margin-left: auto; }}
+    .card {{
+      background: #111;
+      border: 1px solid #222;
+      border-radius: 8px;
+      padding: 16px;
     }}
-    .topbar-meta {{
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: flex-end;
-    }}
-    .topbar-chip {{
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 10px 12px;
-      background: rgba(18, 26, 44, 0.92);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      font-size: 12px;
-    }}
-    .topbar-chip strong {{
-      font-size: 13px;
-    }}
-    .refresh-btn {{
-      border: 1px solid rgba(124, 156, 255, 0.42);
-      background: rgba(124, 156, 255, 0.12);
-      color: var(--text);
-      border-radius: 12px;
-      padding: 10px 12px;
-      cursor: pointer;
-    }}
-    .metric-grid {{
+    .stats-row {{
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 14px;
-      margin-bottom: 18px;
+      gap: 16px;
+      margin: 20px 0;
     }}
-    .metric-card,
-    .panel {{
-      background: linear-gradient(180deg, rgba(18, 26, 44, 0.96), rgba(15, 23, 39, 0.94));
-      border: 1px solid var(--border);
-      border-radius: 18px;
-      box-shadow: var(--shadow);
-    }}
-    .metric-card {{
-      padding: 16px;
-      min-height: 118px;
-    }}
-    .metric-label {{
+    .stat-card {{ min-height: 128px; }}
+    .stat-label {{
       color: var(--muted);
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.07em;
+      font-size: 0.8rem;
+      letter-spacing: 0.08em;
+      margin-bottom: 14px;
+    }}
+    .stat-number {{
+      font-size: 2rem;
+      font-weight: bold;
+      color: var(--green);
       margin-bottom: 8px;
     }}
-    .metric-value {{
-      font-size: 31px;
-      font-weight: 700;
-      line-height: 1.15;
-      margin-bottom: 10px;
-    }}
-    .metric-meta {{
+    .stat-meta, .row-meta {{
       color: var(--muted);
-      font-size: 13px;
+      font-size: 0.82rem;
       line-height: 1.5;
     }}
-    .overview-grid {{
+    .main-grid {{
       display: grid;
-      grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.9fr);
+      grid-template-columns: 35fr 40fr 25fr;
       gap: 16px;
+      align-items: start;
     }}
-    .stack {{
-      display: grid;
-      gap: 16px;
-    }}
-    .panel {{
-      padding: 16px;
-    }}
-    .panel-header {{
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      margin-bottom: 14px;
-      flex-wrap: wrap;
-    }}
-    .panel-title {{
-      font-size: 17px;
+    .column {{ display: grid; gap: 16px; min-width: 0; }}
+    .card-title {{
+      font-size: 1rem;
       font-weight: 700;
-    }}
-    .panel-copy {{
-      color: var(--muted);
-      font-size: 13px;
-    }}
-    .status-badge {{
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      padding: 5px 9px;
-      border-radius: 999px;
-      font-size: 11px;
-      border: 1px solid transparent;
-      white-space: nowrap;
-    }}
-    .tone-ok {{
-      border-color: rgba(115, 191, 105, 0.45);
-      background: rgba(115, 191, 105, 0.12);
-      color: #bbf1b4;
-    }}
-    .tone-warning {{
-      border-color: rgba(250, 222, 42, 0.4);
-      background: rgba(250, 222, 42, 0.12);
-      color: #fff0a3;
-    }}
-    .tone-danger {{
-      border-color: rgba(255, 115, 131, 0.45);
-      background: rgba(255, 115, 131, 0.12);
-      color: #ffc0c8;
-    }}
-    .tone-unknown {{
-      border-color: rgba(127, 140, 168, 0.4);
-      background: rgba(127, 140, 168, 0.12);
-      color: #d1d9ea;
-    }}
-    .tone-empty {{
-      border-color: rgba(79, 93, 122, 0.42);
-      background: rgba(79, 93, 122, 0.14);
-      color: #b5bfd8;
-    }}
-    .brain-row,
-    .timeline-item,
-    .scheduler-row,
-    .model-row,
-    .agent-bar-row,
-    .log-preview-row {{
-      display: grid;
-      gap: 10px;
-      border: 1px solid rgba(36, 48, 74, 0.88);
-      border-radius: 14px;
-      background: rgba(9, 15, 28, 0.62);
-      padding: 12px;
-    }}
-    .brain-row {{
-      grid-template-columns: minmax(0, 1fr) auto auto;
-      align-items: center;
-    }}
-    .brain-name,
-    .model-name,
-    .scheduler-name {{
-      font-size: 14px;
-      font-weight: 700;
-      margin-bottom: 4px;
-    }}
-    .brain-note,
-    .model-meta,
-    .scheduler-meta,
-    .brain-latest,
-    .soft,
-    .server-row-detail {{
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.5;
-    }}
-    .brain-count {{
-      font-size: 13px;
       margin-bottom: 6px;
     }}
-    .brain-meta {{
-      text-align: right;
-      min-width: 118px;
+    .card-subtitle {{
+      color: var(--muted);
+      margin-bottom: 14px;
+      font-size: 0.85rem;
     }}
-    .brain-action a,
-    .panel-link {{
-      color: #bad0ff;
-      font-size: 12px;
-    }}
-    .timeline-filters {{
-      display: grid;
-      grid-template-columns: repeat(6, minmax(0, auto));
+    .model-pills {{
+      display: flex;
+      flex-wrap: wrap;
       gap: 8px;
+      margin-bottom: 16px;
+    }}
+    .model-pill-form {{ margin: 0; }}
+    .model-pill {{
+      border: 1px solid #222;
+      background: #000;
+      color: #fff;
+      border-radius: 999px;
+      padding: 7px 12px;
+      cursor: pointer;
+    }}
+    .model-pill.active {{
+      border-color: var(--green);
+      color: var(--green);
+    }}
+    .model-pill:disabled {{
+      opacity: 0.4;
+      cursor: not-allowed;
+    }}
+    .subsection {{
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid #222;
+    }}
+    .subheading {{
+      font-size: 0.82rem;
+      color: var(--muted);
+      margin-bottom: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }}
+    .mini-list, .list-stack {{ display: grid; gap: 10px; }}
+    .mini-row, .cost-row, .server-line, .timeline-head {{
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+    }}
+    .row-title {{ font-weight: 700; font-size: 0.9rem; }}
+    .row-cost {{ color: var(--green); font-weight: 700; }}
+    .agent-bar {{
+      height: 4px;
+      background: #222;
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 6px;
+    }}
+    .agent-bar-fill {{
+      height: 4px;
+      background: var(--green);
+      border-radius: 2px;
+    }}
+    .agent-bar-fill.warning {{ background: var(--yellow); }}
+    .agent-bar-fill.danger {{ background: var(--red); }}
+    .chart-block {{ margin-top: 16px; }}
+    .timeline-card {{ min-height: 640px; }}
+    .timeline-filters {{
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 12px 0 16px;
     }}
     .filter-chip {{
-      border: 1px solid var(--border);
-      background: rgba(255, 255, 255, 0.02);
-      color: var(--text);
+      border: 1px solid #222;
+      background: #000;
+      color: #fff;
       border-radius: 999px;
       padding: 7px 10px;
       cursor: pointer;
     }}
     .filter-chip.active {{
-      border-color: rgba(124, 156, 255, 0.42);
-      background: rgba(124, 156, 255, 0.12);
+      border-color: var(--blue);
+      color: var(--blue);
     }}
     .timeline-stream {{
       display: grid;
       gap: 10px;
-      max-height: 680px;
+      max-height: 760px;
       overflow: auto;
     }}
     .timeline-item {{
-      grid-template-columns: 64px minmax(0, 1fr);
-      align-items: start;
-    }}
-    .timeline-time,
-    .log-time {{
-      color: var(--muted);
-      font-size: 12px;
-      padding-top: 2px;
-    }}
-    .timeline-title-row,
-    .server-row-header,
-    .routing-row {{
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
+      display: grid;
+      grid-template-columns: 56px minmax(0, 1fr);
       gap: 12px;
-      flex-wrap: wrap;
+      padding: 12px 0;
+      border-bottom: 1px solid #1a1a1a;
     }}
-    .timeline-title,
-    .log-source {{
-      font-weight: 700;
-      font-size: 13px;
-    }}
-    .timeline-message,
-    .log-message {{
+    .timeline-item:last-child {{ border-bottom: 0; }}
+    .timeline-time {{ color: var(--muted); font-size: 0.82rem; }}
+    .timeline-title {{ font-weight: 700; }}
+    .timeline-message {{
+      color: #d0d0d0;
+      font-size: 0.88rem;
       line-height: 1.55;
-      font-size: 13px;
       word-break: break-word;
     }}
-    .timeline-meta {{
-      color: var(--muted);
-      font-size: 12px;
-      margin-top: 6px;
-    }}
-    .small-action {{
-      border: 1px solid rgba(124, 156, 255, 0.28);
-      background: rgba(124, 156, 255, 0.1);
-      color: var(--text);
-      border-radius: 10px;
-      padding: 7px 10px;
-      cursor: pointer;
-    }}
-    .small-action.disabled {{
-      cursor: not-allowed;
-      opacity: 0.55;
-      border-color: var(--border);
-      background: rgba(255, 255, 255, 0.03);
-    }}
-    .model-row {{
-      grid-template-columns: minmax(0, 1fr) auto;
-      align-items: center;
-    }}
-    .model-status {{
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex-wrap: wrap;
-      justify-content: flex-end;
-    }}
-    .model-status form {{
-      margin: 0;
-    }}
-    .routing-box {{
-      margin-top: 14px;
-      padding-top: 14px;
-      border-top: 1px solid var(--border);
-      display: grid;
-      gap: 8px;
-    }}
-    .agent-bar-row {{
-      grid-template-columns: 140px minmax(0, 1fr) 46px;
-      align-items: center;
-    }}
-    .agent-summary-row,
-    .agent-status-row,
-    .failure-row,
-    .cost-row {{
-      display: grid;
-      gap: 10px;
-      align-items: center;
-      border: 1px solid rgba(36, 48, 74, 0.88);
-      border-radius: 14px;
-      background: rgba(9, 15, 28, 0.62);
-      padding: 12px;
-    }}
-    .agent-summary-row {{
-      grid-template-columns: minmax(0, 1fr) auto;
-    }}
-    .agent-summary-title,
-    .agent-status-name,
-    .failure-agent {{
-      font-size: 14px;
-      font-weight: 700;
-    }}
-    .agent-summary-meta,
-    .agent-status-metrics,
-    .failure-msg {{
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.5;
-    }}
-    .agent-summary-meta {{
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      flex-wrap: wrap;
-      justify-content: flex-end;
-    }}
-    .agent-status-row {{
-      grid-template-columns: minmax(0, 1fr) auto auto;
-    }}
-    .agent-status-ok {{
-      font-size: 14px;
-    }}
-    .failure-row {{
-      grid-template-columns: 52px minmax(0, 1fr);
-    }}
-    .failure-time {{
-      color: var(--muted);
-      font-size: 12px;
-    }}
-    .cost-row {{
-      grid-template-columns: minmax(0, 1fr) auto;
-    }}
-    .agent-bar-label,
-    .agent-bar-count {{
-      font-size: 13px;
-    }}
-    .agent-bar-track,
-    .mini-bar {{
-      height: 10px;
+    .timeline-tone {{
+      width: 8px;
+      height: 8px;
       border-radius: 999px;
-      background: rgba(255, 255, 255, 0.06);
-      overflow: hidden;
+      background: var(--blue);
+      flex: 0 0 auto;
     }}
-    .agent-bar-fill {{
-      height: 100%;
-      background: linear-gradient(90deg, var(--accent), #73bf69);
-    }}
-    .scheduler-row {{
-      grid-template-columns: minmax(0, 1.1fr) auto auto;
-      align-items: center;
-    }}
-    .scheduler-times,
-    .scheduler-actions {{
+    .timeline-tone.ok {{ background: var(--green); }}
+    .timeline-tone.warning {{ background: var(--yellow); }}
+    .timeline-tone.danger {{ background: var(--red); }}
+    .timeline-tone.empty, .timeline-tone.unknown {{ background: #666; }}
+    .errors-card {{ margin-top: 16px; }}
+    .error-row {{
       display: grid;
-      gap: 6px;
-      justify-items: end;
-      font-size: 12px;
-    }}
-    .server-row {{
-      display: grid;
-      gap: 8px;
-      margin-bottom: 12px;
-    }}
-    .mini-bar-fill {{
-      height: 100%;
-      display: block;
-    }}
-    .mini-bar-fill.tone-ok {{
-      background: linear-gradient(90deg, rgba(115, 191, 105, 0.95), rgba(115, 191, 105, 0.62));
-    }}
-    .mini-bar-fill.tone-warning {{
-      background: linear-gradient(90deg, rgba(250, 222, 42, 0.96), rgba(250, 222, 42, 0.62));
-    }}
-    .mini-bar-fill.tone-danger {{
-      background: linear-gradient(90deg, rgba(255, 115, 131, 0.96), rgba(255, 115, 131, 0.62));
-    }}
-    .server-meta-grid {{
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
-      margin-top: 14px;
-    }}
-    .server-meta-grid div {{
-      border: 1px solid rgba(36, 48, 74, 0.88);
-      border-radius: 12px;
-      padding: 10px;
-      background: rgba(9, 15, 28, 0.62);
-      display: grid;
-      gap: 5px;
-    }}
-    .log-preview-list {{
-      display: grid;
-      gap: 10px;
-    }}
-    .log-preview-row {{
-      grid-template-columns: 52px auto 88px minmax(0, 1fr);
-      align-items: center;
-    }}
-    .workspace-grid {{
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: 56px minmax(0, 1fr);
       gap: 12px;
+      padding: 10px 0;
+      border-bottom: 1px solid #1a1a1a;
     }}
-    .placeholder-card {{
-      border: 1px dashed rgba(124, 156, 255, 0.28);
-      background: rgba(255, 255, 255, 0.02);
-      border-radius: 14px;
-      padding: 14px;
-    }}
-    .placeholder-title {{
-      font-size: 14px;
-      font-weight: 700;
-      margin-bottom: 8px;
-    }}
-    .placeholder-copy,
-    .empty-state {{
-      color: var(--muted);
-      font-size: 13px;
-      line-height: 1.65;
-    }}
-    .mobile-nav {{
-      display: none;
-    }}
+    .error-row:last-child {{ border-bottom: 0; }}
+    .error-time {{ color: var(--red); font-size: 0.82rem; }}
     @media (max-width: 1100px) {{
-      .admin-shell {{
-        grid-template-columns: 1fr;
-      }}
-      .admin-sidebar {{
-        position: static;
-        height: auto;
-      }}
-      .overview-grid {{
-        grid-template-columns: 1fr;
-      }}
-      .metric-grid {{
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-      }}
+      .main-grid {{ grid-template-columns: 1fr; }}
+      .stats-row {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
     }}
     @media (max-width: 700px) {{
-      .admin-main {{
-        padding: 14px;
-      }}
-      .mobile-nav {{
-        display: block;
-      }}
-      .sidebar-nav {{
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }}
-      .metric-grid {{
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }}
-      .brain-row,
-      .model-row,
-      .scheduler-row,
-      .log-preview-row {{
-        grid-template-columns: 1fr;
-      }}
-      .brain-meta,
-      .scheduler-times,
-      .scheduler-actions {{
-        justify-items: start;
-        text-align: left;
-      }}
-      .timeline-filters {{
-        grid-template-columns: repeat(3, minmax(0, auto));
-      }}
-      .agent-bar-row,
-      .server-meta-grid,
-      .workspace-grid {{
-        grid-template-columns: 1fr;
-      }}
-    }}
-    @media (max-width: 560px) {{
-      .metric-grid {{
-        grid-template-columns: 1fr;
-      }}
+      .wrap {{ padding: 0 14px 20px; }}
+      .topbar {{ padding: 12px 14px; }}
+      .stats-row {{ grid-template-columns: 1fr; }}
+      .timeline-card {{ min-height: 0; }}
     }}
   </style>
 </head>
 <body>
-  <div class="admin-shell">
-    <aside class="admin-sidebar">
-      <div class="sidebar-brand">
-        <div class="sidebar-eyebrow">Personal AI Command Center</div>
-        <div class="sidebar-title">Ener-AI</div>
-        <div class="sidebar-copy">Overview is fully live now. Metrics and Logs keep their existing pages. Other sections stay safe placeholders until backend routes exist.</div>
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand-title">⚡ Ener-AI</div>
+      <div class="top-chips">
+        <div class="chip">Model: {escape(str(topbar.get("model", "Unknown")))}</div>
+        <div class="chip">{escape(str(topbar.get("cost_today", "฿0.00")))}</div>
+        <div class="chip">✅ {escape(str(topbar.get("health", "0/3 OK")))}</div>
+        <div class="chip">{escape(str(topbar.get("time", "--:--")))}</div>
       </div>
-      <nav class="sidebar-nav">
-        {sidebar_html}
-      </nav>
-      <div class="sidebar-footer">
-        <div>Basic Auth stays enabled.</div>
-        <div>No secrets or raw memory content are exposed on this page.</div>
-      </div>
-    </aside>
-
-    <main class="admin-main">
-      <div class="admin-topbar" id="overview">
-        <div>
-          <div class="topbar-title">{escape(topbar.get("title", "Ener-AI Admin"))}</div>
-          <div class="topbar-subtitle">Personal AI Command Center overview</div>
-        </div>
-        <div class="topbar-meta">
-          <div class="topbar-chip"><span>Env</span><strong>{escape(topbar.get("environment", "Unknown"))}</strong></div>
-          <div class="topbar-chip"><span>Server</span><strong>{escape(topbar.get("server", "Unknown"))}</strong></div>
-          <div class="topbar-chip"><span>Time</span><strong>{escape(topbar.get("timezone", "Unknown"))}</strong></div>
-          <div class="topbar-chip"><span>Model</span><strong>{escape(topbar.get("active_model", "Unknown"))}</strong></div>
-          <div class="topbar-chip"><strong>{escape(topbar.get("voice", "Unknown"))}</strong></div>
-          <div class="topbar-chip"><span>Health</span><strong>{escape(topbar.get("health", "Unknown"))}</strong></div>
-          <div class="topbar-chip"><span>Cost Today</span><strong>{escape(topbar.get("cost_today", "฿0.00"))}</strong></div>
-          <div class="topbar-chip"><span>Last Refresh</span><strong>{escape(topbar.get("last_refresh", "Unknown"))}</strong></div>
-          <button class="refresh-btn" type="button" onclick="window.location.reload()">Refresh</button>
-        </div>
-      </div>
-
-      <section class="metric-grid">
-        {kpis_html}
-      </section>
-
-      <section class="overview-grid">
-        <div class="stack">
-          <section class="panel" id="brain-panel">
-            <div class="panel-header">
-              <div>
-                <div class="panel-title">Brain Status</div>
-                <div class="panel-copy">Only counts, timestamps, and health indicators are shown here.</div>
-              </div>
-              <a class="panel-link" href="#workspace-panel">Sections</a>
-            </div>
-            <div class="stack">{brain_html}</div>
-          </section>
-
-          <section class="panel" id="timeline-panel">
-            <div class="panel-header">
-              <div>
-                <div class="panel-title">Today Timeline</div>
-                <div class="panel-copy">Recent important events merged from logs, AI runs, messages, and digests.</div>
-              </div>
-              <div class="timeline-filters">
-                <button class="filter-chip active" type="button" data-filter="all">All</button>
-                <button class="filter-chip" type="button" data-filter="chat">Chat</button>
-                <button class="filter-chip" type="button" data-filter="task">Task</button>
-                <button class="filter-chip" type="button" data-filter="note">Note</button>
-                <button class="filter-chip" type="button" data-filter="memory">Memory</button>
-                <button class="filter-chip" type="button" data-filter="cron">Cron</button>
-              </div>
-            </div>
-            <div class="timeline-stream" id="timeline-stream">{timeline_html}</div>
-          </section>
-
-          <section class="panel" id="usage-panel">
-            <div class="panel-header">
-              <div>
-                <div class="panel-title">Agent Usage</div>
-                <div class="panel-copy">Today command usage inferred from audit logs and chat records.</div>
-              </div>
-            </div>
-            <div class="stack">{usage_html}</div>
-          </section>
-
-          <section class="panel">
-            <div class="panel-header">
-              <div>
-                <div class="panel-title">Agent Status</div>
-                <div class="panel-copy">Main Agent online status plus sub-agent runs today.</div>
-              </div>
-              <a class="panel-link" href="/admin/api/agents">API</a>
-            </div>
-            <div class="stack">{agent_status_html}</div>
-          </section>
-
-          <section class="panel" id="workspace-panel">
-            <div class="panel-header">
-              <div>
-                <div class="panel-title">Workspace Sections</div>
-                <div class="panel-copy">Safe placeholders for sections without dedicated backend pages yet.</div>
-              </div>
-            </div>
-            <div class="workspace-grid">{workspace_html}</div>
-          </section>
-        </div>
-
-        <div class="stack">
-          <section class="panel" id="models-panel">
-            <div class="panel-header">
-              <div>
-                <div class="panel-title">AI Model Panel</div>
-                <div class="panel-copy">Active model uses the existing `/admin/switch-model` route. Other actions stay disabled.</div>
-              </div>
-            </div>
-            <div class="stack">{model_html}</div>
-          </section>
-
-          <section class="panel" id="scheduler-panel">
-            <div class="panel-header">
-              <div>
-                <div class="panel-title">Scheduler Health</div>
-                <div class="panel-copy">Last run is inferred from audit logs and metrics rows. Unknown means no reliable signal yet.</div>
-              </div>
-            </div>
-            <div class="stack">{scheduler_html}</div>
-          </section>
-
-          <section class="panel">
-            <div class="panel-header">
-              <div>
-                <div class="panel-title">Agent Failures Today</div>
-                <div class="panel-copy">ถ้าไม่มี failure ระบบจะแสดงว่าไม่มี failure วันนี้</div>
-              </div>
-            </div>
-            <div class="stack">{agent_failures_html}</div>
-          </section>
-
-          <section class="panel">
-            <div class="panel-header">
-              <div>
-                <div class="panel-title">Cost Per Agent</div>
-                <div class="panel-copy">สรุปค่าใช้จ่ายของแต่ละ agent วันนี้</div>
-              </div>
-            </div>
-            <div class="stack">{agent_costs_html}</div>
-          </section>
-
-          <section class="panel">
-            <div class="panel-header">
-              <div>
-                <div class="panel-title">Server Health</div>
-                <div class="panel-copy">Current thresholds only. Metrics page still contains the detailed charts.</div>
-              </div>
-              <a class="panel-link" href="/admin/metrics">Open Metrics</a>
-            </div>
-            {server_html}
-          </section>
-
-          <section class="panel">
-            <div class="panel-header">
-              <div>
-                <div class="panel-title">Recent Errors / Logs</div>
-                <div class="panel-copy">High-signal entries only. Full log stream stays on the dedicated logs page.</div>
-              </div>
-              <a class="panel-link" href="/admin/logs">Open Logs</a>
-            </div>
-            <div class="log-preview-list">{logs_html}</div>
-          </section>
-        </div>
-      </section>
-    </main>
+    </div>
+    <div class="top-nav">
+      <a class="nav-link active" href="/admin">Overview</a>
+      <a class="nav-link" href="/admin/metrics">Metrics</a>
+      <a class="nav-link" href="/admin/logs">Logs</a>
+      <a class="refresh-link" href="/admin">Refresh</a>
+    </div>
   </div>
+
+  <main class="wrap">
+    <section class="stats-row">{stats_html}</section>
+
+    <section class="main-grid">
+      <div class="column">{left_cards_html}</div>
+      <div class="column">{timeline_html}</div>
+      <div class="column">{right_html}</div>
+    </section>
+
+    {errors_html}
+  </main>
+
   <script>
     const chips = document.querySelectorAll(".filter-chip");
     const rows = document.querySelectorAll(".timeline-item");
@@ -2726,6 +1932,50 @@ def build_admin_html(overview: dict) -> HTMLResponse:
         }});
       }});
     }});
+
+    const costCanvas = document.getElementById("cost7dChart");
+    if (costCanvas) {{
+      new Chart(costCanvas, {{
+        type: "bar",
+        data: {{
+          labels: {cost_labels_json},
+          datasets: [{{
+            data: {cost_values_json},
+            backgroundColor: "#00ff88",
+            borderRadius: 4,
+            borderSkipped: false,
+          }}],
+        }},
+        options: {{
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {{
+            legend: {{ display: false }},
+            tooltip: {{
+              callbacks: {{
+                label: (ctx) => `฿${{Number(ctx.raw || 0).toFixed(2)}}`,
+              }},
+            }},
+          }},
+          scales: {{
+            x: {{
+              grid: {{ display: false }},
+              ticks: {{ color: "#888888" }},
+              border: {{ color: "#222222" }},
+            }},
+            y: {{
+              beginAtZero: true,
+              grid: {{ color: "#1a1a1a" }},
+              ticks: {{
+                color: "#888888",
+                callback: (value) => `฿${{Number(value).toFixed(0)}}`,
+              }},
+              border: {{ color: "#222222" }},
+            }},
+          }},
+        }},
+      }});
+    }}
   </script>
 </body>
 </html>"""
