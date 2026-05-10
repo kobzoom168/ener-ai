@@ -1658,7 +1658,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
         )
 
     live_log_tail_html = """
-    <div id="log-tail-widget" class="log-widget">
+    <div id="log-tail-widget" class="log-widget dashboard-card">
       <div id="log-drag-handle" class="log-header">
         <span>📋 LIVE LOGS</span>
         <div class="log-controls">
@@ -1761,13 +1761,31 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       font-size: 0.82rem;
       line-height: 1.5;
     }}
-    .main-grid {{
+    .dashboard-container {{
       display: grid;
       grid-template-columns: 35fr 40fr 25fr;
       gap: 16px;
       align-items: start;
     }}
-    .column {{ display: grid; gap: 16px; min-width: 0; }}
+    .dashboard-container.layout-freeform {{
+      display: block;
+      position: relative;
+      min-height: 720px;
+    }}
+    .dashboard-card {{
+      min-width: 0;
+      position: relative;
+    }}
+    .dashboard-card.column {{ display: grid; gap: 16px; }}
+    .dashboard-card-stats {{ grid-column: 1 / -1; }}
+    .dashboard-container.layout-freeform .dashboard-card:not(#log-tail-widget) {{
+      position: absolute;
+      margin: 0;
+    }}
+    .dashboard-container.layout-freeform .dashboard-card:not(#log-tail-widget) > .card,
+    .dashboard-container.layout-freeform .dashboard-card:not(#log-tail-widget) > .stats-row {{
+      width: 100%;
+    }}
     .card-title {{
       font-size: 1rem;
       font-weight: 700;
@@ -1842,6 +1860,71 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       overflow: hidden;
     }}
     .timeline-card {{ min-height: 640px; }}
+    .edit-btn {{
+      border: 1px solid #ffaa00;
+      background: #221800;
+      color: #ffaa00;
+      border-radius: 8px;
+      padding: 8px 12px;
+      cursor: pointer;
+    }}
+    .edit-bar {{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 16px;
+      background: #1a1a00;
+      border-bottom: 1px solid #ffaa00;
+      color: #ffaa00;
+      font-size: 12px;
+    }}
+    .edit-bar button {{
+      background: #333;
+      border: 1px solid #555;
+      color: #fff;
+      padding: 4px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+    }}
+    .card-drag-handle {{
+      display: none;
+      cursor: grab;
+      color: #444;
+      font-size: 10px;
+      padding: 2px 4px;
+      user-select: none;
+      margin-bottom: 4px;
+    }}
+    .card-drag-handle:active {{ cursor: grabbing; }}
+    .card-resize-handle {{
+      display: none;
+      position: absolute;
+      bottom: 2px;
+      right: 2px;
+      cursor: se-resize;
+      color: #333;
+      font-size: 14px;
+    }}
+    .dashboard-card.draggable {{
+      border: 1px dashed #444 !important;
+      cursor: default;
+      padding: 4px;
+      background: rgba(17, 17, 17, 0.25);
+    }}
+    .dashboard-card.draggable .card-drag-handle {{ display: block; }}
+    .dashboard-card.draggable .card-resize-handle {{ display: block; }}
+    .toast {{
+      position: fixed;
+      bottom: 80px;
+      right: 20px;
+      background: #111;
+      border: 1px solid #00ff88;
+      color: #00ff88;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 12px;
+      z-index: 9999;
+    }}
     .timeline-filters {{
       display: flex;
       gap: 8px;
@@ -1972,7 +2055,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
     .log-line-info {{ color: #888; }}
     .log-line-ok {{ color: #00ff88; }}
     @media (max-width: 1100px) {{
-      .main-grid {{ grid-template-columns: 1fr; }}
+      .dashboard-container {{ grid-template-columns: 1fr; }}
       .stats-row {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
     }}
     @media (max-width: 700px) {{
@@ -1998,22 +2081,31 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       <a class="nav-link active" href="/admin">Overview</a>
       <a class="nav-link" href="/admin/metrics">Metrics</a>
       <a class="nav-link" href="/admin/logs">Logs</a>
+      <button id="edit-btn" class="edit-btn" type="button" onclick="enterEditMode()">✏️ Edit</button>
       <a class="refresh-link" href="/admin">Refresh</a>
     </div>
   </div>
 
-  <main class="wrap">
-    <section class="stats-row">{stats_html}</section>
+  <div id="edit-bar" class="edit-bar" style="display:none">
+    ✏️ Edit Mode — ลากและปรับขนาด card ได้
+    <button type="button" onclick="saveLayout()">💾 Save Layout</button>
+    <button type="button" onclick="resetLayout()">↺ Reset</button>
+    <button type="button" onclick="exitEditMode()">🔒 Lock</button>
+  </div>
 
-    <section class="main-grid">
-      <div class="column">{left_cards_html}</div>
-      <div class="column">{timeline_html}</div>
-      <div class="column">{right_html}</div>
-    </section>
+  <main class="wrap">
+    <div id="dashboard-container" class="dashboard-container">
+      <section id="card-stats" class="dashboard-card dashboard-card-stats">
+        <div class="stats-row">{stats_html}</div>
+      </section>
+      <div id="card-model" class="dashboard-card column">{left_cards_html}</div>
+      <div id="card-timeline" class="dashboard-card column">{timeline_html}</div>
+      <div id="card-server" class="dashboard-card column">{right_html}</div>
+    </div>
 
     {errors_html}
-    {live_log_tail_html}
   </main>
+  {live_log_tail_html}
 
   <script>
     function escapeHtml(text) {{
@@ -2024,6 +2116,11 @@ def build_admin_html(overview: dict) -> HTMLResponse:
         .replace(/"/g, "&quot;");
     }}
 
+    const LAYOUT_KEY = 'ener-admin-layout-v1';
+    let editMode = false;
+    const dashboardContainer = document.getElementById('dashboard-container');
+    const editBar = document.getElementById('edit-bar');
+    const editButton = document.getElementById('edit-btn');
     const widget = document.getElementById('log-tail-widget');
     const handle = document.getElementById('log-drag-handle');
     const content = document.getElementById('log-tail-content');
@@ -2043,6 +2140,233 @@ def build_admin_html(overview: dict) -> HTMLResponse:
     let collapsed = false;
     let expandedHeight = '160px';
 
+    function readSavedLayout() {{
+      try {{
+        return JSON.parse(localStorage.getItem(LAYOUT_KEY) || '{{}}');
+      }} catch (error) {{
+        return {{}};
+      }}
+    }}
+
+    function writeSavedLayout(layout) {{
+      localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
+    }}
+
+    function updateSavedLayoutForCard(cardId, nextState) {{
+      const layout = readSavedLayout();
+      layout[cardId] = {{
+        ...(layout[cardId] || {{}}),
+        ...nextState,
+      }};
+      writeSavedLayout(layout);
+    }}
+
+    function hasSavedDashboardCards(layout) {{
+      return Object.keys(layout).some((id) => id !== 'log-tail-widget');
+    }}
+
+    function showToast(message) {{
+      const toast = document.createElement('div');
+      toast.className = 'toast';
+      toast.textContent = message;
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 2000);
+    }}
+
+    function updateDashboardContainerHeight() {{
+      if (!dashboardContainer || !dashboardContainer.classList.contains('layout-freeform')) return;
+      let maxBottom = 0;
+      document.querySelectorAll('.dashboard-card:not(#log-tail-widget)').forEach((card) => {{
+        const top = parseFloat(card.style.top || '0');
+        maxBottom = Math.max(maxBottom, top + card.offsetHeight);
+      }});
+      dashboardContainer.style.height = `${{Math.max(720, maxBottom + 24)}}px`;
+    }}
+
+    function snapshotDashboardCards() {{
+      if (!dashboardContainer || dashboardContainer.classList.contains('layout-freeform')) return;
+      const parentRect = dashboardContainer.getBoundingClientRect();
+      const cards = Array.from(document.querySelectorAll('.dashboard-card:not(#log-tail-widget)')).map((card) => ({{
+        card,
+        rect: card.getBoundingClientRect(),
+      }}));
+
+      dashboardContainer.classList.add('layout-freeform');
+      cards.forEach(({{ card, rect }}) => {{
+        card.style.position = 'absolute';
+        card.style.left = `${{rect.left - parentRect.left}}px`;
+        card.style.top = `${{rect.top - parentRect.top}}px`;
+        card.style.width = `${{rect.width}}px`;
+        card.style.height = `${{rect.height}}px`;
+      }});
+      updateDashboardContainerHeight();
+    }}
+
+    function makeDraggable(el, dragHandle) {{
+      let dragActive = false;
+      let dragStartX = 0;
+      let dragStartY = 0;
+      let dragLeft = 0;
+      let dragTop = 0;
+
+      dragHandle.addEventListener('mousedown', (event) => {{
+        if (!editMode || !dashboardContainer) return;
+        dragActive = true;
+        dragStartX = event.clientX;
+        dragStartY = event.clientY;
+        const rect = el.getBoundingClientRect();
+        const parentRect = dashboardContainer.getBoundingClientRect();
+        dragLeft = rect.left - parentRect.left;
+        dragTop = rect.top - parentRect.top;
+        el.style.position = 'absolute';
+        event.preventDefault();
+      }});
+
+      document.addEventListener('mousemove', (event) => {{
+        if (!dragActive) return;
+        el.style.left = `${{dragLeft + event.clientX - dragStartX}}px`;
+        el.style.top = `${{dragTop + event.clientY - dragStartY}}px`;
+        updateDashboardContainerHeight();
+      }});
+
+      document.addEventListener('mouseup', () => {{
+        dragActive = false;
+      }});
+    }}
+
+    function makeResizable(el, resizeGrip) {{
+      let resizeActive = false;
+      let startResizeX = 0;
+      let startResizeY = 0;
+      let startWidth = 0;
+      let startHeight = 0;
+
+      resizeGrip.addEventListener('mousedown', (event) => {{
+        if (!editMode) return;
+        resizeActive = true;
+        startResizeX = event.clientX;
+        startResizeY = event.clientY;
+        startWidth = el.offsetWidth;
+        startHeight = el.offsetHeight;
+        event.preventDefault();
+        event.stopPropagation();
+      }});
+
+      document.addEventListener('mousemove', (event) => {{
+        if (!resizeActive) return;
+        el.style.width = `${{Math.max(200, startWidth + event.clientX - startResizeX)}}px`;
+        el.style.height = `${{Math.max(100, startHeight + event.clientY - startResizeY)}}px`;
+        updateDashboardContainerHeight();
+      }});
+
+      document.addEventListener('mouseup', () => {{
+        resizeActive = false;
+      }});
+    }}
+
+    function enterEditMode() {{
+      editMode = true;
+      if (editBar) editBar.style.display = 'flex';
+      if (editButton) editButton.style.display = 'none';
+      snapshotDashboardCards();
+
+      document.querySelectorAll('.dashboard-card').forEach((card) => {{
+        card.classList.add('draggable');
+        if (card.id === 'log-tail-widget') return;
+
+        if (!card.querySelector('.card-drag-handle')) {{
+          const dragHandle = document.createElement('div');
+          dragHandle.className = 'card-drag-handle';
+          dragHandle.innerHTML = '⠿ drag';
+          card.prepend(dragHandle);
+          makeDraggable(card, dragHandle);
+        }}
+
+        if (!card.querySelector('.card-resize-handle')) {{
+          const resizeGrip = document.createElement('div');
+          resizeGrip.className = 'card-resize-handle';
+          resizeGrip.innerHTML = '⠿';
+          card.appendChild(resizeGrip);
+          makeResizable(card, resizeGrip);
+        }}
+      }});
+
+      updateDashboardContainerHeight();
+    }}
+
+    function exitEditMode() {{
+      editMode = false;
+      if (editBar) editBar.style.display = 'none';
+      if (editButton) editButton.style.display = 'block';
+      document.querySelectorAll('.dashboard-card').forEach((card) => {{
+        card.classList.remove('draggable');
+      }});
+    }}
+
+    function saveLayout() {{
+      const layout = readSavedLayout();
+      document.querySelectorAll('.dashboard-card[id]').forEach((card) => {{
+        layout[card.id] = {{
+          left: card.style.left || '',
+          top: card.style.top || '',
+          width: card.style.width || '',
+          height: card.style.height || '',
+        }};
+      }});
+      writeSavedLayout(layout);
+      exitEditMode();
+      showToast('💾 บันทึก layout แล้ว');
+    }}
+
+    function resetLayout() {{
+      localStorage.removeItem(LAYOUT_KEY);
+      localStorage.removeItem('log-pos');
+      location.reload();
+    }}
+
+    function loadLayout() {{
+      const layout = readSavedLayout();
+      if (!Object.keys(layout).length) return;
+
+      if (hasSavedDashboardCards(layout) && dashboardContainer) {{
+        dashboardContainer.classList.add('layout-freeform');
+      }}
+
+      Object.entries(layout).forEach(([id, pos]) => {{
+        const card = document.getElementById(id);
+        if (!card || !pos) return;
+
+        if (id === 'log-tail-widget') {{
+          if (pos.left || pos.top) {{
+            card.style.right = 'auto';
+            card.style.bottom = 'auto';
+          }}
+          if (pos.left) card.style.left = pos.left;
+          if (pos.top) card.style.top = pos.top;
+          if (pos.width) card.style.width = pos.width;
+          if (pos.height) {{
+            card.style.height = pos.height;
+            expandedHeight = pos.height;
+          }}
+          return;
+        }}
+
+        if (!dashboardContainer || !dashboardContainer.classList.contains('layout-freeform')) return;
+        card.style.position = 'absolute';
+        if (pos.left) card.style.left = pos.left;
+        if (pos.top) card.style.top = pos.top;
+        if (pos.width) card.style.width = pos.width;
+        if (pos.height) card.style.height = pos.height;
+      }});
+
+      updateDashboardContainerHeight();
+    }}
+
+    window.enterEditMode = enterEditMode;
+    window.exitEditMode = exitEditMode;
+    window.saveLayout = saveLayout;
+    window.resetLayout = resetLayout;
+
     function updateLogContentHeight(totalHeight) {{
       if (!widget || !content) return;
       const header = handle ? handle.offsetHeight : 40;
@@ -2054,14 +2378,13 @@ def build_admin_html(overview: dict) -> HTMLResponse:
 
     function persistWidgetState() {{
       if (!widget) return;
-      const state = {{
+      updateSavedLayoutForCard('log-tail-widget', {{
         left: widget.style.left || '',
         top: widget.style.top || '',
         width: widget.style.width || '',
         height: widget.style.height || '',
-        collapsed,
-      }};
-      localStorage.setItem('log-pos', JSON.stringify(state));
+      }});
+      localStorage.setItem('log-widget-collapsed', collapsed ? '1' : '0');
     }}
 
     function changeFontSize(delta) {{
@@ -2203,30 +2526,13 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       }}
     }}
 
-    const savedPos = localStorage.getItem('log-pos');
-    if (savedPos && widget) {{
-      try {{
-        const pos = JSON.parse(savedPos);
-        if (pos.left) widget.style.left = pos.left;
-        if (pos.top) widget.style.top = pos.top;
-        if (pos.left || pos.top) {{
-          widget.style.right = 'auto';
-          widget.style.bottom = 'auto';
-        }}
-        if (pos.width) widget.style.width = pos.width;
-        if (pos.height) {{
-          widget.style.height = pos.height;
-          expandedHeight = pos.height;
-        }}
-        collapsed = Boolean(pos.collapsed);
-        if (collapsed && content) {{
-          content.style.display = 'none';
-          widget.style.minHeight = '0px';
-          widget.style.height = `${{(handle ? handle.offsetHeight : 32) + 16}}px`;
-        }}
-      }} catch (error) {{
-        // ignore corrupted local widget state
-      }}
+    loadLayout();
+
+    collapsed = localStorage.getItem('log-widget-collapsed') === '1';
+    if (collapsed && content && widget) {{
+      content.style.display = 'none';
+      widget.style.minHeight = '0px';
+      widget.style.height = `${{(handle ? handle.offsetHeight : 32) + 16}}px`;
     }}
 
     if (widget) {{
