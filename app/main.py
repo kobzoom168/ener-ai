@@ -1658,12 +1658,18 @@ def build_admin_html(overview: dict) -> HTMLResponse:
         )
 
     live_log_tail_html = """
-    <div class="log-tail-box">
-      <div class="log-tail-header">
+    <div id="log-tail-widget" class="log-widget">
+      <div id="log-drag-handle" class="log-header">
         <span>📋 LIVE LOGS</span>
-        <span class="log-tail-status">● LIVE</span>
+        <div class="log-controls">
+          <button onclick="changeFontSize(-1)" title="ตัวเล็กลง">A-</button>
+          <button onclick="changeFontSize(1)" title="ตัวใหญ่ขึ้น">A+</button>
+          <span class="log-status">● LIVE</span>
+          <button onclick="toggleLog()" title="ย่อ/ขยาย">_</button>
+        </div>
       </div>
-      <div id="log-tail-content" class="log-tail-content"></div>
+      <div id="log-tail-content" class="log-content"></div>
+      <div id="log-resize-handle" class="resize-handle">⠿</div>
     </div>
     """
 
@@ -1897,30 +1903,69 @@ def build_admin_html(overview: dict) -> HTMLResponse:
     }}
     .error-row:last-child {{ border-bottom: 0; }}
     .error-time {{ color: var(--red); font-size: 0.82rem; }}
-    .log-tail-box {{
-      margin-top: 16px;
+    .log-widget {{
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      width: 500px;
+      min-width: 250px;
+      min-height: 80px;
       background: #0a0a0a;
-      border: 1px solid #222;
+      border: 1px solid #333;
       border-radius: 8px;
+      z-index: 999;
+      box-shadow: 0 4px 20px rgba(0,255,136,0.1);
       overflow: hidden;
     }}
-    .log-tail-header {{
+    .log-header {{
       display: flex;
       justify-content: space-between;
-      padding: 8px 12px;
+      align-items: center;
+      padding: 6px 10px;
       background: #111;
       border-bottom: 1px solid #222;
+      cursor: grab;
+      user-select: none;
       font-size: 11px;
       color: #888;
     }}
-    .log-tail-status {{ color: #00ff88; }}
-    .log-tail-content {{
+    .log-header:active {{ cursor: grabbing; }}
+    .log-controls {{
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }}
+    .log-controls button {{
+      background: #222;
+      border: 1px solid #333;
+      color: #888;
+      padding: 2px 6px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 10px;
+    }}
+    .log-controls button:hover {{ background: #333; color: #fff; }}
+    .log-status {{ color: #00ff88; font-size: 10px; }}
+    .log-content {{
       height: 120px;
       overflow-y: auto;
-      padding: 8px 12px;
+      padding: 8px 10px;
       font-family: monospace;
       font-size: 11px;
       line-height: 1.6;
+    }}
+    .resize-handle {{
+      position: absolute;
+      bottom: 0;
+      right: 0;
+      width: 16px;
+      height: 16px;
+      cursor: se-resize;
+      color: #333;
+      font-size: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }}
     .log-line-error {{ color: #ff4444; }}
     .log-line-warn {{ color: #ffaa00; }}
@@ -1979,6 +2024,72 @@ def build_admin_html(overview: dict) -> HTMLResponse:
         .replace(/"/g, "&quot;");
     }}
 
+    const widget = document.getElementById('log-tail-widget');
+    const handle = document.getElementById('log-drag-handle');
+    const content = document.getElementById('log-tail-content');
+    const resizeHandle = document.getElementById('log-resize-handle');
+    const controlButtons = document.querySelectorAll('.log-controls button');
+    let isDragging = false;
+    let startX = 0;
+    let startY = 0;
+    let startLeft = 0;
+    let startTop = 0;
+    let isResizing = false;
+    let resizeStartX = 0;
+    let resizeStartY = 0;
+    let resizeStartW = 0;
+    let resizeStartH = 0;
+    let fontSize = 11;
+    let collapsed = false;
+    let expandedHeight = '160px';
+
+    function updateLogContentHeight(totalHeight) {{
+      if (!widget || !content) return;
+      const header = handle ? handle.offsetHeight : 40;
+      const resizeGrip = 16;
+      const minimumContentHeight = collapsed ? 0 : 40;
+      const nextHeight = Math.max(minimumContentHeight, totalHeight - header - resizeGrip);
+      content.style.height = collapsed ? '0px' : `${{nextHeight}}px`;
+    }}
+
+    function persistWidgetState() {{
+      if (!widget) return;
+      const state = {{
+        left: widget.style.left || '',
+        top: widget.style.top || '',
+        width: widget.style.width || '',
+        height: widget.style.height || '',
+        collapsed,
+      }};
+      localStorage.setItem('log-pos', JSON.stringify(state));
+    }}
+
+    function changeFontSize(delta) {{
+      fontSize = Math.max(8, Math.min(18, fontSize + delta));
+      if (content) content.style.fontSize = `${{fontSize}}px`;
+      localStorage.setItem('log-font-size', String(fontSize));
+    }}
+
+    function toggleLog() {{
+      if (!content || !widget) return;
+      collapsed = !collapsed;
+      if (collapsed) {{
+        expandedHeight = widget.style.height || `${{widget.offsetHeight}}px` || expandedHeight;
+        content.style.display = 'none';
+        widget.style.minHeight = '0px';
+        widget.style.height = `${{(handle ? handle.offsetHeight : 32) + 16}}px`;
+      }} else {{
+        content.style.display = 'block';
+        widget.style.minHeight = '80px';
+        widget.style.height = expandedHeight || '160px';
+        updateLogContentHeight(widget.offsetHeight);
+      }}
+      persistWidgetState();
+    }}
+
+    window.changeFontSize = changeFontSize;
+    window.toggleLog = toggleLog;
+
     const chips = document.querySelectorAll(".filter-chip");
     const rows = document.querySelectorAll(".timeline-item");
     chips.forEach((chip) => {{
@@ -2032,13 +2143,103 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       }});
     }}
 
+    controlButtons.forEach((button) => {{
+      button.addEventListener('mousedown', (event) => event.stopPropagation());
+    }});
+
+    if (handle && widget) {{
+      handle.addEventListener('mousedown', (event) => {{
+        if (event.target.closest('button')) return;
+        isDragging = true;
+        startX = event.clientX;
+        startY = event.clientY;
+        const rect = widget.getBoundingClientRect();
+        startLeft = rect.left;
+        startTop = rect.top;
+        widget.style.right = 'auto';
+        widget.style.bottom = 'auto';
+        event.preventDefault();
+      }});
+    }}
+
+    if (resizeHandle && widget) {{
+      resizeHandle.addEventListener('mousedown', (event) => {{
+        isResizing = true;
+        resizeStartX = event.clientX;
+        resizeStartY = event.clientY;
+        resizeStartW = widget.offsetWidth;
+        resizeStartH = widget.offsetHeight;
+        event.preventDefault();
+        event.stopPropagation();
+      }});
+    }}
+
+    document.addEventListener('mousemove', (event) => {{
+      if (isDragging && widget) {{
+        widget.style.left = `${{startLeft + event.clientX - startX}}px`;
+        widget.style.top = `${{startTop + event.clientY - startY}}px`;
+      }}
+      if (isResizing && widget) {{
+        const newW = Math.max(250, resizeStartW + event.clientX - resizeStartX);
+        const newH = Math.max(80, resizeStartH + event.clientY - resizeStartY);
+        widget.style.width = `${{newW}}px`;
+        widget.style.height = `${{newH}}px`;
+        updateLogContentHeight(newH);
+      }}
+    }});
+
+    document.addEventListener('mouseup', () => {{
+      if (isDragging || isResizing) persistWidgetState();
+      isDragging = false;
+      isResizing = false;
+    }});
+
+    const savedFontSize = localStorage.getItem('log-font-size');
+    if (savedFontSize) {{
+      const parsed = parseInt(savedFontSize, 10);
+      if (!Number.isNaN(parsed)) {{
+        fontSize = parsed;
+        if (content) content.style.fontSize = `${{fontSize}}px`;
+      }}
+    }}
+
+    const savedPos = localStorage.getItem('log-pos');
+    if (savedPos && widget) {{
+      try {{
+        const pos = JSON.parse(savedPos);
+        if (pos.left) widget.style.left = pos.left;
+        if (pos.top) widget.style.top = pos.top;
+        if (pos.left || pos.top) {{
+          widget.style.right = 'auto';
+          widget.style.bottom = 'auto';
+        }}
+        if (pos.width) widget.style.width = pos.width;
+        if (pos.height) {{
+          widget.style.height = pos.height;
+          expandedHeight = pos.height;
+        }}
+        collapsed = Boolean(pos.collapsed);
+        if (collapsed && content) {{
+          content.style.display = 'none';
+          widget.style.minHeight = '0px';
+          widget.style.height = `${{(handle ? handle.offsetHeight : 32) + 16}}px`;
+        }}
+      }} catch (error) {{
+        // ignore corrupted local widget state
+      }}
+    }}
+
+    if (widget) {{
+      if (!widget.style.height) widget.style.height = '160px';
+      updateLogContentHeight(widget.offsetHeight);
+    }}
+
     async function fetchLogs() {{
       try {{
         const res = await fetch('/admin/api/logs?filter=ALL&lines=15', {{ cache: "no-store" }});
         if (!res.ok) return;
         const data = await res.json();
-        const el = document.getElementById('log-tail-content');
-        if (!el) return;
+        if (!content) return;
 
         const entries = Array.isArray(data.logs)
           ? data.logs.slice(-15)
@@ -2046,7 +2247,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
             ? data.lines.slice(-15).map((line) => `[${{line.time}}] ${{line.level}} ${{line.message}}`)
             : [];
 
-        el.innerHTML = entries.map((line) => {{
+        content.innerHTML = entries.map((line) => {{
           let cls = 'log-line-info';
           const lowered = String(line).toLowerCase();
           if (lowered.includes('error')) cls = 'log-line-error';
@@ -2055,7 +2256,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
           return `<div class="${{cls}}">${{escapeHtml(line)}}</div>`;
         }}).join('');
 
-        el.scrollTop = el.scrollHeight;
+        content.scrollTop = content.scrollHeight;
       }} catch (error) {{
         // keep dashboard usable even when log fetch fails
       }}
