@@ -2,6 +2,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import random
 import re
 import secrets
 import shutil
@@ -41,6 +42,10 @@ _ALLOWED_UPLOAD_PATHS = [
 ]
 _TERMINAL_TOKEN_TTL_SECONDS = 1800
 _terminal_tokens: dict[str, float] = {}
+_otp_store: dict[str, float] = {}
+_session_store: dict[str, float] = {}
+OTP_EXPIRE = 300
+SESSION_EXPIRE = 7200
 _RANGE_OPTIONS = ["1h", "3h", "10h", "24h", "7d"]
 _AGENT_ORDER = [
     "MainChatAgent",
@@ -294,21 +299,82 @@ def _realtime_metrics() -> dict:
     }
 
 
-async def _require_admin(request: Request):
+def _admin_unauthorized() -> HTTPException:
+    return HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": "Basic"})
+
+
+def _validate_admin_basic_auth(request: Request) -> None:
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Basic "):
-        raise HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": "Basic"})
+        raise _admin_unauthorized()
     try:
         encoded = auth_header.split(" ", 1)[1]
         decoded = base64.b64decode(encoded).decode("utf-8")
         username, password = decoded.split(":", 1)
     except Exception:
-        raise HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": "Basic"})
+        raise _admin_unauthorized()
     if not (
         secrets.compare_digest(username, "admin")
         and secrets.compare_digest(password, settings.admin_password)
     ):
-        raise HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": "Basic"})
+        raise _admin_unauthorized()
+
+
+def _generate_otp() -> str:
+    return str(random.randint(100000, 999999))
+
+
+def _generate_session_token() -> str:
+    return hashlib.sha256(f"{time.time()}{random.random()}".encode()).hexdigest()[:48]
+
+
+async def _send_otp_telegram(otp: str) -> None:
+    msg = (
+        "🔐 Ener-AI Admin OTP\n\n"
+        f"รหัส: *{otp}*\n\n"
+        "หมดอายุใน 5 นาที\n"
+        "ห้ามบอกใคร"
+    )
+    await telegram_app.bot.send_message(
+        chat_id=settings.telegram_chat_id,
+        text=msg,
+        parse_mode="Markdown",
+    )
+
+
+def _prune_otp_store(now: float | None = None) -> None:
+    current = now if now is not None else time.time()
+    expired = [otp for otp, expires_at in _otp_store.items() if current > expires_at]
+    for otp in expired:
+        _otp_store.pop(otp, None)
+
+
+def _prune_session_store(now: float | None = None) -> None:
+    current = now if now is not None else time.time()
+    expired = [token for token, expires_at in _session_store.items() if current > expires_at]
+    for token in expired:
+        _session_store.pop(token, None)
+
+
+def _is_valid_session(request: Request) -> bool:
+    _prune_session_store()
+    token = request.cookies.get("admin_session", "")
+    if not token:
+        return False
+    expires_at = _session_store.get(token)
+    if not expires_at:
+        return False
+    if time.time() > expires_at:
+        _session_store.pop(token, None)
+        return False
+    return True
+
+
+async def _require_admin(request: Request):
+    if _is_valid_session(request):
+        return
+    _validate_admin_basic_auth(request)
+    raise HTTPException(status_code=307, detail="OTP Required", headers={"Location": "/admin/otp"})
 
 
 def _resolve_upload_dir(raw_path: str) -> Path:
@@ -2132,6 +2198,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       <a class="nav-link" href="/admin/metrics">Metrics</a>
       <a class="nav-link" href="/admin/logs">Logs</a>
       <a class="nav-link" href="/admin/terminal" target="_blank" rel="noopener noreferrer">💻 Terminal</a>
+      <button class="edit-btn" type="button" onclick="fetch('/admin/logout',{method:'POST'}).then(() => location.reload())">🚪 Logout</button>
       <button id="edit-btn" class="edit-btn" type="button" onclick="enterEditMode()">✏️ Edit</button>
       <a class="refresh-link" href="/admin">Refresh</a>
     </div>
@@ -3336,6 +3403,169 @@ async def health():
 async def admin_dashboard(request: Request):
     await _require_admin(request)
     return build_admin_html(await _load_admin_overview())
+
+
+@app.get("/admin/otp")
+async def otp_page(request: Request):
+    if _is_valid_session(request):
+        return RedirectResponse("/admin", status_code=303)
+
+    _validate_admin_basic_auth(request)
+    otp = _generate_otp()
+    _otp_store.clear()
+    _otp_store[otp] = time.time() + OTP_EXPIRE
+    await _send_otp_telegram(otp)
+
+    return HTMLResponse(
+        """<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin OTP - Ener-AI</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body {
+      background:#000; color:#fff;
+      display:flex; align-items:center; justify-content:center;
+      height:100vh; font-family:monospace;
+    }
+    .otp-box {
+      background:#111; border:1px solid #222;
+      border-radius:12px; padding:40px;
+      width:340px; text-align:center;
+    }
+    .otp-box h2 { color:#00ff88; margin-bottom:8px; font-size:20px; }
+    .otp-box p { color:#888; font-size:13px; margin-bottom:24px; }
+    .otp-input {
+      width:100%; padding:14px;
+      background:#000; border:1px solid #333;
+      color:#00ff88; border-radius:8px;
+      font-size:28px; text-align:center;
+      letter-spacing:8px; font-family:monospace;
+      margin-bottom:16px;
+    }
+    .otp-input:focus { outline:none; border-color:#00ff88; }
+    .submit-btn {
+      width:100%; padding:12px;
+      background:#00ff88; color:#000;
+      border:none; border-radius:8px;
+      font-size:15px; font-weight:bold;
+      cursor:pointer;
+    }
+    .submit-btn:hover { background:#00cc70; }
+    .resend-btn {
+      background:none; border:none;
+      color:#555; cursor:pointer;
+      font-size:12px; margin-top:12px;
+      text-decoration:underline;
+    }
+    .resend-btn:hover { color:#888; }
+    .error { color:#ff4444; font-size:13px; margin-top:8px; }
+    .sent-msg { color:#00ff88; font-size:12px; margin-bottom:16px; }
+    .timer { color:#ffaa00; font-size:12px; margin-top:8px; }
+  </style>
+</head>
+<body>
+  <div class="otp-box">
+    <h2>🔐 Admin Access</h2>
+    <p>OTP ส่งไป Telegram แล้วครับ</p>
+    <div class="sent-msg">📱 ดู Telegram เพื่อรับรหัส 6 หลัก</div>
+
+    <form method="POST" action="/admin/otp/verify">
+      <input type="text" name="otp" class="otp-input"
+             maxlength="6" placeholder="000000"
+             autofocus autocomplete="off"
+             oninput="this.value=this.value.replace(/[^0-9]/g,'')">
+      <button type="submit" class="submit-btn">✅ เข้าใช้งาน</button>
+    </form>
+
+    <div class="timer" id="timer">หมดอายุใน 5:00</div>
+    <button class="resend-btn" onclick="resend()">ส่ง OTP ใหม่</button>
+    <div id="msg"></div>
+  </div>
+
+  <script>
+    let seconds = 300;
+    const timer = setInterval(() => {
+      seconds--;
+      const m = Math.floor(seconds / 60);
+      const s = seconds % 60;
+      document.getElementById('timer').textContent =
+        `หมดอายุใน ${m}:${s.toString().padStart(2, '0')}`;
+      if (seconds <= 0) {
+        clearInterval(timer);
+        document.getElementById('timer').textContent = '⏰ OTP หมดอายุแล้ว';
+        document.getElementById('timer').style.color = '#ff4444';
+      }
+    }, 1000);
+
+    async function resend() {
+      const res = await fetch('/admin/otp/resend', { method: 'POST' });
+      if (res.ok) {
+        document.getElementById('msg').textContent = '✅ ส่ง OTP ใหม่แล้ว';
+        document.getElementById('msg').style.color = '#00ff88';
+        seconds = 300;
+        document.getElementById('timer').style.color = '#ffaa00';
+      }
+    }
+  </script>
+</body>
+</html>"""
+    )
+
+
+@app.post("/admin/otp/verify")
+async def verify_otp(request: Request):
+    _validate_admin_basic_auth(request)
+    form = await request.form()
+    otp = str(form.get("otp", "")).strip()
+    now = time.time()
+    _prune_otp_store(now)
+
+    if otp not in _otp_store or now > _otp_store[otp]:
+        return HTMLResponse(
+            """
+        <script>
+        alert('OTP ไม่ถูกต้องหรือหมดอายุแล้วครับ');
+        history.back();
+        </script>
+        """
+        )
+
+    _otp_store.pop(otp, None)
+    token = _generate_session_token()
+    _session_store[token] = now + SESSION_EXPIRE
+
+    response = RedirectResponse("/admin", status_code=303)
+    response.set_cookie(
+        "admin_session",
+        token,
+        max_age=SESSION_EXPIRE,
+        httponly=True,
+        samesite="strict",
+    )
+    return response
+
+
+@app.post("/admin/otp/resend")
+async def resend_otp(request: Request):
+    _validate_admin_basic_auth(request)
+    otp = _generate_otp()
+    _otp_store.clear()
+    _otp_store[otp] = time.time() + OTP_EXPIRE
+    await _send_otp_telegram(otp)
+    return {"ok": True}
+
+
+@app.post("/admin/logout")
+async def logout(request: Request):
+    token = request.cookies.get("admin_session", "")
+    if token:
+        _session_store.pop(token, None)
+    response = RedirectResponse("/admin", status_code=303)
+    response.delete_cookie("admin_session")
+    return response
 
 
 @app.get("/admin/metrics")
