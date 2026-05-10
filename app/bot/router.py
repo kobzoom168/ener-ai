@@ -694,6 +694,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("cost", cmd_cost))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("start", cmd_help))
+    app.add_handler(CommandHandler("?", cmd_help))
     app.add_handler(CallbackQueryHandler(handle_email_callback, pattern="^email_"))
     app.add_handler(CallbackQueryHandler(handle_tts_callback, pattern="^tts:"))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
