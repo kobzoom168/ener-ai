@@ -42,10 +42,10 @@ _ALLOWED_UPLOAD_PATHS = [
 ]
 _TERMINAL_TOKEN_TTL_SECONDS = 1800
 _terminal_tokens: dict[str, float] = {}
-_session_store: dict[str, float] = {}
 _ADMIN_OTP_CODE_KEY = "admin_otp_code"
 _ADMIN_OTP_EXPIRE_KEY = "admin_otp_expire"
 _ADMIN_OTP_LAST_SENT_KEY = "admin_otp_last_sent"
+_ADMIN_SESSION_PREFIX = "admin_session:"
 OTP_EXPIRE = 300
 SESSION_EXPIRE = 7200
 _RANGE_OPTIONS = ["1h", "3h", "10h", "24h", "7d"]
@@ -413,29 +413,42 @@ async def _clear_admin_otp() -> None:
     ])
 
 
-def _prune_session_store(now: float | None = None) -> None:
-    current = now if now is not None else time.time()
-    expired = [token for token, expires_at in _session_store.items() if current > expires_at]
-    for token in expired:
-        _session_store.pop(token, None)
+async def _store_admin_session(token: str, expires_at: float) -> None:
+    await _set_memory_values(
+        {
+            f"{_ADMIN_SESSION_PREFIX}{token}": str(expires_at),
+        },
+        tag="admin_session",
+    )
 
 
-def _is_valid_session(request: Request) -> bool:
-    _prune_session_store()
+async def _delete_admin_session(token: str) -> None:
+    if not token:
+        return
+    await _delete_memory_keys([f"{_ADMIN_SESSION_PREFIX}{token}"])
+
+
+async def _is_valid_session(request: Request) -> bool:
     token = request.cookies.get("admin_session", "")
     if not token:
         return False
-    expires_at = _session_store.get(token)
-    if not expires_at:
+    session_state = await _get_memory_values([f"{_ADMIN_SESSION_PREFIX}{token}"])
+    raw_expiry = session_state.get(f"{_ADMIN_SESSION_PREFIX}{token}", "")
+    if not raw_expiry:
+        return False
+    try:
+        expires_at = float(raw_expiry or 0)
+    except Exception:
+        await _delete_admin_session(token)
         return False
     if time.time() > expires_at:
-        _session_store.pop(token, None)
+        await _delete_admin_session(token)
         return False
     return True
 
 
 async def _require_admin(request: Request):
-    if _is_valid_session(request):
+    if await _is_valid_session(request):
         return
     _validate_admin_basic_auth(request)
     raise HTTPException(status_code=307, detail="OTP Required", headers={"Location": "/admin/otp"})
@@ -3471,7 +3484,7 @@ async def admin_dashboard(request: Request):
 
 @app.get("/admin/otp")
 async def otp_page(request: Request):
-    if _is_valid_session(request):
+    if await _is_valid_session(request):
         return RedirectResponse("/admin", status_code=303)
 
     _validate_admin_basic_auth(request)
@@ -3634,7 +3647,7 @@ async def verify_otp(request: Request):
 
     await _clear_admin_otp()
     token = _generate_session_token()
-    _session_store[token] = now + SESSION_EXPIRE
+    await _store_admin_session(token, now + SESSION_EXPIRE)
 
     response = RedirectResponse("/admin", status_code=303)
     response.set_cookie(
@@ -3670,7 +3683,7 @@ async def resend_otp(request: Request):
 async def logout(request: Request):
     token = request.cookies.get("admin_session", "")
     if token:
-        _session_store.pop(token, None)
+        await _delete_admin_session(token)
     response = RedirectResponse("/admin", status_code=303)
     response.delete_cookie("admin_session")
     return response
