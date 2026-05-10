@@ -18,7 +18,7 @@ from contextlib import asynccontextmanager
 import httpx
 import psutil
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile, WebSocket
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from telegram import Update
 
 from app.bot.router import build_application
@@ -3871,6 +3871,9 @@ def build_workspace_html() -> HTMLResponse:
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Ener-AI Workspace</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
       --bg:#0d0d0d;
@@ -3890,8 +3893,13 @@ def build_workspace_html() -> HTMLResponse:
       margin:0;
       background:var(--bg);
       color:var(--text);
-      font-family:Inter, ui-sans-serif, system-ui, sans-serif;
+      font-family:'Inter', sans-serif;
+      font-size:15px;
+      line-height:1.6;
     }
+    h1, h2, h3, h4, h5, h6 { letter-spacing:-0.01em; }
+    button { font-size:14px; font-weight:500; font-family:inherit; }
+    input, textarea, select { font-size:15px; font-family:inherit; }
     .workspace-shell { display:flex; min-height:100vh; }
     .sidebar {
       width:60px;
@@ -3916,7 +3924,7 @@ def build_workspace_html() -> HTMLResponse:
       background:transparent;
       color:var(--subtext);
       cursor:pointer;
-      font-size:18px;
+      font-size:22px;
     }
     .nav-icon:hover, .nav-icon.active {
       color:#fff;
@@ -3937,7 +3945,7 @@ def build_workspace_html() -> HTMLResponse:
       gap:16px;
       margin-bottom:20px;
     }
-    .panel-header h2 { margin:0 0 6px; font-size:24px; }
+    .panel-header h2 { margin:0 0 6px; font-size:20px; font-weight:600; letter-spacing:-0.01em; }
     .panel-header p { margin:0; color:var(--subtext); }
     .card {
       background:var(--card);
@@ -3963,6 +3971,10 @@ def build_workspace_html() -> HTMLResponse:
       padding:14px 16px;
       font-size:15px;
     }
+    .hero-input::placeholder, .input::placeholder, .textarea::placeholder, .select::placeholder {
+      font-size:14px;
+      color:#888;
+    }
     .textarea { min-height:110px; resize:vertical; }
     .button {
       border:none;
@@ -3971,7 +3983,8 @@ def build_workspace_html() -> HTMLResponse:
       background:var(--accent);
       color:#fff;
       cursor:pointer;
-      font-weight:600;
+      font-size:14px;
+      font-weight:500;
     }
     .button.secondary { background:#252525; color:var(--text); }
     .button.ghost { background:transparent; border:1px solid var(--border); color:var(--text); }
@@ -3984,8 +3997,8 @@ def build_workspace_html() -> HTMLResponse:
       margin-top:22px;
     }
     .tool-card { cursor:pointer; display:flex; flex-direction:column; gap:8px; }
-    .tool-card strong { font-size:16px; }
-    .tool-card span { color:var(--subtext); font-size:13px; }
+    .tool-card-title { font-size:15px; font-weight:600; }
+    .tool-card-desc { font-size:13px; color:#888; }
     .chat-layout, .files-layout, .projects-layout {
       display:grid;
       grid-template-columns:280px minmax(0, 1fr);
@@ -4019,20 +4032,37 @@ def build_workspace_html() -> HTMLResponse:
     .message { display:flex; flex-direction:column; gap:6px; max-width:82%; }
     .message.user { align-self:flex-end; }
     .message.ai { align-self:flex-start; }
-    .bubble {
+    .msg-row { display:flex; flex-direction:column; gap:6px; max-width:82%; }
+    .user-row { align-self:flex-end; }
+    .ai-row { align-self:flex-start; }
+    .bubble, .msg-bubble {
       border-radius:18px;
       padding:14px 16px;
-      line-height:1.55;
+      font-size:14px;
+      line-height:1.7;
       word-break:break-word;
       white-space:pre-wrap;
     }
-    .message.user .bubble { background:var(--accent); }
-    .message.ai .bubble { background:#1b1b1b; border:1px solid var(--border); }
-    .meta { font-size:12px; color:var(--subtext); display:flex; gap:8px; align-items:center; }
+    .message.user .bubble, .user-bubble { background:var(--accent); }
+    .message.ai .bubble, .ai-bubble { background:#1b1b1b; border:1px solid var(--border); }
+    .msg-text { font-size:14px; line-height:1.7; }
+    .meta, .timestamp { font-size:12px; color:#666; display:flex; gap:8px; align-items:center; }
+    .source-badge {
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+      color:#888;
+    }
     .composer {
       display:grid;
       grid-template-columns:minmax(0, 1fr) 160px 96px;
       gap:10px;
+    }
+    #chat-input {
+      resize:none;
+      overflow:hidden;
+      min-height:44px;
+      max-height:200px;
     }
     .kanban {
       display:grid;
@@ -4127,6 +4157,21 @@ def build_workspace_html() -> HTMLResponse:
       background:var(--accent-soft);
       animation:bounce 1.2s infinite ease-in-out;
     }
+    .msg-bubble.thinking {
+      display:flex;
+      gap:5px;
+      align-items:center;
+      padding:12px 16px;
+    }
+    .dot {
+      width:8px;
+      height:8px;
+      background:#888;
+      border-radius:50%;
+      animation:bounce 1.2s infinite;
+    }
+    .dot:nth-child(2) { animation-delay:0.2s; }
+    .dot:nth-child(3) { animation-delay:0.4s; }
     .thinking span:nth-child(2) { animation-delay:0.15s; }
     .thinking span:nth-child(3) { animation-delay:0.3s; }
     .mobile-tabs {
@@ -4154,8 +4199,8 @@ def build_workspace_html() -> HTMLResponse:
     }
     @keyframes spin { to { transform:rotate(360deg); } }
     @keyframes bounce {
-      0%,80%,100% { transform:translateY(0); opacity:0.35; }
-      40% { transform:translateY(-4px); opacity:1; }
+      0%,60%,100% { transform:translateY(0); opacity:0.55; }
+      30% { transform:translateY(-6px); opacity:1; }
     }
     @media (max-width: 1024px) {
       .tool-grid, .kanban, .brain-grid, .chat-layout, .files-layout, .projects-layout {
@@ -4221,15 +4266,15 @@ def build_workspace_html() -> HTMLResponse:
             <div class="messages" id="chat-messages"></div>
             <div class="composer">
               <textarea id="chat-input" class="textarea" placeholder="พิมพ์ข้อความถึง Ener-AI..."></textarea>
-              <select id="chat-model" class="select">
-                <option value="">Auto / Active</option>
+              <select id="model-select" class="select">
+                <option value="auto">Auto / Active</option>
                 <option value="haiku">Claude Haiku</option>
                 <option value="groq">Groq</option>
                 <option value="gemini">Gemini</option>
                 <option value="qwen3b">Qwen 3B</option>
                 <option value="qwen7b">Qwen 7B</option>
               </select>
-              <button class="button" id="chat-send-btn">Send</button>
+              <button class="button" id="send-btn">Send</button>
             </div>
           </div>
         </div>
@@ -4430,8 +4475,8 @@ def build_workspace_html() -> HTMLResponse:
       wrap.innerHTML = toolCards.map(([icon, title, desc, panel, prompt]) => `
         <div class="card tool-card" data-panel-target="${panel}" data-prompt="${prompt || ''}">
           <div style="font-size:24px">${icon}</div>
-          <strong>${title}</strong>
-          <span>${desc}</span>
+          <div class="tool-card-title">${title}</div>
+          <div class="tool-card-desc">${desc}</div>
         </div>
       `).join('');
       wrap.querySelectorAll('.tool-card').forEach((card) => {
@@ -4450,6 +4495,68 @@ def build_workspace_html() -> HTMLResponse:
       return source === 'web' ? '🌐 Web' : '💬 Telegram';
     }
 
+    function escapeHtml(text) {
+      return String(text || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function scrollToBottom() {
+      const el = document.getElementById('chat-messages');
+      if (el) el.scrollTop = el.scrollHeight;
+    }
+
+    function appendUserBubble(text, meta='🌐 Web · now') {
+      const div = document.createElement('div');
+      div.className = 'msg-row user-row';
+      div.innerHTML = `
+        <div class="timestamp"><span class="source-badge">${meta}</span></div>
+        <div class="msg-bubble user-bubble">
+          <div class="msg-text">${escapeHtml(text)}</div>
+        </div>`;
+      document.getElementById('chat-messages').appendChild(div);
+      scrollToBottom();
+      return div;
+    }
+
+    function appendThinkingBubble(id) {
+      const div = document.createElement('div');
+      div.id = id;
+      div.className = 'msg-row ai-row';
+      div.innerHTML = `
+        <div class="timestamp"><span class="source-badge">🌐 Web · thinking</span></div>
+        <div class="msg-bubble ai-bubble thinking">
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        </div>`;
+      document.getElementById('chat-messages').appendChild(div);
+      scrollToBottom();
+      return div;
+    }
+
+    function appendAiBubble(text, meta='🌐 Web · now') {
+      const div = document.createElement('div');
+      div.className = 'msg-row ai-row';
+      div.innerHTML = `
+        <div class="timestamp"><span class="source-badge">${meta}</span></div>
+        <div class="msg-bubble ai-bubble">
+          <div class="msg-text">${renderMarkdown(text)}</div>
+        </div>`;
+      document.getElementById('chat-messages').appendChild(div);
+      scrollToBottom();
+      return div;
+    }
+
+    function setSendButtonState(loading) {
+      const btn = document.getElementById('send-btn');
+      if (!btn) return;
+      btn.disabled = loading;
+      btn.textContent = loading ? '...' : 'Send';
+      btn.style.opacity = loading ? '0.5' : '1';
+    }
+
     async function loadProjectsList() {
       const data = await api('/workspace/projects');
       const container = document.getElementById('projects-list');
@@ -4465,6 +4572,7 @@ def build_workspace_html() -> HTMLResponse:
           const raw = item.dataset.id;
           state.selectedProjectId = raw ? Number(raw) : null;
           state.selectedProjectName = item.querySelector('strong').textContent;
+          window._currentProject = state.selectedProjectId;
           loadProjectsList();
           loadChatHistory();
         });
@@ -4476,36 +4584,87 @@ def build_workspace_html() -> HTMLResponse:
       const data = await api(`/workspace/chat/history${query}`);
       const wrap = document.getElementById('chat-messages');
       wrap.innerHTML = (data.messages || []).map((msg) => `
-        <div class="message ${msg.role === 'user' ? 'user' : 'ai'}">
-          <div class="meta"><span>${formatSource(msg.source)}</span><span>${msg.created_at || ''}</span></div>
-          <div class="bubble">${msg.role === 'assistant' ? renderMarkdown(msg.content) : msg.content}</div>
+        <div class="msg-row ${msg.role === 'user' ? 'user-row' : 'ai-row'}">
+          <div class="timestamp"><span class="source-badge">${formatSource(msg.source)}</span><span>${msg.created_at || ''}</span></div>
+          <div class="msg-bubble ${msg.role === 'user' ? 'user-bubble' : 'ai-bubble'}">
+            <div class="msg-text">${msg.role === 'assistant' ? renderMarkdown(msg.content) : escapeHtml(msg.content)}</div>
+          </div>
         </div>
       `).join('') || '<div class="subtle">ยังไม่มีข้อความ</div>';
-      wrap.scrollTop = wrap.scrollHeight;
+      scrollToBottom();
     }
 
-    async function sendChat() {
+    async function sendMessage() {
       const input = document.getElementById('chat-input');
-      const text = input.value.trim();
-      if (!text) return;
-      setLoading(true);
+      const msg = input.value.trim();
+      if (!msg || window._streaming) return;
+
+      input.value = '';
+      input.style.height = 'auto';
+      appendUserBubble(msg);
+      const thinkingId = 'think-' + Date.now();
+      appendThinkingBubble(thinkingId);
+
+      window._streaming = true;
+      setSendButtonState(true);
+      let aiBubble = null;
+      let fullText = '';
+
       try {
-        const data = await api('/workspace/chat/send', {
+        const response = await fetch('/workspace/chat/stream', {
           method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          credentials: 'same-origin',
           body: JSON.stringify({
-            text,
-            project_id: state.selectedProjectId,
-            model: document.getElementById('chat-model').value || null
-          })
+            message: msg,
+            project_id: window._currentProject || null,
+            model: document.getElementById('model-select')?.value || 'auto'
+          }),
         });
-        input.value = '';
-        await loadChatHistory();
+        if (!response.ok || !response.body) {
+          throw new Error(`Request failed (${response.status})`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const {done, value} = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, {stream: true});
+          const events = buffer.split('\n\n');
+          buffer = events.pop() || '';
+
+          for (const event of events) {
+            const line = event.split('\n').find((item) => item.startsWith('data: '));
+            if (!line) continue;
+            const data = JSON.parse(line.slice(6));
+
+            if (data.type === 'start') {
+              document.getElementById(thinkingId)?.remove();
+              aiBubble = appendAiBubble('');
+            } else if (data.type === 'token') {
+              if (!aiBubble) aiBubble = appendAiBubble('');
+              fullText += data.text || '';
+              aiBubble.querySelector('.msg-text').innerHTML = renderMarkdown(fullText);
+              scrollToBottom();
+            } else if (data.type === 'error') {
+              document.getElementById(thinkingId)?.remove();
+              appendAiBubble('เกิดข้อผิดพลาด: ' + (data.text || 'unknown'));
+            }
+          }
+        }
+
         await loadProjectsList();
-        showToast(data.reply ? 'ส่งข้อความแล้ว' : 'ตอบกลับสำเร็จ');
       } catch (error) {
+        document.getElementById(thinkingId)?.remove();
+        appendAiBubble('Connection error. Please retry.');
         showToast(error.message || 'ส่งข้อความไม่สำเร็จ', 'error');
       } finally {
-        setLoading(false);
+        window._streaming = false;
+        setSendButtonState(false);
+        input.focus();
       }
     }
 
@@ -4542,6 +4701,7 @@ def build_workspace_html() -> HTMLResponse:
       `).join('') || '<tr><td colspan="5" class="subtle">ยังไม่มีโปรเจ็กต์</td></tr>';
       body.querySelectorAll('.project-open-btn').forEach((btn) => btn.addEventListener('click', () => {
         state.selectedProjectId = Number(btn.dataset.id);
+        window._currentProject = state.selectedProjectId;
         switchPanel('chat');
         loadProjectsList();
       }));
@@ -4835,12 +4995,7 @@ def build_workspace_html() -> HTMLResponse:
           body: JSON.stringify({ question })
         });
         switchPanel('chat');
-        document.getElementById('chat-messages').insertAdjacentHTML('beforeend', `
-          <div class="message ai">
-            <div class="meta"><span>🌐 Web</span><span>file answer</span></div>
-            <div class="bubble">${renderMarkdown(data.answer || '')}</div>
-          </div>
-        `);
+        appendAiBubble(data.answer || '', '🌐 Web · file answer');
         showToast('ตอบคำถามจากไฟล์แล้ว');
       } catch (error) {
         showToast(error.message || 'ถามไฟล์ไม่สำเร็จ', 'error');
@@ -4861,9 +5016,19 @@ def build_workspace_html() -> HTMLResponse:
         const value = document.getElementById('home-query').value.trim();
         switchPanel('chat');
         document.getElementById('chat-input').value = value;
-        if (value) sendChat();
+        if (value) sendMessage();
       });
-      document.getElementById('chat-send-btn').addEventListener('click', sendChat);
+      document.getElementById('send-btn').addEventListener('click', sendMessage);
+      document.getElementById('chat-input').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          sendMessage();
+        }
+      });
+      document.getElementById('chat-input').addEventListener('input', function() {
+        this.style.height = 'auto';
+        this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+      });
       document.getElementById('new-project-btn').addEventListener('click', createProject);
       document.getElementById('refresh-projects-btn').addEventListener('click', loadProjectsList);
       document.getElementById('projects-create-btn').addEventListener('click', createProject);
@@ -4885,6 +5050,7 @@ def build_workspace_html() -> HTMLResponse:
         }
       });
       await loadProjectsList();
+      window._currentProject = state.selectedProjectId;
       await loadChatHistory();
     }
 
@@ -4944,6 +5110,94 @@ async def workspace_chat_send(request: Request):
     model = str(payload.get("model", "")).strip().lower() or None
     reply = await _workspace_generate_reply(text, project_id, model)
     return JSONResponse({"ok": True, "reply": reply})
+
+
+@app.post("/workspace/chat/stream")
+async def workspace_chat_stream(request: Request):
+    await _require_admin(request)
+    body = await request.json()
+    message = str(body.get("message", body.get("text", ""))).strip()
+    project_id = _normalize_project_id(body.get("project_id"))
+    model = str(body.get("model", "auto")).strip().lower() or "auto"
+
+    if not message:
+        raise HTTPException(status_code=400, detail="empty message")
+
+    from app.agents.chat import _build_system_prompt
+    from app.core.ai import stream_chat_response
+    from app.core.memory import extract_and_store_long_term_memories
+
+    user_id = _workspace_user_id()
+    history = [
+        {"role": row["role"], "content": row["content"]}
+        for row in await _workspace_history_rows(project_id=project_id, limit=20)
+    ]
+
+    async with get_db() as db:
+        await db.execute(
+            """
+            INSERT INTO messages (chat_id, role, content, source, project_id)
+            VALUES (?, ?, ?, 'web', ?)
+            """,
+            (user_id, "user", message, project_id),
+        )
+        await db.commit()
+
+    system_prompt = await _build_system_prompt()
+    full_reply: list[str] = []
+
+    async def generate():
+        try:
+            yield f"data: {json.dumps({'type': 'start'}, ensure_ascii=False)}\n\n"
+            async for token in stream_chat_response(
+                message=message,
+                history=history,
+                system_prompt=system_prompt,
+                model=model,
+                agent="MainChatAgent",
+            ):
+                full_reply.append(token)
+                yield f"data: {json.dumps({'type': 'token', 'text': token}, ensure_ascii=False)}\n\n"
+
+            reply_text = "".join(full_reply).strip() or "ยังไม่มีคำตอบตอนนี้"
+            async with get_db() as db:
+                await db.execute(
+                    """
+                    INSERT INTO messages (chat_id, role, content, source, project_id)
+                    VALUES (?, ?, ?, 'web', ?)
+                    """,
+                    (user_id, "assistant", reply_text, project_id),
+                )
+                await db.execute(
+                    "INSERT INTO audit_logs (action, details) VALUES (?, ?)",
+                    ("workspace_chat_stream_saved", f"project_id={project_id or 'all'}"),
+                )
+                await db.commit()
+
+            try:
+                async with get_db() as db:
+                    await db.execute("DELETE FROM memories WHERE key = 'model_handoff_context'")
+                    await db.commit()
+            except Exception:
+                pass
+
+            try:
+                await extract_and_store_long_term_memories(message, reply_text)
+            except Exception:
+                pass
+
+            yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+        except Exception as exc:
+            yield f"data: {json.dumps({'type': 'error', 'text': str(exc)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.get("/workspace/chat/history")

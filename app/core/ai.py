@@ -1,6 +1,8 @@
 import asyncio
 import json
 import time
+import threading
+from typing import AsyncGenerator
 import anthropic
 import httpx
 from google import genai
@@ -551,6 +553,129 @@ async def _call_groq_with_tools(
         elapsed_ms = int((time.perf_counter() - started_at) * 1000)
         await _log_ai_run(agent, "groq", 0, 0, elapsed_ms, False)
         raise
+
+
+async def stream_chat_response(
+    message: str,
+    history: list[dict],
+    system_prompt: str,
+    model: str = "auto",
+    agent: str = "MainChatAgent",
+) -> AsyncGenerator[str, None]:
+    """Stream response tokens from the preferred model with provider fallbacks."""
+    availability = get_model_availability()
+    active_model = (await get_active_model()) or _default_model(availability)
+    normalized_model = str(model or "auto").strip().lower()
+    alias_map = {"claude": "haiku", "ollama": "qwen3b"}
+    requested_model = alias_map.get(normalized_model, normalized_model)
+
+    if requested_model == "auto":
+        candidates = [active_model] if active_model in _VALID_MODELS else []
+        for candidate in ["haiku", "groq", "gemini", "qwen3b", "qwen7b"]:
+            if candidate not in candidates:
+                candidates.append(candidate)
+    elif requested_model in _VALID_MODELS:
+        candidates = [requested_model]
+        for candidate in ["haiku", "groq", "gemini", "qwen3b", "qwen7b"]:
+            if candidate != requested_model and candidate not in candidates:
+                candidates.append(candidate)
+    else:
+        candidates = ["haiku", "groq", "gemini", "qwen3b", "qwen7b"]
+
+    for candidate in candidates:
+        if candidate in {"haiku", "groq", "gemini"} and not availability.get(candidate, False):
+            continue
+
+        started_at = time.perf_counter()
+        emitted = False
+        try:
+            if candidate == "haiku":
+                client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+                stream = client.messages.stream(
+                    model=_PRIMARY_MODEL,
+                    max_tokens=2048,
+                    system=system_prompt,
+                    messages=_anthropic_messages(message, history[-20:]),
+                )
+                async with stream as event_stream:
+                    async for text in event_stream.text_stream:
+                        if text:
+                            emitted = True
+                            yield text
+                await _log_ai_run(agent, "haiku", 0, 0, int((time.perf_counter() - started_at) * 1000), True)
+                return
+
+            if candidate == "groq":
+                client = AsyncGroq(api_key=settings.groq_api_key)
+                stream = await client.chat.completions.create(
+                    model="llama-3.1-8b-instant",
+                    messages=_groq_messages(message, system_prompt, history[-20:]),
+                    max_tokens=2048,
+                    stream=True,
+                )
+                async for chunk in stream:
+                    delta = getattr(chunk.choices[0].delta, "content", None) if getattr(chunk, "choices", None) else None
+                    if delta:
+                        emitted = True
+                        yield delta
+                await _log_ai_run(agent, "groq", 0, 0, int((time.perf_counter() - started_at) * 1000), True)
+                return
+
+            if candidate == "gemini":
+                client = genai.Client(api_key=settings.gemini_api_key)
+                queue: asyncio.Queue[str | None] = asyncio.Queue()
+                loop = asyncio.get_running_loop()
+                error_holder: list[Exception] = []
+
+                def _run_gemini_stream() -> None:
+                    try:
+                        for chunk in client.models.generate_content_stream(
+                            model="gemini-1.5-flash",
+                            contents=_gemini_contents(message, system_prompt, history[-20:]),
+                        ):
+                            text = getattr(chunk, "text", "") or ""
+                            if text:
+                                asyncio.run_coroutine_threadsafe(queue.put(text), loop).result()
+                    except Exception as exc:
+                        error_holder.append(exc)
+                    finally:
+                        asyncio.run_coroutine_threadsafe(queue.put(None), loop).result()
+
+                threading.Thread(target=_run_gemini_stream, daemon=True).start()
+                while True:
+                    chunk = await queue.get()
+                    if chunk is None:
+                        break
+                    emitted = True
+                    yield chunk
+                if error_holder:
+                    raise error_holder[0]
+                await _log_ai_run(agent, "gemini", 0, 0, int((time.perf_counter() - started_at) * 1000), True)
+                return
+
+            if candidate in {"qwen3b", "qwen7b"}:
+                text = await _call_ollama(message, system_prompt, history[-20:], agent, candidate)
+                if text:
+                    emitted = True
+                    yield text
+                return
+        except Exception:
+            if candidate in {"haiku", "groq", "gemini"}:
+                await _log_ai_run(agent, candidate, 0, 0, int((time.perf_counter() - started_at) * 1000), False)
+            continue
+
+        if emitted:
+            return
+
+    result = await chat(
+        message,
+        system=system_prompt,
+        agent=agent,
+        messages=history[-20:],
+        preferred_model=None if requested_model == "auto" else requested_model,
+    )
+    if result:
+        yield result
 
 
 async def chat(
