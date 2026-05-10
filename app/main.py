@@ -1,10 +1,12 @@
 import asyncio
 import base64
+import hashlib
 import json
 import re
 import secrets
 import shutil
 import subprocess
+import time
 from html import escape
 from pathlib import Path
 from urllib.parse import parse_qs
@@ -37,6 +39,8 @@ _ALLOWED_UPLOAD_PATHS = [
     Path("/root/ener-ai/backups"),
     Path("/tmp"),
 ]
+_TERMINAL_TOKEN_TTL_SECONDS = 1800
+_terminal_tokens: dict[str, float] = {}
 _RANGE_OPTIONS = ["1h", "3h", "10h", "24h", "7d"]
 _AGENT_ORDER = [
     "MainChatAgent",
@@ -317,6 +321,17 @@ def _resolve_upload_dir(raw_path: str) -> Path:
         if target == allowed_root or allowed_root in target.parents:
             return target
     raise HTTPException(status_code=400, detail="Path ไม่อนุญาต")
+
+
+def _prune_terminal_tokens(now: float | None = None) -> None:
+    current = now if now is not None else time.time()
+    expired = [
+        token
+        for token, issued_at in _terminal_tokens.items()
+        if current - issued_at > _TERMINAL_TOKEN_TTL_SECONDS
+    ]
+    for token in expired:
+        _terminal_tokens.pop(token, None)
 
 
 async def _check_webhook_status() -> str:
@@ -3339,7 +3354,6 @@ async def admin_logs(request: Request):
 @app.get("/admin/terminal")
 async def terminal_page(request: Request):
     await _require_admin(request)
-    token = base64.b64encode(f"admin:{settings.admin_password}".encode()).decode()
     server_name = escape(str(getattr(settings, "server_host", "") or "my-ener.uk"))
 
     return HTMLResponse(
@@ -3365,6 +3379,33 @@ async def terminal_page(request: Request):
     }}
     .term-header a {{ color: #888; text-decoration: none; font-size: 12px; }}
     .term-header a:hover {{ color: #fff; }}
+    #terminal-login {{
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: calc(100vh - 40px);
+      gap: 12px;
+    }}
+    #terminal-login input {{
+      padding: 10px 16px;
+      background: #111;
+      border: 1px solid #333;
+      color: #fff;
+      border-radius: 6px;
+      font-size: 16px;
+      width: 280px;
+    }}
+    #terminal-login button {{
+      padding: 10px 24px;
+      background: #00ff88;
+      color: #000;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: bold;
+    }}
+    #terminal-container {{ display: none; }}
     #terminal {{ height: calc(100vh - 40px); padding: 4px; }}
     #drop-zone {{
       display: none;
@@ -3411,7 +3452,7 @@ async def terminal_page(request: Request):
   <div class="term-header">
     <span>⚡ Ener-AI Terminal - {server_name}</span>
     <div style="display:flex;gap:12px;align-items:center">
-      <span style="font-size:11px;color:#888">ลากไฟล์มาวางเพื่ออัปโหลด</span>
+      <span style="font-size:11px;color:#888">ผ่าน 2 ชั้น auth ก่อนใช้งาน terminal</span>
       <a href="/admin">← Admin</a>
     </div>
   </div>
@@ -3422,43 +3463,86 @@ async def terminal_page(request: Request):
     <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
     <div id="upload-status" style="color:#888;margin-top:4px;font-size:10px"></div>
   </div>
-  <div id="terminal"></div>
+  <div id="terminal-login">
+    <h2>🔐 Terminal Access</h2>
+    <p>กรอก Terminal Password เพื่อเข้าใช้งาน</p>
+    <input type="password" id="term-pass" placeholder="Terminal Password" onkeydown="if(event.key==='Enter') verifyTerminal()">
+    <button onclick="verifyTerminal()">เข้าใช้งาน</button>
+    <p id="term-error" style="color:red;display:none">Password ไม่ถูกต้อง</p>
+  </div>
+  <div id="terminal-container">
+    <div id="terminal"></div>
+  </div>
 
   <script>
-    const term = new Terminal({{
-      theme: {{
-        background: '#000000',
-        foreground: '#ffffff',
-        cursor: '#00ff88',
-        selection: 'rgba(0,255,136,0.3)',
-      }},
-      fontFamily: 'JetBrains Mono, Cascadia Code, monospace',
-      fontSize: 14,
-      cursorBlink: true,
-    }});
-    const fitAddon = new FitAddon.FitAddon();
-    term.loadAddon(fitAddon);
-    term.open(document.getElementById('terminal'));
-    fitAddon.fit();
-    window.addEventListener('resize', () => fitAddon.fit());
+    let term = null;
+    let fitAddon = null;
+    let ws = null;
+    let terminalInputBound = false;
 
-    const token = {json.dumps(token)};
-    const wsScheme = location.protocol === 'https:' ? 'wss' : 'ws';
-    const wsUrl = `${{wsScheme}}://${{location.host}}/admin/terminal/ws?token=${{encodeURIComponent(token)}}`;
-    const ws = new WebSocket(wsUrl);
+    function initTerminal(token) {{
+      document.getElementById('terminal-login').style.display = 'none';
+      document.getElementById('terminal-container').style.display = 'block';
 
-    ws.onopen = () => {{
-      term.writeln('\\x1b[32m✅ เชื่อมต่อ Terminal สำเร็จ\\x1b[0m');
-      term.writeln('\\x1b[90mTip: ลากไฟล์มาวางเพื่ออัปโหลดไปที่ /root/ener-ai/data/\\x1b[0m');
-      term.write('\\r\\n');
-    }};
-    ws.onmessage = (event) => term.write(event.data);
-    ws.onclose = () => term.writeln('\\r\\n\\x1b[31m❌ การเชื่อมต่อปิดแล้ว\\x1b[0m');
-    ws.onerror = () => term.writeln('\\r\\n\\x1b[31m❌ WebSocket error\\x1b[0m');
+      if (!term) {{
+        term = new Terminal({{
+          theme: {{
+            background: '#000000',
+            foreground: '#ffffff',
+            cursor: '#00ff88',
+            selection: 'rgba(0,255,136,0.3)',
+          }},
+          fontFamily: 'JetBrains Mono, Cascadia Code, monospace',
+          fontSize: 14,
+          cursorBlink: true,
+        }});
+        fitAddon = new FitAddon.FitAddon();
+        term.loadAddon(fitAddon);
+        term.open(document.getElementById('terminal'));
+        fitAddon.fit();
+        window.addEventListener('resize', () => fitAddon.fit());
+      }}
 
-    term.onData((data) => {{
-      if (ws.readyState === WebSocket.OPEN) ws.send(data);
-    }});
+      if (!terminalInputBound) {{
+        term.onData((data) => {{
+          if (ws && ws.readyState === WebSocket.OPEN) ws.send(data);
+        }});
+        terminalInputBound = true;
+      }}
+
+      const wsScheme = location.protocol === 'https:' ? 'wss' : 'ws';
+      const wsUrl = `${{wsScheme}}://${{location.host}}/admin/terminal/ws?token=${{encodeURIComponent(token)}}`;
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {{
+        term.writeln('\\x1b[32m✅ เชื่อมต่อ Terminal สำเร็จ\\x1b[0m');
+        term.writeln('\\x1b[90mTip: ลากไฟล์มาวางเพื่ออัปโหลดไปที่ /root/ener-ai/data/\\x1b[0m');
+        term.write('\\r\\n');
+      }};
+      ws.onmessage = (event) => term.write(event.data);
+      ws.onclose = () => term.writeln('\\r\\n\\x1b[31m❌ การเชื่อมต่อปิดแล้ว\\x1b[0m');
+      ws.onerror = () => term.writeln('\\r\\n\\x1b[31m❌ WebSocket error\\x1b[0m');
+    }}
+
+    async function verifyTerminal() {{
+      const pass = document.getElementById('term-pass').value;
+      const errorEl = document.getElementById('term-error');
+      errorEl.style.display = 'none';
+
+      const res = await fetch('/admin/terminal/verify', {{
+        method: 'POST',
+        headers: {{ 'Content-Type': 'application/json' }},
+        credentials: 'same-origin',
+        body: JSON.stringify({{ password: pass }}),
+      }});
+
+      if (res.ok) {{
+        const data = await res.json();
+        initTerminal(data.token);
+      }} else {{
+        errorEl.style.display = 'block';
+      }}
+    }}
 
     const dropZone = document.getElementById('drop-zone');
     let dragCounter = 0;
@@ -3483,6 +3567,7 @@ async def terminal_page(request: Request):
     }});
 
     function uploadFile(file) {{
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
       const progressEl = document.getElementById('upload-progress');
       const fillEl = document.getElementById('progress-fill');
       const nameEl = document.getElementById('upload-filename');
@@ -3520,7 +3605,6 @@ async def terminal_page(request: Request):
       }};
 
       xhr.open('POST', '/admin/upload');
-      xhr.setRequestHeader('Authorization', 'Basic ' + btoa('admin:' + {json.dumps(settings.admin_password)}));
       xhr.send(formData);
     }}
   </script>
@@ -3529,11 +3613,29 @@ async def terminal_page(request: Request):
     )
 
 
+@app.post("/admin/terminal/verify")
+async def verify_terminal(request: Request):
+    await _require_admin(request)
+
+    body = await request.json()
+    password = str(body.get("password", ""))
+    if not secrets.compare_digest(password, settings.terminal_password):
+        raise HTTPException(status_code=401, detail="Invalid terminal password")
+
+    now = time.time()
+    _prune_terminal_tokens(now)
+    token = hashlib.sha256(f"{password}{now}{settings.admin_password}".encode()).hexdigest()[:32]
+    _terminal_tokens[token] = now
+    return {"token": token}
+
+
 @app.websocket("/admin/terminal/ws")
 async def terminal_ws(websocket: WebSocket):
     token = websocket.query_params.get("token", "")
-    expected = base64.b64encode(f"admin:{settings.admin_password}".encode()).decode()
-    if not secrets.compare_digest(token, expected):
+    now = time.time()
+    _prune_terminal_tokens(now)
+    issued_at = _terminal_tokens.get(token)
+    if not issued_at or now - issued_at > _TERMINAL_TOKEN_TTL_SECONDS:
         await websocket.close(code=4001)
         return
     await handle_terminal_ws(websocket)

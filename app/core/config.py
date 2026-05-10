@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     telegram_webhook_url: str
     telegram_chat_id: str
     admin_password: str = "ener2026"
+    terminal_password: str = "terminal2026"
 
     anthropic_api_key: str = ""
     groq_api_key: str = ""
