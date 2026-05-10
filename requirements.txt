@@ -19,3 +19,5 @@ google-api-python-client==2.196.0
 PyGithub==2.3.0
 websockets>=13.0
 asyncssh==2.18.0
+PyPDF2==3.0.1
+python-docx==1.1.2

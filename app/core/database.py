@@ -87,6 +87,22 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS projects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                deleted_at DATETIME NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS uploads (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                filename TEXT NOT NULL,
+                filepath TEXT NOT NULL,
+                size_bytes INTEGER,
+                summary TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS news_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL,
@@ -201,4 +217,10 @@ async def init_db():
         ai_run_columns = {row["name"] for row in await cursor.fetchall()}
         if "response_time_ms" not in ai_run_columns:
             await db.execute("ALTER TABLE ai_runs ADD COLUMN response_time_ms INTEGER DEFAULT 0")
+        cursor = await db.execute("PRAGMA table_info(messages)")
+        message_columns = {row["name"] for row in await cursor.fetchall()}
+        if "project_id" not in message_columns:
+            await db.execute("ALTER TABLE messages ADD COLUMN project_id INTEGER REFERENCES projects(id)")
+        if "source" not in message_columns:
+            await db.execute("ALTER TABLE messages ADD COLUMN source TEXT DEFAULT 'telegram'")
         await db.commit()

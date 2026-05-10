@@ -3654,6 +3654,1247 @@ def build_logs_html() -> HTMLResponse:
     return HTMLResponse(content=html)
 
 
+def _workspace_user_id() -> str:
+    return str(settings.telegram_chat_id)
+
+
+def _workspace_upload_dir() -> Path:
+    upload_dir = _data_dir() / "uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    return upload_dir
+
+
+def _normalize_project_id(value: object) -> int | None:
+    if value in {None, "", "all", "null"}:
+        return None
+    try:
+        project_id = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return project_id if project_id > 0 else None
+
+
+async def _workspace_history_rows(project_id: int | None = None, limit: int = 200) -> list[dict]:
+    limit_value = max(1, min(limit, 500))
+    async with get_db() as db:
+        if project_id is None:
+            cursor = await db.execute(
+                """
+                SELECT
+                    id,
+                    role,
+                    content,
+                    COALESCE(source, 'telegram') AS source,
+                    project_id,
+                    datetime(created_at, '+7 hours') AS local_created_at
+                FROM messages
+                WHERE chat_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (_workspace_user_id(), limit_value),
+            )
+        else:
+            cursor = await db.execute(
+                """
+                SELECT
+                    id,
+                    role,
+                    content,
+                    COALESCE(source, 'telegram') AS source,
+                    project_id,
+                    datetime(created_at, '+7 hours') AS local_created_at
+                FROM messages
+                WHERE chat_id = ? AND project_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (_workspace_user_id(), project_id, limit_value),
+            )
+        rows = await cursor.fetchall()
+    return [
+        {
+            "id": int(row["id"]),
+            "role": str(row["role"]),
+            "content": str(row["content"] or ""),
+            "source": str(row["source"] or "telegram"),
+            "project_id": row["project_id"],
+            "created_at": str(row["local_created_at"] or ""),
+        }
+        for row in reversed(rows)
+    ]
+
+
+async def _workspace_save_chat_messages(project_id: int | None, user_text: str, reply_text: str) -> None:
+    async with get_db() as db:
+        await db.execute(
+            """
+            INSERT INTO messages (chat_id, role, content, project_id, source)
+            VALUES (?, ?, ?, ?, 'web')
+            """,
+            (_workspace_user_id(), "user", user_text, project_id),
+        )
+        await db.execute(
+            """
+            INSERT INTO messages (chat_id, role, content, project_id, source)
+            VALUES (?, ?, ?, ?, 'web')
+            """,
+            (_workspace_user_id(), "assistant", reply_text, project_id),
+        )
+        await db.execute(
+            "INSERT INTO audit_logs (action, details) VALUES (?, ?)",
+            ("workspace_chat_saved", f"project_id={project_id or 'all'}"),
+        )
+        await db.commit()
+
+
+async def _workspace_generate_reply(
+    text: str,
+    project_id: int | None,
+    preferred_model: str | None = None,
+) -> str:
+    from app.agents.chat import _build_system_prompt
+    from app.core.ai import _call_anthropic_with_tools, _call_groq_with_tools, chat, get_model_availability
+    from app.core.memory import extract_and_store_long_term_memories
+    from app.core.tools import TOOLS, execute_tool
+
+    history = [
+        {"role": row["role"], "content": row["content"]}
+        for row in await _workspace_history_rows(project_id=project_id, limit=40)
+    ]
+    system_prompt = await _build_system_prompt()
+    availability = get_model_availability()
+    selected_model = str(preferred_model or "").strip().lower() or None
+    response: dict[str, object]
+
+    if selected_model == "haiku" and availability.get("haiku"):
+        response = await _call_anthropic_with_tools(text, system_prompt, history, TOOLS, "MainChatAgent")
+    elif selected_model == "groq" and availability.get("groq"):
+        response = await _call_groq_with_tools(text, system_prompt, history, TOOLS, "MainChatAgent")
+    else:
+        reply_text = await chat(
+            text,
+            system=system_prompt,
+            agent="MainChatAgent",
+            messages=history,
+            preferred_model=selected_model,
+        )
+        response = {"text": reply_text, "tool_calls": []}
+
+    reply = str(response.get("text", "") or "").strip() or "ยังไม่มีคำตอบตอนนี้"
+    tool_calls = response.get("tool_calls", []) or []
+    tool_results: list[str] = []
+
+    for tool_call in tool_calls:
+        if not isinstance(tool_call, dict):
+            continue
+        tool_name = str(tool_call.get("name", "")).strip()
+        tool_input = tool_call.get("input", {}) or {}
+        if not tool_name:
+            continue
+        try:
+            result = await execute_tool(tool_name, tool_input)
+            tool_results.append(f"✅ {result}")
+        except Exception as exc:
+            tool_results.append(f"⚠️ tool {tool_name} ทำงานไม่สำเร็จ: {exc}")
+
+    final_reply = reply if not tool_results else reply + "\n\n" + "\n".join(tool_results)
+    await _workspace_save_chat_messages(project_id, text, final_reply)
+
+    try:
+        async with get_db() as db:
+            await db.execute("DELETE FROM memories WHERE key = 'model_handoff_context'")
+            await db.commit()
+    except Exception:
+        pass
+
+    try:
+        await extract_and_store_long_term_memories(text, final_reply)
+    except Exception:
+        pass
+
+    return final_reply
+
+
+def _read_uploaded_file_text(file_path: Path) -> str:
+    suffix = file_path.suffix.lower()
+    if suffix == ".pdf":
+        from PyPDF2 import PdfReader
+
+        reader = PdfReader(str(file_path))
+        return "\n\n".join((page.extract_text() or "").strip() for page in reader.pages).strip()
+    if suffix == ".docx":
+        from docx import Document
+
+        document = Document(str(file_path))
+        return "\n".join(paragraph.text for paragraph in document.paragraphs).strip()
+    if suffix in {".txt", ".md"}:
+        return file_path.read_text(encoding="utf-8", errors="ignore").strip()
+    raise HTTPException(status_code=400, detail="รองรับเฉพาะ PDF, DOCX, TXT, MD")
+
+
+def _parse_brainstorm_blocks(raw_text: str) -> dict:
+    rounds = []
+    current = None
+    verdict = ""
+    reason = ""
+    for line in str(raw_text or "").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("รอบ "):
+            if current:
+                rounds.append(current)
+            current = {"round": stripped, "ai_a": "", "ai_b": "", "ai_c": ""}
+            continue
+        if stripped.startswith("AI_A:") and current is not None:
+            current["ai_a"] = stripped.replace("AI_A:", "", 1).strip()
+            continue
+        if stripped.startswith("AI_B:") and current is not None:
+            current["ai_b"] = stripped.replace("AI_B:", "", 1).strip()
+            continue
+        if stripped.startswith("AI_C:") and current is not None:
+            current["ai_c"] = stripped.replace("AI_C:", "", 1).strip()
+            continue
+        if stripped.startswith("🎯 คำตัดสิน:"):
+            verdict = stripped.replace("🎯 คำตัดสิน:", "", 1).strip()
+            continue
+        if stripped.startswith("เหตุผล:"):
+            reason = stripped.replace("เหตุผล:", "", 1).strip()
+    if current:
+        rounds.append(current)
+    return {"rounds": rounds, "verdict": verdict, "reason": reason, "raw": raw_text}
+
+
+def build_workspace_html() -> HTMLResponse:
+    html = """<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ener-AI Workspace</title>
+  <style>
+    :root {
+      --bg:#0d0d0d;
+      --sidebar:#141414;
+      --card:#1a1a1a;
+      --accent:#7c3aed;
+      --accent-soft:#a78bfa;
+      --text:#e5e5e5;
+      --subtext:#888;
+      --border:#262626;
+      --danger:#ef4444;
+      --success:#22c55e;
+      --warning:#f59e0b;
+    }
+    * { box-sizing:border-box; }
+    body {
+      margin:0;
+      background:var(--bg);
+      color:var(--text);
+      font-family:Inter, ui-sans-serif, system-ui, sans-serif;
+    }
+    .workspace-shell { display:flex; min-height:100vh; }
+    .sidebar {
+      width:60px;
+      background:var(--sidebar);
+      border-right:1px solid var(--border);
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      padding:14px 0;
+      gap:10px;
+      position:fixed;
+      left:0;
+      top:0;
+      bottom:0;
+      z-index:20;
+    }
+    .nav-icon {
+      width:42px;
+      height:42px;
+      border:none;
+      border-radius:14px;
+      background:transparent;
+      color:var(--subtext);
+      cursor:pointer;
+      font-size:18px;
+    }
+    .nav-icon:hover, .nav-icon.active {
+      color:#fff;
+      background:rgba(124,58,237,0.22);
+      box-shadow:0 0 0 1px rgba(124,58,237,0.3) inset;
+    }
+    .main {
+      margin-left:60px;
+      width:calc(100% - 60px);
+      padding:24px;
+    }
+    .panel { display:none; }
+    .panel.active { display:block; }
+    .panel-header {
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:16px;
+      margin-bottom:20px;
+    }
+    .panel-header h2 { margin:0 0 6px; font-size:24px; }
+    .panel-header p { margin:0; color:var(--subtext); }
+    .card {
+      background:var(--card);
+      border:1px solid var(--border);
+      border-radius:18px;
+      padding:18px;
+    }
+    .home-hero {
+      min-height:220px;
+      display:flex;
+      flex-direction:column;
+      justify-content:center;
+      align-items:center;
+      text-align:center;
+      gap:18px;
+    }
+    .hero-input, .input, .textarea, .select {
+      width:100%;
+      background:#111;
+      color:var(--text);
+      border:1px solid var(--border);
+      border-radius:14px;
+      padding:14px 16px;
+      font-size:15px;
+    }
+    .textarea { min-height:110px; resize:vertical; }
+    .button {
+      border:none;
+      border-radius:12px;
+      padding:11px 16px;
+      background:var(--accent);
+      color:#fff;
+      cursor:pointer;
+      font-weight:600;
+    }
+    .button.secondary { background:#252525; color:var(--text); }
+    .button.ghost { background:transparent; border:1px solid var(--border); color:var(--text); }
+    .button.danger { background:rgba(239,68,68,0.16); color:#fecaca; }
+    .button:disabled { opacity:0.55; cursor:not-allowed; }
+    .tool-grid {
+      display:grid;
+      grid-template-columns:repeat(3, minmax(0, 1fr));
+      gap:14px;
+      margin-top:22px;
+    }
+    .tool-card { cursor:pointer; display:flex; flex-direction:column; gap:8px; }
+    .tool-card strong { font-size:16px; }
+    .tool-card span { color:var(--subtext); font-size:13px; }
+    .chat-layout, .files-layout, .projects-layout {
+      display:grid;
+      grid-template-columns:280px minmax(0, 1fr);
+      gap:18px;
+    }
+    .chat-projects, .panel-stack { display:grid; gap:12px; }
+    .project-list, .list {
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      max-height:70vh;
+      overflow:auto;
+    }
+    .project-item, .list-item {
+      border:1px solid var(--border);
+      background:#121212;
+      border-radius:14px;
+      padding:12px 14px;
+      cursor:pointer;
+    }
+    .project-item.active { border-color:var(--accent); background:rgba(124,58,237,0.12); }
+    .messages {
+      min-height:60vh;
+      max-height:70vh;
+      overflow:auto;
+      display:flex;
+      flex-direction:column;
+      gap:14px;
+      margin-bottom:14px;
+    }
+    .message { display:flex; flex-direction:column; gap:6px; max-width:82%; }
+    .message.user { align-self:flex-end; }
+    .message.ai { align-self:flex-start; }
+    .bubble {
+      border-radius:18px;
+      padding:14px 16px;
+      line-height:1.55;
+      word-break:break-word;
+      white-space:pre-wrap;
+    }
+    .message.user .bubble { background:var(--accent); }
+    .message.ai .bubble { background:#1b1b1b; border:1px solid var(--border); }
+    .meta { font-size:12px; color:var(--subtext); display:flex; gap:8px; align-items:center; }
+    .composer {
+      display:grid;
+      grid-template-columns:minmax(0, 1fr) 160px 96px;
+      gap:10px;
+    }
+    .kanban {
+      display:grid;
+      grid-template-columns:repeat(3, minmax(0, 1fr));
+      gap:16px;
+    }
+    .kanban-column { background:var(--card); border:1px solid var(--border); border-radius:18px; padding:16px; }
+    .kanban-column h3 { margin:0 0 12px; }
+    .task-card {
+      background:#121212;
+      border:1px solid var(--border);
+      border-radius:14px;
+      padding:12px;
+      margin-bottom:10px;
+    }
+    .badge { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--subtext); }
+    .news-grid, .memory-grid, .notes-groups, .file-list { display:grid; gap:12px; }
+    .chips { display:flex; gap:8px; flex-wrap:wrap; }
+    .chip {
+      border:1px solid var(--border);
+      background:#141414;
+      border-radius:999px;
+      padding:6px 12px;
+      color:var(--subtext);
+      cursor:pointer;
+      font-size:12px;
+    }
+    .chip.active { border-color:var(--accent); color:#fff; }
+    .brain-grid {
+      display:grid;
+      grid-template-columns:repeat(3, minmax(0, 1fr));
+      gap:16px;
+      margin-top:16px;
+    }
+    .brain-card { min-height:180px; }
+    .brain-card h4, .verdict-card h4 { margin:0 0 10px; }
+    .verdict-card {
+      margin-top:16px;
+      background:rgba(124,58,237,0.18);
+      border:1px solid rgba(124,58,237,0.45);
+    }
+    .upload-drop {
+      border:1px dashed rgba(124,58,237,0.5);
+      border-radius:18px;
+      padding:26px;
+      text-align:center;
+      color:var(--subtext);
+    }
+    table { width:100%; border-collapse:collapse; }
+    th, td { text-align:left; padding:12px; border-bottom:1px solid var(--border); }
+    th { color:var(--subtext); font-size:13px; font-weight:600; }
+    .toast-stack {
+      position:fixed;
+      top:18px;
+      right:18px;
+      z-index:50;
+      display:grid;
+      gap:10px;
+    }
+    .toast {
+      min-width:260px;
+      background:#171717;
+      border:1px solid var(--border);
+      border-radius:14px;
+      padding:12px 14px;
+      box-shadow:0 12px 24px rgba(0,0,0,0.35);
+    }
+    .toast.success { border-color:rgba(34,197,94,0.4); }
+    .toast.error { border-color:rgba(239,68,68,0.4); }
+    .spinner-overlay {
+      position:fixed;
+      inset:0;
+      background:rgba(0,0,0,0.45);
+      display:none;
+      align-items:center;
+      justify-content:center;
+      z-index:40;
+    }
+    .spinner {
+      width:42px;
+      height:42px;
+      border-radius:999px;
+      border:3px solid rgba(255,255,255,0.12);
+      border-top-color:var(--accent-soft);
+      animation:spin 1s linear infinite;
+    }
+    .thinking { display:inline-flex; gap:5px; }
+    .thinking span {
+      width:7px;
+      height:7px;
+      border-radius:999px;
+      background:var(--accent-soft);
+      animation:bounce 1.2s infinite ease-in-out;
+    }
+    .thinking span:nth-child(2) { animation-delay:0.15s; }
+    .thinking span:nth-child(3) { animation-delay:0.3s; }
+    .mobile-tabs {
+      display:none;
+      position:fixed;
+      left:0;
+      right:0;
+      bottom:0;
+      background:var(--sidebar);
+      border-top:1px solid var(--border);
+      padding:8px 10px;
+      z-index:25;
+      justify-content:space-between;
+    }
+    .mobile-tabs .nav-icon { width:40px; height:40px; }
+    .inline-row { display:flex; gap:10px; flex-wrap:wrap; }
+    .subtle { color:var(--subtext); font-size:13px; }
+    pre.code {
+      background:#121212;
+      border:1px solid var(--border);
+      border-radius:14px;
+      padding:14px;
+      overflow:auto;
+      white-space:pre-wrap;
+    }
+    @keyframes spin { to { transform:rotate(360deg); } }
+    @keyframes bounce {
+      0%,80%,100% { transform:translateY(0); opacity:0.35; }
+      40% { transform:translateY(-4px); opacity:1; }
+    }
+    @media (max-width: 1024px) {
+      .tool-grid, .kanban, .brain-grid, .chat-layout, .files-layout, .projects-layout {
+        grid-template-columns:1fr;
+      }
+    }
+    @media (max-width: 768px) {
+      .sidebar { display:none; }
+      .main { margin-left:0; width:100%; padding:18px 14px 88px; }
+      .mobile-tabs { display:flex; }
+      .composer { grid-template-columns:1fr; }
+      .messages { max-height:none; min-height:40vh; }
+    }
+  </style>
+</head>
+<body>
+  <div class="workspace-shell">
+    <aside class="sidebar">
+      <button class="nav-icon active" title="Home" data-panel="home">🏠</button>
+      <button class="nav-icon" title="Chat" data-panel="chat">💬</button>
+      <button class="nav-icon" title="Notes" data-panel="notes">📝</button>
+      <button class="nav-icon" title="Tasks" data-panel="tasks">✅</button>
+      <button class="nav-icon" title="Memory" data-panel="memory">🧠</button>
+      <button class="nav-icon" title="Brainstorm" data-panel="brainstorm">🔥</button>
+      <button class="nav-icon" title="News" data-panel="news">📰</button>
+      <button class="nav-icon" title="Files" data-panel="files">📁</button>
+      <button class="nav-icon" title="Projects" data-panel="projects">🗂️</button>
+    </aside>
+    <main class="main">
+      <section class="panel active" id="panel-home">
+        <div class="card home-hero">
+          <div>
+            <h1 style="margin:0 0 8px;font-size:36px;">Ener-AI Workspace</h1>
+            <p class="subtle">Single-owner assistant. Web + Telegram = same memory, same tasks, same notes.</p>
+          </div>
+          <div style="width:min(760px,100%);display:grid;gap:10px;">
+            <input id="home-query" class="hero-input" placeholder="Ask Ener-AI anything, create anything">
+            <div class="inline-row" style="justify-content:center;">
+              <button class="button" id="home-send">Ask Ener-AI</button>
+              <button class="button secondary" data-open-panel="chat">Open Chat</button>
+            </div>
+          </div>
+        </div>
+        <div class="tool-grid" id="home-tools"></div>
+      </section>
+
+      <section class="panel" id="panel-chat">
+        <div class="panel-header">
+          <div>
+            <h2>Chat</h2>
+            <p>Unified history from Telegram + Web using the same owner id.</p>
+          </div>
+        </div>
+        <div class="chat-layout">
+          <div class="card chat-projects">
+            <div class="inline-row">
+              <button class="button" id="new-project-btn">New Project</button>
+              <button class="button secondary" id="refresh-projects-btn">Refresh</button>
+            </div>
+            <div class="project-list" id="projects-list"></div>
+          </div>
+          <div class="card">
+            <div class="messages" id="chat-messages"></div>
+            <div class="composer">
+              <textarea id="chat-input" class="textarea" placeholder="พิมพ์ข้อความถึง Ener-AI..."></textarea>
+              <select id="chat-model" class="select">
+                <option value="">Auto / Active</option>
+                <option value="haiku">Claude Haiku</option>
+                <option value="groq">Groq</option>
+                <option value="gemini">Gemini</option>
+                <option value="qwen3b">Qwen 3B</option>
+                <option value="qwen7b">Qwen 7B</option>
+              </select>
+              <button class="button" id="chat-send-btn">Send</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-notes">
+        <div class="panel-header"><div><h2>Notes</h2><p>Brain-style capture into the same notes table.</p></div></div>
+        <div class="card panel-stack">
+          <div class="inline-row">
+            <input id="notes-search" class="input" placeholder="Search notes...">
+          </div>
+          <textarea id="notes-input" class="textarea" placeholder="Drop a thought..."></textarea>
+          <div class="inline-row">
+            <button class="button" id="notes-save-btn">Save with BrainAgent</button>
+            <button class="button secondary" id="notes-refresh-btn">Refresh</button>
+          </div>
+        </div>
+        <div class="notes-groups" id="notes-groups" style="margin-top:16px;"></div>
+      </section>
+
+      <section class="panel" id="panel-tasks">
+        <div class="panel-header"><div><h2>Tasks</h2><p>Kanban view backed by the existing tasks table.</p></div></div>
+        <div class="kanban" id="tasks-board"></div>
+      </section>
+
+      <section class="panel" id="panel-memory">
+        <div class="panel-header"><div><h2>Memory</h2><p>Long-term memories shared with Telegram.</p></div></div>
+        <div class="memory-grid" id="memory-list"></div>
+      </section>
+
+      <section class="panel" id="panel-brainstorm">
+        <div class="panel-header"><div><h2>Brainstorm</h2><p>Run the 3-agent debate and inspect the final verdict.</p></div></div>
+        <div class="card panel-stack">
+          <textarea id="brainstorm-input" class="textarea" placeholder="ใส่หัวข้อที่อยากให้ถกกัน..."></textarea>
+          <div class="inline-row">
+            <button class="button" id="brainstorm-btn">Start Debate</button>
+          </div>
+        </div>
+        <div class="brain-grid" id="brainstorm-grid" style="margin-top:16px;"></div>
+        <div id="brainstorm-verdict"></div>
+      </section>
+
+      <section class="panel" id="panel-news">
+        <div class="panel-header">
+          <div><h2>News</h2><p>Daily news cards from the shared news database.</p></div>
+          <div class="inline-row">
+            <button class="button secondary" id="news-fetch-btn">Fetch Latest</button>
+          </div>
+        </div>
+        <div class="chips" id="news-filters"></div>
+        <div class="news-grid" id="news-list" style="margin-top:16px;"></div>
+      </section>
+
+      <section class="panel" id="panel-files">
+        <div class="panel-header"><div><h2>Files</h2><p>Upload PDF, DOCX, TXT, MD and summarize or ask questions.</p></div></div>
+        <div class="files-layout">
+          <div class="card panel-stack">
+            <div class="upload-drop" id="upload-drop">
+              <p>Drop files here or choose a file</p>
+              <input id="file-input" type="file" accept=".pdf,.docx,.txt,.md">
+            </div>
+            <button class="button" id="upload-btn">Upload Selected File</button>
+          </div>
+          <div class="card">
+            <div class="file-list" id="files-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-projects">
+        <div class="panel-header">
+          <div><h2>Projects</h2><p>Named labels for web conversations.</p></div>
+          <div class="inline-row"><button class="button" id="projects-create-btn">New Project</button></div>
+        </div>
+        <div class="card">
+          <table>
+            <thead>
+              <tr><th>Name</th><th>Created</th><th>Messages</th><th>Last active</th><th></th></tr>
+            </thead>
+            <tbody id="projects-table"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <nav class="mobile-tabs">
+    <button class="nav-icon active" title="Home" data-panel="home">🏠</button>
+    <button class="nav-icon" title="Chat" data-panel="chat">💬</button>
+    <button class="nav-icon" title="Notes" data-panel="notes">📝</button>
+    <button class="nav-icon" title="Tasks" data-panel="tasks">✅</button>
+    <button class="nav-icon" title="Files" data-panel="files">📁</button>
+  </nav>
+
+  <div class="toast-stack" id="toast-stack"></div>
+  <div class="spinner-overlay" id="spinner-overlay"><div class="spinner"></div></div>
+
+  <script>
+    const state = {
+      activePanel: 'home',
+      selectedProjectId: null,
+      selectedProjectName: 'All',
+      newsFilter: 'all',
+      selectedFileId: null,
+    };
+
+    const toolCards = [
+      ['💬', 'AI Chat', 'Talk with Ener-AI in the shared owner context', 'chat'],
+      ['📝', 'AI Notes', 'Capture and categorize thoughts with BrainAgent', 'notes'],
+      ['✅', 'AI Tasks', 'Create and manage tasks from the same task table', 'tasks'],
+      ['🔥', 'AI Brainstorm', 'Run 3-agent debate and final verdict', 'brainstorm'],
+      ['📰', 'AI News', 'Review the daily news database and fetch latest', 'news'],
+      ['🔮', 'AI Tarot', 'Open chat and ask for tarot reading', 'chat', '/tarot ขอคำทำนายให้หน่อย'],
+      ['💻', 'AI Code', 'Open chat for coding help using the shared context', 'chat', 'ช่วยเขียนโค้ดให้หน่อย'],
+      ['📣', 'AI Content', 'Open chat for content ideas and captions', 'chat', 'ช่วยคิด content ให้หน่อย'],
+      ['🧠', 'AI Memory', 'Inspect long-term memory entries', 'memory'],
+    ];
+
+    const categoryLabels = {
+      all: 'ทั้งหมด',
+      ai: 'AI',
+      tools: 'Tools',
+      business: 'Business',
+      security: 'Security',
+      mystery: 'Mystery',
+      world: 'World'
+    };
+
+    function showToast(message, kind='success') {
+      const stack = document.getElementById('toast-stack');
+      const el = document.createElement('div');
+      el.className = `toast ${kind}`;
+      el.textContent = message;
+      stack.appendChild(el);
+      setTimeout(() => el.remove(), 3200);
+    }
+
+    function setLoading(isLoading) {
+      document.getElementById('spinner-overlay').style.display = isLoading ? 'flex' : 'none';
+      document.querySelectorAll('button, input, textarea, select').forEach((el) => {
+        if (el.id === 'file-input') return;
+        el.disabled = isLoading;
+      });
+    }
+
+    async function api(url, options={}) {
+      const response = await fetch(url, Object.assign({
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin'
+      }, options));
+      if (response.status === 307 || response.redirected) {
+        window.location.href = '/admin/otp';
+        throw new Error('redirecting');
+      }
+      if (!response.ok) {
+        let detail = `Request failed (${response.status})`;
+        try {
+          const data = await response.json();
+          detail = data.detail || detail;
+        } catch (error) {}
+        throw new Error(detail);
+      }
+      const contentType = response.headers.get('content-type') || '';
+      return contentType.includes('application/json') ? response.json() : response.text();
+    }
+
+    function switchPanel(panelId) {
+      state.activePanel = panelId;
+      document.querySelectorAll('.panel').forEach((panel) => panel.classList.remove('active'));
+      document.getElementById(`panel-${panelId}`).classList.add('active');
+      document.querySelectorAll('[data-panel]').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.panel === panelId);
+      });
+      if (panelId === 'chat') loadChatHistory();
+      if (panelId === 'notes') loadNotes();
+      if (panelId === 'tasks') loadTasks();
+      if (panelId === 'memory') loadMemory();
+      if (panelId === 'news') loadNews();
+      if (panelId === 'files') loadFiles();
+      if (panelId === 'projects') loadProjectsTable();
+    }
+
+    function renderMarkdown(text) {
+      let html = String(text || '');
+      html = html.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      html = html.replace(/```([\\s\\S]*?)```/g, '<pre class="code">$1</pre>');
+      html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+      html = html.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');
+      html = html.replace(/\\*([^*]+)\\*/g, '<em>$1</em>');
+      html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+      html = html.replace(/(<li>.*<\\/li>)/gs, '<ul>$1</ul>');
+      html = html.replace(/\\n/g, '<br>');
+      return html;
+    }
+
+    function renderHomeTools() {
+      const wrap = document.getElementById('home-tools');
+      wrap.innerHTML = toolCards.map(([icon, title, desc, panel, prompt]) => `
+        <div class="card tool-card" data-panel-target="${panel}" data-prompt="${prompt || ''}">
+          <div style="font-size:24px">${icon}</div>
+          <strong>${title}</strong>
+          <span>${desc}</span>
+        </div>
+      `).join('');
+      wrap.querySelectorAll('.tool-card').forEach((card) => {
+        card.addEventListener('click', () => {
+          const panel = card.dataset.panelTarget;
+          const prompt = card.dataset.prompt;
+          switchPanel(panel);
+          if (panel === 'chat' && prompt) {
+            document.getElementById('chat-input').value = prompt;
+          }
+        });
+      });
+    }
+
+    function formatSource(source) {
+      return source === 'web' ? '🌐 Web' : '💬 Telegram';
+    }
+
+    async function loadProjectsList() {
+      const data = await api('/workspace/projects');
+      const container = document.getElementById('projects-list');
+      const projects = [{ id: null, name: 'All', message_count: data.total_messages || 0, last_active: '' }].concat(data.projects || []);
+      container.innerHTML = projects.map((project) => `
+        <div class="project-item ${project.id === state.selectedProjectId ? 'active' : ''}" data-id="${project.id ?? ''}">
+          <strong>${project.name}</strong>
+          <div class="subtle">${project.message_count || 0} messages</div>
+        </div>
+      `).join('');
+      container.querySelectorAll('.project-item').forEach((item) => {
+        item.addEventListener('click', () => {
+          const raw = item.dataset.id;
+          state.selectedProjectId = raw ? Number(raw) : null;
+          state.selectedProjectName = item.querySelector('strong').textContent;
+          loadProjectsList();
+          loadChatHistory();
+        });
+      });
+    }
+
+    async function loadChatHistory() {
+      const query = state.selectedProjectId ? `?project_id=${state.selectedProjectId}` : '';
+      const data = await api(`/workspace/chat/history${query}`);
+      const wrap = document.getElementById('chat-messages');
+      wrap.innerHTML = (data.messages || []).map((msg) => `
+        <div class="message ${msg.role === 'user' ? 'user' : 'ai'}">
+          <div class="meta"><span>${formatSource(msg.source)}</span><span>${msg.created_at || ''}</span></div>
+          <div class="bubble">${msg.role === 'assistant' ? renderMarkdown(msg.content) : msg.content}</div>
+        </div>
+      `).join('') || '<div class="subtle">ยังไม่มีข้อความ</div>';
+      wrap.scrollTop = wrap.scrollHeight;
+    }
+
+    async function sendChat() {
+      const input = document.getElementById('chat-input');
+      const text = input.value.trim();
+      if (!text) return;
+      setLoading(true);
+      try {
+        const data = await api('/workspace/chat/send', {
+          method: 'POST',
+          body: JSON.stringify({
+            text,
+            project_id: state.selectedProjectId,
+            model: document.getElementById('chat-model').value || null
+          })
+        });
+        input.value = '';
+        await loadChatHistory();
+        await loadProjectsList();
+        showToast(data.reply ? 'ส่งข้อความแล้ว' : 'ตอบกลับสำเร็จ');
+      } catch (error) {
+        showToast(error.message || 'ส่งข้อความไม่สำเร็จ', 'error');
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    async function createProject() {
+      const name = window.prompt('Project name');
+      if (!name) return;
+      setLoading(true);
+      try {
+        await api('/workspace/projects/create', {
+          method: 'POST',
+          body: JSON.stringify({ name })
+        });
+        await loadProjectsList();
+        await loadProjectsTable();
+        showToast('สร้างโปรเจ็กต์แล้ว');
+      } catch (error) {
+        showToast(error.message || 'สร้างโปรเจ็กต์ไม่สำเร็จ', 'error');
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    async function loadProjectsTable() {
+      const data = await api('/workspace/projects');
+      const body = document.getElementById('projects-table');
+      body.innerHTML = (data.projects || []).map((project) => `
+        <tr>
+          <td><button class="button ghost project-open-btn" data-id="${project.id}">${project.name}</button></td>
+          <td>${project.created_at || ''}</td>
+          <td>${project.message_count || 0}</td>
+          <td>${project.last_active || '-'}</td>
+          <td><button class="button danger project-delete-btn" data-id="${project.id}">Delete</button></td>
+        </tr>
+      `).join('') || '<tr><td colspan="5" class="subtle">ยังไม่มีโปรเจ็กต์</td></tr>';
+      body.querySelectorAll('.project-open-btn').forEach((btn) => btn.addEventListener('click', () => {
+        state.selectedProjectId = Number(btn.dataset.id);
+        switchPanel('chat');
+        loadProjectsList();
+      }));
+      body.querySelectorAll('.project-delete-btn').forEach((btn) => btn.addEventListener('click', async () => {
+        if (!window.confirm('ลบโปรเจ็กต์นี้?')) return;
+        setLoading(true);
+        try {
+          await api(`/workspace/projects/${btn.dataset.id}`, { method: 'DELETE' });
+          if (state.selectedProjectId === Number(btn.dataset.id)) state.selectedProjectId = null;
+          await loadProjectsList();
+          await loadProjectsTable();
+          showToast('ลบโปรเจ็กต์แล้ว');
+        } catch (error) {
+          showToast(error.message || 'ลบโปรเจ็กต์ไม่สำเร็จ', 'error');
+        } finally {
+          setLoading(false);
+        }
+      }));
+    }
+
+    async function loadNotes() {
+      const data = await api('/workspace/notes');
+      const keyword = (document.getElementById('notes-search').value || '').toLowerCase();
+      const groups = {};
+      (data.notes || []).forEach((note) => {
+        const hay = `${note.content} ${note.category} ${note.ai_summary}`.toLowerCase();
+        if (keyword && !hay.includes(keyword)) return;
+        if (!groups[note.category]) groups[note.category] = [];
+        groups[note.category].push(note);
+      });
+      const wrap = document.getElementById('notes-groups');
+      wrap.innerHTML = Object.entries(groups).map(([category, notes]) => `
+        <div class="card">
+          <h3 style="margin:0 0 12px;">${category}</h3>
+          ${notes.map((note) => `
+            <details class="list-item">
+              <summary>${note.ai_summary || note.content.slice(0, 80)}</summary>
+              <div style="margin-top:8px;" class="subtle">${note.created_at || ''}</div>
+              <div style="margin-top:10px;white-space:pre-wrap;">${note.content}</div>
+            </details>
+          `).join('')}
+        </div>
+      `).join('') || '<div class="card subtle">ยังไม่มีโน้ต</div>';
+    }
+
+    async function saveNote() {
+      const text = document.getElementById('notes-input').value.trim();
+      if (!text) return;
+      setLoading(true);
+      try {
+        const data = await api('/workspace/notes/save', {
+          method: 'POST',
+          body: JSON.stringify({ text })
+        });
+        document.getElementById('notes-input').value = '';
+        await loadNotes();
+        showToast(data.message || 'บันทึกโน้ตแล้ว');
+      } catch (error) {
+        showToast(error.message || 'บันทึกโน้ตไม่สำเร็จ', 'error');
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    function renderTaskColumn(title, status, tasks) {
+      return `
+        <div class="kanban-column">
+          <div class="inline-row" style="justify-content:space-between;align-items:center;">
+            <h3>${title}</h3>
+            <button class="button secondary add-task-btn" data-status="${status}">+ Add</button>
+          </div>
+          <div class="list">${tasks.map((task) => `
+            <div class="task-card">
+              <strong>${task.title}</strong>
+              <div class="badge">${task.priority_badge} ${task.priority}</div>
+              <div class="subtle">${task.deadline_hint || ''}</div>
+              <div class="inline-row" style="margin-top:10px;">
+                ${status !== 'done' ? `<button class="button ghost task-move-btn" data-id="${task.id}" data-next="${status === 'open' ? 'in_progress' : 'done'}">${status === 'open' ? 'Start' : 'Done'}</button>` : ''}
+                ${status !== 'done' ? `<button class="button danger task-done-btn" data-id="${task.id}">Complete</button>` : ''}
+              </div>
+            </div>
+          `).join('') || '<div class="subtle">ไม่มีรายการ</div>'}</div>
+        </div>
+      `;
+    }
+
+    async function loadTasks() {
+      const data = await api('/workspace/tasks');
+      const byStatus = { open: [], in_progress: [], done: [] };
+      (data.tasks || []).forEach((task) => {
+        byStatus[task.status] = byStatus[task.status] || [];
+        byStatus[task.status].push(task);
+      });
+      const board = document.getElementById('tasks-board');
+      board.innerHTML =
+        renderTaskColumn('Todo', 'open', byStatus.open || []) +
+        renderTaskColumn('In Progress', 'in_progress', byStatus.in_progress || []) +
+        renderTaskColumn('Done', 'done', byStatus.done || []);
+
+      board.querySelectorAll('.add-task-btn').forEach((btn) => btn.addEventListener('click', async () => {
+        const title = window.prompt('Task title');
+        if (!title) return;
+        const deadline_hint = window.prompt('Deadline hint (optional)') || '';
+        setLoading(true);
+        try {
+          await api('/workspace/tasks/create', {
+            method: 'POST',
+            body: JSON.stringify({ title, deadline_hint, status: btn.dataset.status })
+          });
+          await loadTasks();
+          showToast('สร้าง task แล้ว');
+        } catch (error) {
+          showToast(error.message || 'สร้าง task ไม่สำเร็จ', 'error');
+        } finally {
+          setLoading(false);
+        }
+      }));
+      board.querySelectorAll('.task-move-btn').forEach((btn) => btn.addEventListener('click', async () => {
+        setLoading(true);
+        try {
+          await api(`/workspace/tasks/${btn.dataset.id}/status`, {
+            method: 'POST',
+            body: JSON.stringify({ status: btn.dataset.next })
+          });
+          await loadTasks();
+        } catch (error) {
+          showToast(error.message || 'อัปเดต task ไม่สำเร็จ', 'error');
+        } finally {
+          setLoading(false);
+        }
+      }));
+      board.querySelectorAll('.task-done-btn').forEach((btn) => btn.addEventListener('click', async () => {
+        setLoading(true);
+        try {
+          await api(`/workspace/tasks/${btn.dataset.id}/done`, { method: 'POST' });
+          await loadTasks();
+        } catch (error) {
+          showToast(error.message || 'ปิด task ไม่สำเร็จ', 'error');
+        } finally {
+          setLoading(false);
+        }
+      }));
+    }
+
+    async function loadMemory() {
+      const data = await api('/workspace/memory');
+      const wrap = document.getElementById('memory-list');
+      wrap.innerHTML = (data.memories || []).map((item) => `
+        <div class="card">
+          <div style="white-space:pre-wrap;">${item.content}</div>
+          <div class="subtle" style="margin-top:8px;">${item.created_at || ''}</div>
+        </div>
+      `).join('') || '<div class="card subtle">ยังไม่มีความจำระยะยาว</div>';
+    }
+
+    async function runBrainstorm() {
+      const topic = document.getElementById('brainstorm-input').value.trim();
+      if (!topic) return;
+      document.getElementById('brainstorm-grid').innerHTML = `
+        <div class="card brain-card"><h4>AI_A</h4><div class="thinking"><span></span><span></span><span></span></div></div>
+        <div class="card brain-card"><h4>AI_B</h4><div class="thinking"><span></span><span></span><span></span></div></div>
+        <div class="card brain-card"><h4>AI_C</h4><div class="thinking"><span></span><span></span><span></span></div></div>
+      `;
+      setLoading(true);
+      try {
+        const data = await api('/workspace/brainstorm', {
+          method: 'POST',
+          body: JSON.stringify({ topic })
+        });
+        const rounds = data.rounds || [];
+        const latest = rounds[rounds.length - 1] || {};
+        document.getElementById('brainstorm-grid').innerHTML = `
+          <div class="card brain-card"><h4>AI_A</h4><div>${renderMarkdown(latest.ai_a || data.raw || '')}</div></div>
+          <div class="card brain-card"><h4>AI_B</h4><div>${renderMarkdown(latest.ai_b || '')}</div></div>
+          <div class="card brain-card"><h4>AI_C</h4><div>${renderMarkdown(latest.ai_c || '')}</div></div>
+        `;
+        document.getElementById('brainstorm-verdict').innerHTML = `
+          <div class="card verdict-card">
+            <h4>Final Verdict</h4>
+            <div>${data.verdict || '-'}</div>
+            <div class="subtle" style="margin-top:8px;">${data.reason || ''}</div>
+            <details style="margin-top:12px;"><summary>Raw debate</summary><pre class="code">${(data.raw || '').replace(/</g, '&lt;')}</pre></details>
+          </div>
+        `;
+      } catch (error) {
+        showToast(error.message || 'brainstorm ไม่สำเร็จ', 'error');
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    async function loadNews() {
+      const data = await api('/workspace/news');
+      const items = data.news || [];
+      const filters = ['all'].concat([...new Set(items.map((item) => item.category || 'ai'))]);
+      const chips = document.getElementById('news-filters');
+      chips.innerHTML = filters.map((name) => `<button class="chip ${name === state.newsFilter ? 'active' : ''}" data-name="${name}">${categoryLabels[name] || name}</button>`).join('');
+      chips.querySelectorAll('.chip').forEach((chip) => chip.addEventListener('click', () => {
+        state.newsFilter = chip.dataset.name;
+        loadNews();
+      }));
+      const filtered = state.newsFilter === 'all' ? items : items.filter((item) => (item.category || 'ai') === state.newsFilter);
+      document.getElementById('news-list').innerHTML = filtered.map((item) => `
+        <div class="card">
+          <strong>${item.title}</strong>
+          <div class="subtle" style="margin:8px 0;">${item.source || ''} · ${item.fetched_at || ''}</div>
+          <div>${item.summary || ''}</div>
+          <div class="inline-row" style="justify-content:space-between;margin-top:12px;">
+            <span class="badge">score: ${item.relevance || '-'}</span>
+            <a class="button ghost" href="${item.url || '#'}" target="_blank" rel="noopener noreferrer">Open</a>
+          </div>
+        </div>
+      `).join('') || '<div class="card subtle">ยังไม่มีข่าวในฐานข้อมูล</div>';
+    }
+
+    async function fetchLatestNews() {
+      setLoading(true);
+      try {
+        await api('/workspace/news/fetch', { method: 'POST' });
+        await loadNews();
+        showToast('ดึงข่าวล่าสุดแล้ว');
+      } catch (error) {
+        showToast(error.message || 'ดึงข่าวไม่สำเร็จ', 'error');
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    async function loadFiles() {
+      const data = await api('/workspace/files');
+      const wrap = document.getElementById('files-list');
+      wrap.innerHTML = (data.files || []).map((file) => `
+        <div class="list-item">
+          <strong>${file.filename}</strong>
+          <div class="subtle">${file.size_bytes || 0} bytes · ${file.created_at || ''}</div>
+          ${file.summary ? `<div style="margin:10px 0;">${renderMarkdown(file.summary)}</div>` : ''}
+          <div class="inline-row">
+            <button class="button secondary file-summary-btn" data-id="${file.id}">Summarize</button>
+            <button class="button ghost file-ask-btn" data-id="${file.id}">Ask</button>
+          </div>
+        </div>
+      `).join('') || '<div class="subtle">ยังไม่มีไฟล์อัปโหลด</div>';
+      wrap.querySelectorAll('.file-summary-btn').forEach((btn) => btn.addEventListener('click', () => summarizeFile(btn.dataset.id)));
+      wrap.querySelectorAll('.file-ask-btn').forEach((btn) => btn.addEventListener('click', () => askFile(btn.dataset.id)));
+    }
+
+    async function uploadSelectedFile() {
+      const input = document.getElementById('file-input');
+      const file = input.files[0];
+      if (!file) return;
+      const formData = new FormData();
+      formData.append('file', file);
+      setLoading(true);
+      try {
+        const response = await fetch('/workspace/files/upload', {
+          method: 'POST',
+          body: formData,
+          credentials: 'same-origin'
+        });
+        if (!response.ok) throw new Error('อัปโหลดไฟล์ไม่สำเร็จ');
+        input.value = '';
+        await loadFiles();
+        showToast('อัปโหลดไฟล์แล้ว');
+      } catch (error) {
+        showToast(error.message || 'อัปโหลดไฟล์ไม่สำเร็จ', 'error');
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    async function summarizeFile(fileId) {
+      setLoading(true);
+      try {
+        await api(`/workspace/files/${fileId}/summarize`, { method: 'POST' });
+        await loadFiles();
+        showToast('สรุปไฟล์แล้ว');
+      } catch (error) {
+        showToast(error.message || 'สรุปไฟล์ไม่สำเร็จ', 'error');
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    async function askFile(fileId) {
+      const question = window.prompt('Ask about this file');
+      if (!question) return;
+      setLoading(true);
+      try {
+        const data = await api(`/workspace/files/${fileId}/ask`, {
+          method: 'POST',
+          body: JSON.stringify({ question })
+        });
+        switchPanel('chat');
+        document.getElementById('chat-messages').insertAdjacentHTML('beforeend', `
+          <div class="message ai">
+            <div class="meta"><span>🌐 Web</span><span>file answer</span></div>
+            <div class="bubble">${renderMarkdown(data.answer || '')}</div>
+          </div>
+        `);
+        showToast('ตอบคำถามจากไฟล์แล้ว');
+      } catch (error) {
+        showToast(error.message || 'ถามไฟล์ไม่สำเร็จ', 'error');
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    function bindNav() {
+      document.querySelectorAll('[data-panel]').forEach((btn) => btn.addEventListener('click', () => switchPanel(btn.dataset.panel)));
+      document.querySelectorAll('[data-open-panel]').forEach((btn) => btn.addEventListener('click', () => switchPanel(btn.dataset.openPanel)));
+    }
+
+    async function initWorkspace() {
+      bindNav();
+      renderHomeTools();
+      document.getElementById('home-send').addEventListener('click', () => {
+        const value = document.getElementById('home-query').value.trim();
+        switchPanel('chat');
+        document.getElementById('chat-input').value = value;
+        if (value) sendChat();
+      });
+      document.getElementById('chat-send-btn').addEventListener('click', sendChat);
+      document.getElementById('new-project-btn').addEventListener('click', createProject);
+      document.getElementById('refresh-projects-btn').addEventListener('click', loadProjectsList);
+      document.getElementById('projects-create-btn').addEventListener('click', createProject);
+      document.getElementById('notes-save-btn').addEventListener('click', saveNote);
+      document.getElementById('notes-refresh-btn').addEventListener('click', loadNotes);
+      document.getElementById('notes-search').addEventListener('input', loadNotes);
+      document.getElementById('brainstorm-btn').addEventListener('click', runBrainstorm);
+      document.getElementById('news-fetch-btn').addEventListener('click', fetchLatestNews);
+      document.getElementById('upload-btn').addEventListener('click', uploadSelectedFile);
+      document.getElementById('upload-drop').addEventListener('dragover', (event) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'copy';
+      });
+      document.getElementById('upload-drop').addEventListener('drop', (event) => {
+        event.preventDefault();
+        const files = event.dataTransfer.files;
+        if (files && files.length) {
+          document.getElementById('file-input').files = files;
+        }
+      });
+      await loadProjectsList();
+      await loadChatHistory();
+    }
+
+    initWorkspace().catch((error) => showToast(error.message || 'โหลด workspace ไม่สำเร็จ', 'error'));
+  </script>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global scheduler
@@ -3684,6 +4925,422 @@ async def webhook(request: Request):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/workspace")
+async def workspace_page(request: Request):
+    await _require_admin(request)
+    return build_workspace_html()
+
+
+@app.post("/workspace/chat/send")
+async def workspace_chat_send(request: Request):
+    await _require_admin(request)
+    payload = await request.json()
+    text = str(payload.get("text", "")).strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="กรุณาพิมพ์ข้อความ")
+    project_id = _normalize_project_id(payload.get("project_id"))
+    model = str(payload.get("model", "")).strip().lower() or None
+    reply = await _workspace_generate_reply(text, project_id, model)
+    return JSONResponse({"ok": True, "reply": reply})
+
+
+@app.get("/workspace/chat/history")
+async def workspace_chat_history(request: Request):
+    await _require_admin(request)
+    project_id = _normalize_project_id(request.query_params.get("project_id"))
+    limit = int(request.query_params.get("limit", "200") or 200)
+    return JSONResponse({"messages": await _workspace_history_rows(project_id=project_id, limit=limit)})
+
+
+@app.post("/workspace/notes/save")
+async def workspace_notes_save(request: Request):
+    await _require_admin(request)
+    payload = await request.json()
+    text = str(payload.get("text", "")).strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="กรุณาระบุข้อความ")
+    from app.agents.brain import process_note
+
+    result = await process_note(text, _workspace_user_id())
+    return JSONResponse({"ok": True, "message": result})
+
+
+@app.get("/workspace/notes")
+async def workspace_notes(request: Request):
+    await _require_admin(request)
+    async with get_db() as db:
+        cursor = await db.execute(
+            """
+            SELECT id, content, category, ai_summary, datetime(created_at, '+7 hours') AS local_created_at
+            FROM notes
+            ORDER BY id DESC
+            """
+        )
+        rows = await cursor.fetchall()
+    return JSONResponse(
+        {
+            "notes": [
+                {
+                    "id": int(row["id"]),
+                    "content": str(row["content"] or ""),
+                    "category": str(row["category"] or "note"),
+                    "ai_summary": str(row["ai_summary"] or ""),
+                    "created_at": str(row["local_created_at"] or ""),
+                }
+                for row in rows
+            ]
+        }
+    )
+
+
+@app.post("/workspace/tasks/create")
+async def workspace_tasks_create(request: Request):
+    await _require_admin(request)
+    payload = await request.json()
+    title = str(payload.get("title", "")).strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="กรุณาระบุชื่อ task")
+    priority = str(payload.get("priority", "medium")).strip().lower() or "medium"
+    deadline_hint = str(payload.get("deadline_hint", "")).strip()
+    target_status = str(payload.get("status", "open")).strip().lower() or "open"
+    from app.agents.task import create_task
+
+    result = await create_task(title, priority=priority, deadline_hint=deadline_hint)
+    if target_status != "open":
+        async with get_db() as db:
+            cursor = await db.execute("SELECT MAX(id) AS latest_id FROM tasks")
+            row = await cursor.fetchone()
+            latest_id = int(row["latest_id"]) if row and row["latest_id"] else 0
+            if latest_id:
+                await db.execute("UPDATE tasks SET status = ? WHERE id = ?", (target_status, latest_id))
+                await db.commit()
+    return JSONResponse({"ok": True, "message": result})
+
+
+@app.post("/workspace/tasks/{task_id}/done")
+async def workspace_tasks_done(task_id: int, request: Request):
+    await _require_admin(request)
+    from app.agents.task import complete_task
+
+    result = await complete_task(task_id)
+    return JSONResponse({"ok": True, "message": result})
+
+
+@app.post("/workspace/tasks/{task_id}/status")
+async def workspace_tasks_status(task_id: int, request: Request):
+    await _require_admin(request)
+    payload = await request.json()
+    status = str(payload.get("status", "open")).strip().lower()
+    if status not in {"open", "in_progress", "done"}:
+        raise HTTPException(status_code=400, detail="สถานะไม่ถูกต้อง")
+    async with get_db() as db:
+        await db.execute(
+            """
+            UPDATE tasks
+            SET status = ?, done_at = CASE WHEN ? = 'done' THEN CURRENT_TIMESTAMP ELSE NULL END
+            WHERE id = ?
+            """,
+            (status, status, task_id),
+        )
+        await db.commit()
+    return JSONResponse({"ok": True, "status": status})
+
+
+@app.get("/workspace/tasks")
+async def workspace_tasks(request: Request):
+    await _require_admin(request)
+    async with get_db() as db:
+        cursor = await db.execute(
+            """
+            SELECT id, title, priority, deadline_hint, status, datetime(created_at, '+7 hours') AS local_created_at
+            FROM tasks
+            ORDER BY
+              CASE status
+                WHEN 'open' THEN 0
+                WHEN 'in_progress' THEN 1
+                ELSE 2
+              END,
+              id DESC
+            """
+        )
+        rows = await cursor.fetchall()
+    priority_badges = {"high": "🔴", "medium": "🟡", "low": "🟢"}
+    return JSONResponse(
+        {
+            "tasks": [
+                {
+                    "id": int(row["id"]),
+                    "title": str(row["title"] or ""),
+                    "priority": str(row["priority"] or "medium"),
+                    "priority_badge": priority_badges.get(str(row["priority"] or "medium"), "🟡"),
+                    "deadline_hint": str(row["deadline_hint"] or ""),
+                    "status": str(row["status"] or "open"),
+                    "created_at": str(row["local_created_at"] or ""),
+                }
+                for row in rows
+            ]
+        }
+    )
+
+
+@app.post("/workspace/brainstorm")
+async def workspace_brainstorm(request: Request):
+    await _require_admin(request)
+    payload = await request.json()
+    topic = str(payload.get("topic", "")).strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="กรุณาระบุหัวข้อ")
+    from app.agents.brainstorm import run_brainstorm
+
+    result = await run_brainstorm(topic)
+    return JSONResponse(_parse_brainstorm_blocks(result))
+
+
+@app.get("/workspace/news")
+async def workspace_news(request: Request):
+    await _require_admin(request)
+    from app.agents.news import _detect_category
+
+    async with get_db() as db:
+        cursor = await db.execute(
+            """
+            SELECT id, title, url, source, summary, relevance, datetime(fetched_at, '+7 hours') AS local_fetched_at
+            FROM news_items
+            ORDER BY id DESC
+            LIMIT 60
+            """
+        )
+        rows = await cursor.fetchall()
+    items = []
+    for row in rows:
+        topic_text = f"{row['title']} {row['summary']}".lower()
+        items.append(
+            {
+                "id": int(row["id"]),
+                "title": str(row["title"] or ""),
+                "url": str(row["url"] or ""),
+                "source": str(row["source"] or ""),
+                "summary": str(row["summary"] or ""),
+                "relevance": str(row["relevance"] or ""),
+                "fetched_at": str(row["local_fetched_at"] or ""),
+                "category": _detect_category(topic_text),
+            }
+        )
+    return JSONResponse({"news": items})
+
+
+@app.post("/workspace/news/fetch")
+async def workspace_news_fetch(request: Request):
+    await _require_admin(request)
+    from app.agents.news import fetch_and_summarize
+
+    result = await fetch_and_summarize()
+    return JSONResponse({"ok": True, "message": result})
+
+
+@app.get("/workspace/memory")
+async def workspace_memory(request: Request):
+    await _require_admin(request)
+    async with get_db() as db:
+        cursor = await db.execute(
+            """
+            SELECT id, content, memory_type, datetime(created_at, '+7 hours') AS local_created_at
+            FROM long_term_memories
+            ORDER BY id DESC
+            LIMIT 100
+            """
+        )
+        rows = await cursor.fetchall()
+    return JSONResponse(
+        {
+            "memories": [
+                {
+                    "id": int(row["id"]),
+                    "content": str(row["content"] or ""),
+                    "memory_type": str(row["memory_type"] or "general"),
+                    "created_at": str(row["local_created_at"] or ""),
+                }
+                for row in rows
+            ]
+        }
+    )
+
+
+@app.get("/workspace/files")
+async def workspace_files(request: Request):
+    await _require_admin(request)
+    async with get_db() as db:
+        cursor = await db.execute(
+            """
+            SELECT id, filename, filepath, size_bytes, summary, datetime(created_at, '+7 hours') AS local_created_at
+            FROM uploads
+            ORDER BY id DESC
+            """
+        )
+        rows = await cursor.fetchall()
+    return JSONResponse(
+        {
+            "files": [
+                {
+                    "id": int(row["id"]),
+                    "filename": str(row["filename"] or ""),
+                    "filepath": str(row["filepath"] or ""),
+                    "size_bytes": int(row["size_bytes"] or 0),
+                    "summary": str(row["summary"] or ""),
+                    "created_at": str(row["local_created_at"] or ""),
+                }
+                for row in rows
+            ]
+        }
+    )
+
+
+@app.post("/workspace/files/upload")
+async def workspace_files_upload(request: Request, file: UploadFile = File(...)):
+    await _require_admin(request)
+    safe_name = Path(file.filename or "upload.bin").name
+    suffix = Path(safe_name).suffix.lower()
+    if suffix not in {".pdf", ".docx", ".txt", ".md"}:
+        raise HTTPException(status_code=400, detail="รองรับเฉพาะ PDF, DOCX, TXT, MD")
+    upload_dir = _workspace_upload_dir()
+    filename = f"{int(time.time())}_{safe_name}"
+    destination = upload_dir / filename
+    try:
+        with destination.open("wb") as output:
+            shutil.copyfileobj(file.file, output)
+    finally:
+        await file.close()
+    async with get_db() as db:
+        cursor = await db.execute(
+            """
+            INSERT INTO uploads (filename, filepath, size_bytes)
+            VALUES (?, ?, ?)
+            """,
+            (safe_name, str(destination), destination.stat().st_size),
+        )
+        upload_id = cursor.lastrowid
+        await db.commit()
+    return JSONResponse({"ok": True, "id": upload_id, "filename": safe_name})
+
+
+@app.post("/workspace/files/{file_id}/summarize")
+async def workspace_files_summarize(file_id: int, request: Request):
+    await _require_admin(request)
+    from app.core.ai import chat
+
+    async with get_db() as db:
+        cursor = await db.execute("SELECT filename, filepath FROM uploads WHERE id = ?", (file_id,))
+        row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="ไม่พบไฟล์")
+    file_path = Path(str(row["filepath"]))
+    content = _read_uploaded_file_text(file_path)[:12000]
+    summary = await chat(
+        f"สรุปไฟล์นี้แบบอ่านเร็วให้กบ:\n\nชื่อไฟล์: {row['filename']}\n\nเนื้อหา:\n{content}",
+        system="ตอบเป็นภาษาไทยแบบกระชับ แบ่งเป็น bullet ที่อ่านง่าย",
+        agent="workspace_file",
+        preferred_model="gemini",
+    )
+    async with get_db() as db:
+        await db.execute("UPDATE uploads SET summary = ? WHERE id = ?", (summary, file_id))
+        await db.commit()
+    return JSONResponse({"ok": True, "summary": summary})
+
+
+@app.post("/workspace/files/{file_id}/ask")
+async def workspace_files_ask(file_id: int, request: Request):
+    await _require_admin(request)
+    from app.core.ai import chat
+
+    payload = await request.json()
+    question = str(payload.get("question", "")).strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="กรุณาระบุคำถาม")
+    async with get_db() as db:
+        cursor = await db.execute("SELECT filename, filepath FROM uploads WHERE id = ?", (file_id,))
+        row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="ไม่พบไฟล์")
+    file_path = Path(str(row["filepath"]))
+    content = _read_uploaded_file_text(file_path)[:12000]
+    answer = await chat(
+        f"ไฟล์: {row['filename']}\n\nคำถาม: {question}\n\nเนื้อหาไฟล์:\n{content}",
+        system="ตอบคำถามจากเอกสารให้กบเป็นภาษาไทย กระชับ และอ้างอิงเฉพาะสิ่งที่อยู่ในไฟล์",
+        agent="workspace_file_qa",
+        preferred_model="gemini",
+    )
+    return JSONResponse({"ok": True, "answer": answer})
+
+
+@app.get("/workspace/projects")
+async def workspace_projects(request: Request):
+    await _require_admin(request)
+    async with get_db() as db:
+        total_cursor = await db.execute(
+            "SELECT COUNT(*) AS total FROM messages WHERE chat_id = ?",
+            (_workspace_user_id(),),
+        )
+        total_row = await total_cursor.fetchone()
+        cursor = await db.execute(
+            """
+            SELECT
+                p.id,
+                p.name,
+                datetime(p.created_at, '+7 hours') AS local_created_at,
+                COUNT(m.id) AS message_count,
+                MAX(datetime(m.created_at, '+7 hours')) AS last_active
+            FROM projects p
+            LEFT JOIN messages m ON m.project_id = p.id AND m.chat_id = ?
+            WHERE p.deleted_at IS NULL
+            GROUP BY p.id, p.name, p.created_at
+            ORDER BY COALESCE(MAX(m.created_at), p.created_at) DESC, p.id DESC
+            """
+            ,
+            (_workspace_user_id(),),
+        )
+        rows = await cursor.fetchall()
+    return JSONResponse(
+        {
+            "total_messages": int(total_row["total"] or 0) if total_row else 0,
+            "projects": [
+                {
+                    "id": int(row["id"]),
+                    "name": str(row["name"] or ""),
+                    "created_at": str(row["local_created_at"] or ""),
+                    "message_count": int(row["message_count"] or 0),
+                    "last_active": str(row["last_active"] or ""),
+                }
+                for row in rows
+            ],
+        }
+    )
+
+
+@app.post("/workspace/projects/create")
+async def workspace_projects_create(request: Request):
+    await _require_admin(request)
+    payload = await request.json()
+    name = str(payload.get("name", "")).strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="กรุณาระบุชื่อโปรเจ็กต์")
+    async with get_db() as db:
+        cursor = await db.execute("INSERT INTO projects (name) VALUES (?)", (name,))
+        await db.commit()
+    return JSONResponse({"ok": True, "id": cursor.lastrowid, "name": name})
+
+
+@app.delete("/workspace/projects/{project_id}")
+async def workspace_projects_delete(project_id: int, request: Request):
+    await _require_admin(request)
+    async with get_db() as db:
+        await db.execute(
+            "UPDATE projects SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (project_id,),
+        )
+        await db.commit()
+    return JSONResponse({"ok": True})
 
 
 @app.get("/admin")
