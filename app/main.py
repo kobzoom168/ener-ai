@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 import psutil
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from telegram import Update
 
@@ -23,6 +23,7 @@ from app.core.ai import get_active_model, get_model_availability, get_model_labe
 from app.core.agents import COMMAND_AGENT_MAP, SCHEDULER_AGENTS
 from app.core.config import settings
 from app.core.database import get_db, init_db
+from app.core.terminal import handle_terminal_ws
 from app.scheduler import build_scheduler
 
 telegram_app = build_application()
@@ -31,6 +32,11 @@ _BANGKOK = ZoneInfo("Asia/Bangkok")
 _APP_STARTED_AT = datetime.now(_BANGKOK)
 _LOG_DIR = Path("/var/log/ener-ai")
 _DOCKER_CONTAINER_NAME = "ener-ai-ener-ai-1"
+_ALLOWED_UPLOAD_PATHS = [
+    Path("/root/ener-ai/data"),
+    Path("/root/ener-ai/backups"),
+    Path("/tmp"),
+]
 _RANGE_OPTIONS = ["1h", "3h", "10h", "24h", "7d"]
 _AGENT_ORDER = [
     "MainChatAgent",
@@ -299,6 +305,18 @@ async def _require_admin(request: Request):
         and secrets.compare_digest(password, settings.admin_password)
     ):
         raise HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": "Basic"})
+
+
+def _resolve_upload_dir(raw_path: str) -> Path:
+    try:
+        target = Path(raw_path or "/root/ener-ai/data/").expanduser().resolve(strict=False)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Path ไม่ถูกต้อง") from exc
+
+    for allowed_root in _ALLOWED_UPLOAD_PATHS:
+        if target == allowed_root or allowed_root in target.parents:
+            return target
+    raise HTTPException(status_code=400, detail="Path ไม่อนุญาต")
 
 
 async def _check_webhook_status() -> str:
@@ -2098,6 +2116,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       <a class="nav-link active" href="/admin">Overview</a>
       <a class="nav-link" href="/admin/metrics">Metrics</a>
       <a class="nav-link" href="/admin/logs">Logs</a>
+      <a class="nav-link" href="/admin/terminal" target="_blank" rel="noopener noreferrer">💻 Terminal</a>
       <button id="edit-btn" class="edit-btn" type="button" onclick="enterEditMode()">✏️ Edit</button>
       <a class="refresh-link" href="/admin">Refresh</a>
     </div>
@@ -3315,6 +3334,238 @@ async def admin_metrics_dashboard(request: Request):
 async def admin_logs(request: Request):
     await _require_admin(request)
     return build_logs_html()
+
+
+@app.get("/admin/terminal")
+async def terminal_page(request: Request):
+    await _require_admin(request)
+    token = base64.b64encode(f"admin:{settings.admin_password}".encode()).decode()
+    server_name = escape(str(getattr(settings, "server_host", "") or "my-ener.uk"))
+
+    return HTMLResponse(
+        f"""<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Terminal - Ener-AI</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+  <style>
+    * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+    body {{ background: #000; color: #fff; font-family: monospace; }}
+    .term-header {{
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 16px;
+      background: #111;
+      border-bottom: 1px solid #222;
+    }}
+    .term-header a {{ color: #888; text-decoration: none; font-size: 12px; }}
+    .term-header a:hover {{ color: #fff; }}
+    #terminal {{ height: calc(100vh - 40px); padding: 4px; }}
+    #drop-zone {{
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,255,136,0.1);
+      border: 3px dashed #00ff88;
+      z-index: 999;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      color: #00ff88;
+    }}
+    #drop-zone.active {{ display: flex; }}
+    #upload-progress {{
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background: #111;
+      border: 1px solid #333;
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 12px;
+      display: none;
+      min-width: 200px;
+      z-index: 1000;
+    }}
+    .progress-bar {{
+      height: 4px;
+      background: #222;
+      border-radius: 2px;
+      margin-top: 8px;
+    }}
+    .progress-fill {{
+      height: 4px;
+      background: #00ff88;
+      border-radius: 2px;
+      width: 0%;
+      transition: width 0.3s;
+    }}
+  </style>
+</head>
+<body>
+  <div class="term-header">
+    <span>⚡ Ener-AI Terminal - {server_name}</span>
+    <div style="display:flex;gap:12px;align-items:center">
+      <span style="font-size:11px;color:#888">ลากไฟล์มาวางเพื่ออัปโหลด</span>
+      <a href="/admin">← Admin</a>
+    </div>
+  </div>
+
+  <div id="drop-zone">📁 วางไฟล์ที่นี่เพื่ออัปโหลด</div>
+  <div id="upload-progress">
+    <div id="upload-filename">กำลังอัปโหลด...</div>
+    <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+    <div id="upload-status" style="color:#888;margin-top:4px;font-size:10px"></div>
+  </div>
+  <div id="terminal"></div>
+
+  <script>
+    const term = new Terminal({{
+      theme: {{
+        background: '#000000',
+        foreground: '#ffffff',
+        cursor: '#00ff88',
+        selection: 'rgba(0,255,136,0.3)',
+      }},
+      fontFamily: 'JetBrains Mono, Cascadia Code, monospace',
+      fontSize: 14,
+      cursorBlink: true,
+    }});
+    const fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(document.getElementById('terminal'));
+    fitAddon.fit();
+    window.addEventListener('resize', () => fitAddon.fit());
+
+    const token = {json.dumps(token)};
+    const wsScheme = location.protocol === 'https:' ? 'wss' : 'ws';
+    const wsUrl = `${{wsScheme}}://${{location.host}}/admin/terminal/ws?token=${{encodeURIComponent(token)}}`;
+    const ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {{
+      term.writeln('\\x1b[32m✅ เชื่อมต่อ Terminal สำเร็จ\\x1b[0m');
+      term.writeln('\\x1b[90mTip: ลากไฟล์มาวางเพื่ออัปโหลดไปที่ /root/ener-ai/data/\\x1b[0m');
+      term.write('\\r\\n');
+    }};
+    ws.onmessage = (event) => term.write(event.data);
+    ws.onclose = () => term.writeln('\\r\\n\\x1b[31m❌ การเชื่อมต่อปิดแล้ว\\x1b[0m');
+    ws.onerror = () => term.writeln('\\r\\n\\x1b[31m❌ WebSocket error\\x1b[0m');
+
+    term.onData((data) => {{
+      if (ws.readyState === WebSocket.OPEN) ws.send(data);
+    }});
+
+    const dropZone = document.getElementById('drop-zone');
+    let dragCounter = 0;
+
+    document.addEventListener('dragenter', (event) => {{
+      event.preventDefault();
+      dragCounter += 1;
+      dropZone.classList.add('active');
+    }});
+    document.addEventListener('dragleave', () => {{
+      dragCounter = Math.max(0, dragCounter - 1);
+      if (dragCounter === 0) dropZone.classList.remove('active');
+    }});
+    document.addEventListener('dragover', (event) => event.preventDefault());
+    document.addEventListener('drop', (event) => {{
+      event.preventDefault();
+      dragCounter = 0;
+      dropZone.classList.remove('active');
+
+      const files = event.dataTransfer.files;
+      if (files.length > 0) uploadFile(files[0]);
+    }});
+
+    function uploadFile(file) {{
+      const progressEl = document.getElementById('upload-progress');
+      const fillEl = document.getElementById('progress-fill');
+      const nameEl = document.getElementById('upload-filename');
+      const statusEl = document.getElementById('upload-status');
+
+      progressEl.style.display = 'block';
+      nameEl.textContent = `อัปโหลด: ${{file.name}}`;
+      fillEl.style.width = '0%';
+      statusEl.textContent = '0%';
+
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('path', '/root/ener-ai/data/');
+
+      const xhr = new XMLHttpRequest();
+      xhr.upload.onprogress = (event) => {{
+        if (event.lengthComputable) {{
+          const pct = Math.round(event.loaded / event.total * 100);
+          fillEl.style.width = pct + '%';
+          statusEl.textContent = pct + '%';
+        }}
+      }};
+      xhr.onload = () => {{
+        if (xhr.status === 200) {{
+          const res = JSON.parse(xhr.responseText);
+          statusEl.textContent = `✅ บันทึกที่ ${{res.path}}`;
+          term.writeln(`\\r\\n\\x1b[32m✅ อัปโหลด ${{file.name}} → ${{res.path}}\\x1b[0m`);
+          setTimeout(() => {{ progressEl.style.display = 'none'; }}, 3000);
+        }} else {{
+          statusEl.textContent = '❌ อัปโหลดล้มเหลว';
+        }}
+      }};
+      xhr.onerror = () => {{
+        statusEl.textContent = '❌ อัปโหลดล้มเหลว';
+      }};
+
+      xhr.open('POST', '/admin/upload');
+      xhr.setRequestHeader('Authorization', 'Basic ' + btoa('admin:' + {json.dumps(settings.admin_password)}));
+      xhr.send(formData);
+    }}
+  </script>
+</body>
+</html>"""
+    )
+
+
+@app.websocket("/admin/terminal/ws")
+async def terminal_ws(websocket: WebSocket):
+    token = websocket.query_params.get("token", "")
+    expected = base64.b64encode(f"admin:{settings.admin_password}".encode()).decode()
+    if not secrets.compare_digest(token, expected):
+        await websocket.close(code=4001)
+        return
+    await handle_terminal_ws(websocket)
+
+
+@app.post("/admin/upload")
+async def upload_file(
+    request: Request,
+    file: UploadFile = File(...),
+    path: str = Form(default="/root/ener-ai/data/"),
+):
+    await _require_admin(request)
+
+    target_dir = _resolve_upload_dir(path)
+    filename = Path(file.filename or "upload.bin").name
+    if filename in {"", ".", ".."}:
+        raise HTTPException(status_code=400, detail="ชื่อไฟล์ไม่ถูกต้อง")
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    destination = target_dir / filename
+
+    try:
+        with destination.open("wb") as output:
+            shutil.copyfileobj(file.file, output)
+    finally:
+        await file.close()
+
+    return {
+        "success": True,
+        "path": str(destination),
+        "size": destination.stat().st_size,
+    }
 
 
 @app.post("/admin/switch-model")
