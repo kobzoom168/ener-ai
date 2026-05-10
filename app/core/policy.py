@@ -56,6 +56,7 @@ TASK_MODEL_MAP = {
     "memorycurator": "haiku",
     "briefing": "haiku",
     "github": "haiku",
+    "tarot": "haiku",
     "code": "groq",
     "content": "groq",
     "ener": "haiku",

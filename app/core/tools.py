@@ -132,12 +132,28 @@ TOOLS = [
             "required": ["repo"],
         },
     },
+    {
+        "name": "draw_tarot",
+        "description": "จั่วไพ่ทาโรต์ทำนายดวง ใช้เมื่อกบถามเรื่องดวง ไพ่ ทำนาย เสี่ยงทาย",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "question": {"type": "string", "description": "คำถามหรือเรื่องที่อยากรู้"},
+                "spread": {
+                    "type": "string",
+                    "enum": ["single", "three", "celtic"],
+                    "description": "single=1ใบ three=3ใบ celtic=5ใบ",
+                },
+            },
+        },
+    },
 ]
 
 
 async def execute_tool(tool_name: str, tool_input: dict) -> str:
     from app.agents import brainstorm, content_agent, ener_agent
     from app.agents.github_agent import list_prs, list_repo_files, list_repos, read_file
+    from app.agents.tarot_agent import read_cards
     from app.agents import task as task_agent
     from app.agents.memory import search_memory
 
@@ -217,6 +233,13 @@ async def execute_tool(tool_name: str, tool_input: dict) -> str:
         return await list_repo_files(
             str(payload["repo"]).strip(),
             str(payload.get("path", "")).strip(),
+            _agent_triggered_by="agent",
+        )
+
+    if tool_name == "draw_tarot":
+        return await read_cards(
+            question=str(payload.get("question", "")).strip(),
+            spread=str(payload.get("spread", "single")).strip() or "single",
             _agent_triggered_by="agent",
         )
 

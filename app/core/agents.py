@@ -34,6 +34,9 @@ COMMAND_AGENT_MAP = {
     "forget": "MemoryAgent",
     "memory": "MemoryAgent",
     "cost": "CostAgent",
+    "tarot": "TarotAgent",
+    "ไพ่": "TarotAgent",
+    "ดวง": "TarotAgent",
     "chat": "MainChatAgent",
 }
 
@@ -73,6 +76,7 @@ _AGENT_AI_MAP = {
     "MonitorAgent": "monitor",
     "GmailAgent": "gmail",
     "NewsDiscoveryAgent": "newsdiscovery",
+    "TarotAgent": "tarot",
 }
 
 

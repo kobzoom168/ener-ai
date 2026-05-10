@@ -16,6 +16,7 @@ from telegram.ext import (
 from app.agents import github_agent, gmail_agent, log_keeper, memory_curator, memory_keeper
 from app.agents.monitor_agent import cmd_errors, cmd_logs, cmd_server, cmd_status
 from app.agents.news_discovery import approve_source, list_active_sources, list_pending_sources
+from app.agents.tarot_agent import read_cards
 from app.agents.vision_agent import (
     analyze_image as vision_analyze,
     analyze_multiple_images as vision_analyze_multiple,
@@ -624,6 +625,45 @@ async def cmd_email(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await _reply(update, "📌 ใช้ /email, /email draft <id>, หรือ /email reply <id> <ข้อความ>", enable_tts=False)
 
 
+async def cmd_tarot(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+
+    args = ctx.args or []
+    text = " ".join(args).strip() if args else ""
+
+    spread = "single"
+    lowered = text.lower()
+    if "3" in text or "สาม" in text or "three" in lowered:
+        spread = "three"
+    elif "5" in text or "ห้า" in text or "celtic" in lowered:
+        spread = "celtic"
+
+    question = (
+        text.replace("3ใบ", "")
+        .replace("3 ใบ", "")
+        .replace("สามใบ", "")
+        .replace("สาม ใบ", "")
+        .replace("5ใบ", "")
+        .replace("5 ใบ", "")
+        .replace("ห้าใบ", "")
+        .replace("ห้า ใบ", "")
+        .strip()
+    )
+
+    thinking = await update.message.reply_text("🔮 กำลังจั่วไพ่...", parse_mode=None)
+    result = await read_cards(
+        question=question,
+        spread=spread,
+        _agent_triggered_by="user",
+    )
+    try:
+        await thinking.delete()
+    except Exception:
+        pass
+    await _reply_smart(update, result)
+
+
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
@@ -652,6 +692,9 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/mistake — เหมือน /learn\n"
         "/ener — วิเคราะห์พระ/ener report\n"
         "/content — สร้าง caption/script\n\n"
+        "**🔮 Tarot**\n"
+        "/tarot — จั่วไพ่ทาโรต์ทำนาย\n"
+        "/ดวง — เหมือน /tarot\n\n"
         "**💻 Code & GitHub**\n"
         "/code — เขียน/review/debug code\n"
         "/github — ดู PRs + Issues\n"
@@ -729,6 +772,9 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("brainstorm", cmd_think))
     app.add_handler(CommandHandler("park", cmd_park))
     app.add_handler(CommandHandler("search", cmd_search))
+    app.add_handler(CommandHandler("tarot", cmd_tarot))
+    app.add_handler(CommandHandler("ไพ่", cmd_tarot))
+    app.add_handler(CommandHandler("ดวง", cmd_tarot))
     app.add_handler(CommandHandler("remember", cmd_remember))
     app.add_handler(CommandHandler("forget", cmd_forget))
     app.add_handler(CommandHandler("memory", cmd_memory))
