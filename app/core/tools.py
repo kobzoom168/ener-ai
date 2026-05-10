@@ -180,6 +180,29 @@ TOOLS = [
             "required": ["places"],
         },
     },
+    {
+        "name": "search_web",
+        "description": (
+            "ค้นหาข้อมูลจากอินเทอร์เน็ตจริงๆ ด้วย Google Search "
+            "ใช้เมื่อกบถามเรื่องที่ต้องการข้อมูลปัจจุบัน เช่น ร้านอาหาร "
+            "สถานที่ ข่าว ราคา หรือข้อมูลที่ AI ไม่รู้แน่ชัด "
+            "ได้ผลลัพธ์พร้อม link จริงจาก Google"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "คำค้นหาที่ต้องการค้นจากเว็บจริง"
+                },
+                "count": {
+                    "type": "integer",
+                    "description": "จำนวนผลลัพธ์ที่ต้องการ (ignored by Gemini grounding)",
+                },
+            },
+            "required": ["query"],
+        },
+    },
 ]
 
 
@@ -306,5 +329,13 @@ async def execute_tool(tool_name: str, tool_input: dict) -> str:
         if isinstance(places, str):
             places = [places]
         return _make_maps_links(list(places))
+
+    if tool_name == "search_web":
+        from app.core.ai import _gemini_grounded_search
+
+        query = str(payload.get("query", "")).strip()
+        if not query:
+            return "กรุณาระบุคำค้นหา"
+        return await _gemini_grounded_search(query)
 
     return f"ไม่รู้จัก tool: {tool_name}"

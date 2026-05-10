@@ -306,6 +306,48 @@ async def _call_gemini(
         raise
 
 
+async def _gemini_grounded_search(query: str) -> str:
+    """Search the web using Gemini with Google Search Grounding."""
+    if not settings.gemini_api_key:
+        return "⚠️ ยังไม่ได้ตั้งค่า GEMINI_API_KEY"
+    try:
+        from google.genai import types
+
+        client = genai.Client(api_key=settings.gemini_api_key)
+        config = types.GenerateContentConfig(
+            tools=[types.Tool(google_search=types.GoogleSearch())]
+        )
+
+        def _generate():
+            return client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=query,
+                config=config,
+            )
+
+        response = await asyncio.to_thread(_generate)
+        text = getattr(response, "text", "") or ""
+
+        sources = []
+        for candidate in (getattr(response, "candidates", []) or []):
+            grounding = getattr(candidate, "grounding_metadata", None)
+            if not grounding:
+                continue
+            for chunk in (getattr(grounding, "grounding_chunks", []) or []):
+                web = getattr(chunk, "web", None)
+                if web:
+                    uri = getattr(web, "uri", "").strip()
+                    title = getattr(web, "title", "").strip()
+                    if uri:
+                        sources.append(f"• {title or uri}\n  🔗 {uri}")
+
+        if sources:
+            text += "\n\n📚 แหล่งที่มา:\n" + "\n".join(sources)
+        return text or "ไม่พบผลลัพธ์"
+    except Exception as exc:
+        return f"⚠️ ค้นหาไม่สำเร็จ: {exc}"
+
+
 async def _call_ollama(
     prompt: str,
     system: str,
