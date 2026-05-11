@@ -5425,6 +5425,7 @@ def build_workspace_html() -> HTMLResponse:
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
+  try {
   const state = {
     streaming: false,
     currentProject: null,
@@ -6396,6 +6397,19 @@ document.addEventListener('DOMContentLoaded', function() {
   showPanel('chat');
   loadProjects();
   loadChatHistory();
+  } catch(err) {
+    console.error('WORKSPACE JS ERROR:', err);
+    const contentEl = document.getElementById('content');
+    if (contentEl) {
+      contentEl.innerHTML =
+        '<div style="color:#ef4444;padding:32px;font-family:monospace">' +
+        '<h2>⚠️ JavaScript Error</h2>' +
+        '<pre style="background:#1a1a1a;padding:16px;border-radius:8px;' +
+        'overflow:auto;font-size:13px">' +
+        (err.stack || String(err)).replace(/</g, '&lt;') + '</pre>' +
+        '<p style="color:#888">แจ้ง admin เพื่อแก้ไข</p></div>';
+    }
+  }
 });
 
 const TEST_QUESTION_IDS = {
