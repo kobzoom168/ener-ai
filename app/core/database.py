@@ -229,6 +229,8 @@ async def init_db():
                 ON agent_events(agent_name, result, created_at);
             CREATE INDEX IF NOT EXISTS idx_agent_events_tags
                 ON agent_events(tags);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_news_url_date
+                ON news_items(url, date(datetime(fetched_at, '+7 hours')));
         """)
         cursor = await db.execute("PRAGMA table_info(memories)")
         columns = await cursor.fetchall()

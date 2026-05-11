@@ -2,7 +2,7 @@ import asyncio
 import html
 import re
 import feedparser
-from datetime import datetime
+from datetime import date as _date, datetime
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 from app.core.ai import chat_json
@@ -474,7 +474,52 @@ def _format_apply_line(label: str, value: str | None) -> str | None:
 
 
 @log_agent_run("NewsAgent", triggered_by="scheduler")
-async def fetch_and_summarize() -> str:
+async def fetch_and_summarize(force: bool = False, _agent_triggered_by: str = "manual") -> str:
+    if not force:
+        today_str = _date.today().isoformat()
+        async with get_db() as db:
+            cursor = await db.execute(
+                """
+                SELECT COUNT(*) AS c
+                FROM news_items
+                WHERE date(datetime(fetched_at, '+7 hours')) = ?
+                """,
+                (today_str,),
+            )
+            row = await cursor.fetchone()
+            today_count = row["c"] if row else 0
+
+            if today_count >= 5:
+                cursor2 = await db.execute(
+                    """
+                    SELECT title, url, source, summary, relevance
+                    FROM news_items
+                    WHERE date(datetime(fetched_at, '+7 hours')) = ?
+                    ORDER BY id DESC
+                    LIMIT 9
+                    """,
+                    (today_str,),
+                )
+                cached_rows = await cursor2.fetchall()
+                if cached_rows:
+                    cached_items: list[dict[str, str]] = []
+                    for cached_row in cached_rows:
+                        topic_text = (
+                            f"{str(cached_row['title'] or '')} {str(cached_row['summary'] or '')}"
+                        ).lower()
+                        cached_item = {
+                            "title_th": str(cached_row["title"] or ""),
+                            "url": str(cached_row["url"] or ""),
+                            "source": str(cached_row["source"] or ""),
+                            "summary_th": str(cached_row["summary"] or "ไม่มีสรุป"),
+                            "apply": str(cached_row["relevance"] or "ยังไม่เห็นมุมใช้ต่อ"),
+                            "topic_text": topic_text,
+                            "category": _detect_category(topic_text),
+                        }
+                        cached_item["priority"] = _derive_priority(cached_item)
+                        cached_items.append(cached_item)
+                    return _format_news_message(cached_items) + "\n\n📦 (จาก cache วันนี้)"
+
     items: list[dict[str, str]] = []
     seen_links: set[str] = set()
 
@@ -527,7 +572,6 @@ async def fetch_and_summarize() -> str:
     if len(items) < 9 and settings.gemini_api_key:
         try:
             from app.core.ai import _gemini_grounded_search
-            from datetime import date as _date
 
             today_str = _date.today().strftime("%d %B %Y")
             search_queries = [
@@ -633,7 +677,7 @@ async def fetch_and_summarize() -> str:
         async with get_db() as db:
             await db.executemany(
                 """
-                INSERT INTO news_items (title, url, source, summary, relevance)
+                INSERT OR IGNORE INTO news_items (title, url, source, summary, relevance)
                 VALUES (?, ?, ?, ?, ?)
                 """,
                 news_rows,

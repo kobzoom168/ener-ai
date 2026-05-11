@@ -70,7 +70,7 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
 
     async def send_morning_briefing():
         try:
-            await news.fetch_and_summarize(_agent_triggered_by="scheduler")
+            await news.fetch_and_summarize(force=True, _agent_triggered_by="scheduler")
         except Exception:
             pass
         message = await briefing_agent.generate_morning_briefing(_agent_triggered_by="scheduler")
