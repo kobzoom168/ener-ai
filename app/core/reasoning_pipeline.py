@@ -20,10 +20,24 @@ CHECKER_PROMPT = """ตรวจคำตอบนี้ก่อนส่งใ
 5. ถ้าทุกอย่างโอเค -> ok: true, fixed_answer: null"""
 
 
-def route_fast(text: str) -> dict:
+async def get_routing_config() -> dict[str, str]:
+    """Returns {intent: model} from DB routing_config table."""
+    try:
+        from app.core.database import get_db
+        async with get_db() as db:
+            cur = await db.execute("SELECT intent, model FROM routing_config")
+            rows = await cur.fetchall()
+        return {r["intent"]: r["model"] for r in rows}
+    except Exception:
+        return {}
+
+
+def route_fast(text: str, routing: dict[str, str] | None = None) -> dict:
     """Python keyword router — 0-5ms, no LLM call.
     Routes to optimal model per task based on cost/quality balance.
+    Pass routing dict from get_routing_config() to override defaults from DB.
     """
+    r = routing or {}
     t = text.lower()
 
     # Location / current info → Gemini (free, grounded)
@@ -35,7 +49,7 @@ def route_fast(text: str) -> dict:
         return {
             "complexity": "grounded",
             "domain": "location",
-            "model": "gemini",
+            "model": r.get("location", "gemini"),
             "tools": ["make_maps_links", "search_memory"],
             "needs_check": True,
             "reason": "location/current info",
@@ -49,7 +63,7 @@ def route_fast(text: str) -> dict:
         return {
             "complexity": "simple",
             "domain": "task",
-            "model": "groq",
+            "model": r.get("task_note", "groq"),
             "tools": ["save_task", "save_note", "remember_fact"],
             "needs_check": False,
             "reason": "task/note direct",
@@ -63,7 +77,7 @@ def route_fast(text: str) -> dict:
         return {
             "complexity": "simple",
             "domain": "chat",
-            "model": "groq",
+            "model": r.get("task_note", "groq"),
             "tools": ["search_memory", "remember_fact"],
             "needs_check": False,
             "reason": "memory recall",
@@ -77,7 +91,7 @@ def route_fast(text: str) -> dict:
         return {
             "complexity": "simple",
             "domain": "spiritual",
-            "model": "haiku",
+            "model": r.get("tarot", "haiku"),
             "tools": ["draw_tarot", "draw_tarot_with_question"],
             "needs_check": False,
             "reason": "tarot/spiritual",
@@ -92,7 +106,7 @@ def route_fast(text: str) -> dict:
         return {
             "complexity": "complex",
             "domain": "analysis",
-            "model": "haiku",
+            "model": r.get("ener_scan", "haiku"),
             "tools": ["analyze_amulet", "create_content",
                       "draw_tarot_with_question", "search_memory"],
             "needs_check": False,
@@ -108,7 +122,7 @@ def route_fast(text: str) -> dict:
         return {
             "complexity": "complex",
             "domain": "code",
-            "model": "groq",
+            "model": r.get("code", "groq"),
             "tools": ["read_github_file", "list_github_repos",
                       "list_github_prs", "read_code_file",
                       "generate_cursor_prompt"],
@@ -125,7 +139,7 @@ def route_fast(text: str) -> dict:
         return {
             "complexity": "critical",
             "domain": "analysis",
-            "model": "deepseek-direct",
+            "model": r.get("vendor_analysis", "deepseek-direct"),
             "tools": ["search_memory", "run_brainstorm", "get_system_info"],
             "needs_check": True,
             "reason": "hospital IT / vendor analysis",
@@ -139,7 +153,7 @@ def route_fast(text: str) -> dict:
         return {
             "complexity": "complex",
             "domain": "writing",
-            "model": "haiku",
+            "model": r.get("email_draft", "haiku"),
             "tools": ["search_memory"],
             "needs_check": False,
             "reason": "formal writing / email",
@@ -153,7 +167,7 @@ def route_fast(text: str) -> dict:
         return {
             "complexity": "critical",
             "domain": "analysis",
-            "model": "sonnet",
+            "model": r.get("critical", "sonnet"),
             "tools": ["search_memory", "run_brainstorm"],
             "needs_check": True,
             "reason": "critical decision",
@@ -167,7 +181,7 @@ def route_fast(text: str) -> dict:
         return {
             "complexity": "complex",
             "domain": "analysis",
-            "model": "deepseek-direct",
+            "model": r.get("brainstorm", "deepseek-direct"),
             "tools": ["run_brainstorm", "search_memory"],
             "needs_check": False,
             "reason": "brainstorm/planning",
@@ -181,7 +195,7 @@ def route_fast(text: str) -> dict:
         return {
             "complexity": "simple",
             "domain": "code",
-            "model": "groq",
+            "model": r.get("system", "groq"),
             "tools": ["get_system_info", "read_code_file",
                       "generate_cursor_prompt"],
             "needs_check": False,
@@ -192,7 +206,7 @@ def route_fast(text: str) -> dict:
     return {
         "complexity": "simple",
         "domain": "chat",
-        "model": "groq",
+        "model": r.get("default_chat", "groq"),
         "tools": ["save_task", "save_note",
                   "remember_fact", "search_memory"],
         "needs_check": False,
@@ -369,7 +383,8 @@ async def run_pipeline(
     total_start = time.time()
 
     t1 = time.time()
-    route = route_fast(text)
+    routing = await get_routing_config()
+    route = route_fast(text, routing=routing)
     router_ms = int((time.time() - t1) * 1000)
 
     t2 = time.time()

@@ -2405,6 +2405,8 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       <a class="nav-link" href="/admin/pipeline">⚡ Pipeline</a>
       <a class="nav-link" href="/admin/logs">Logs</a>
       <a class="nav-link" href="/admin/config">⚙️ Config</a>
+      <a class="nav-link" href="/admin/routing">🔀 Routing</a>
+      <a class="nav-link" href="/admin/api-status">📡 API Status</a>
       <a class="nav-link" href="/admin/terminal" target="_blank" rel="noopener noreferrer">💻 Terminal</a>
       <button class="edit-btn" type="button" onclick="fetch('/admin/logout',{{method:'POST'}}).then(() => location.reload())">🚪 Logout</button>
       <button id="edit-btn" class="edit-btn" type="button" onclick="enterEditMode()">✏️ Edit</button>
@@ -7325,6 +7327,309 @@ async def admin_pipeline_metrics(request: Request):
 async def admin_pipeline_page(request: Request):
     await _verify_admin_session(request)
     return build_pipeline_html()
+
+
+# ── Routing Editor ────────────────────────────────────────────────────────────
+
+def build_routing_html() -> HTMLResponse:
+    _MODEL_INFO = {
+        "groq":            {"badge": "🟢", "label": "Groq",          "note": "ฟรี ~450ms",    "cost": "Free"},
+        "gemini":          {"badge": "🟢", "label": "Gemini",        "note": "ฟรี ~4000ms",   "cost": "Free"},
+        "deepseek-direct": {"badge": "💛", "label": "DeepSeek",      "note": "$0.14 ~2000ms", "cost": "$0.14/1M"},
+        "gpt-4o-mini":     {"badge": "💛", "label": "GPT-4o Mini",   "note": "$0.15 ~2700ms", "cost": "$0.15/1M"},
+        "haiku":           {"badge": "🟠", "label": "Haiku",         "note": "$0.80 ~4700ms", "cost": "$0.80/1M"},
+        "sonnet":          {"badge": "🔴", "label": "Sonnet",        "note": "$3.00 ~7000ms", "cost": "$3.00/1M"},
+        "llama4":          {"badge": "🟢", "label": "Llama 4 Scout", "note": "ฟรี ~800ms",    "cost": "Free"},
+        "kimi":            {"badge": "💛", "label": "Kimi K2",       "note": "$0.14 ~3000ms", "cost": "$0.14/1M"},
+    }
+    options_html = "\n".join(
+        f'<option value="{k}">{v["badge"]} {v["label"]} ({v["note"]})</option>'
+        for k, v in _MODEL_INFO.items()
+    )
+    html = f"""<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>Routing Editor — Ener-AI Admin</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  *{{box-sizing:border-box;margin:0;padding:0}}
+  body{{background:#0a0a0a;color:#e5e7eb;font-family:system-ui,sans-serif;min-height:100vh}}
+  .header{{background:#111;border-bottom:1px solid #222;padding:16px 24px;display:flex;align-items:center;gap:16px}}
+  .header h1{{font-size:1.2rem;font-weight:700;color:#f9fafb}}
+  .back-btn{{background:#1e293b;color:#94a3b8;border:1px solid #334;padding:6px 14px;border-radius:6px;text-decoration:none;font-size:0.85rem}}
+  .back-btn:hover{{background:#273449;color:#e2e8f0}}
+  .container{{max-width:1100px;margin:32px auto;padding:0 24px}}
+  .card{{background:#111;border:1px solid #1f2937;border-radius:12px;padding:24px;margin-bottom:24px}}
+  .card h2{{font-size:1rem;font-weight:600;color:#f9fafb;margin-bottom:4px}}
+  .card p{{font-size:0.8rem;color:#6b7280;margin-bottom:20px}}
+  table{{width:100%;border-collapse:collapse}}
+  th{{text-align:left;padding:10px 12px;font-size:0.75rem;color:#6b7280;text-transform:uppercase;border-bottom:1px solid #1f2937}}
+  td{{padding:12px;border-bottom:1px solid #111827;vertical-align:middle}}
+  tr:last-child td{{border-bottom:none}}
+  tr:hover td{{background:#0d1117}}
+  .intent-tag{{font-family:monospace;font-size:0.8rem;background:#1f2937;color:#60a5fa;padding:3px 8px;border-radius:4px}}
+  .label-text{{color:#d1d5db;font-size:0.9rem}}
+  select{{background:#1f2937;color:#e5e7eb;border:1px solid #374151;padding:6px 10px;border-radius:6px;font-size:0.85rem;cursor:pointer;width:100%}}
+  select:focus{{outline:none;border-color:#6366f1}}
+  .saved-flash{{color:#22c55e;font-size:0.8rem;margin-left:8px;opacity:0;transition:opacity 0.3s}}
+  .toast{{position:fixed;bottom:24px;right:24px;background:#1e293b;border:1px solid #334;color:#e2e8f0;padding:12px 20px;border-radius:8px;font-size:0.9rem;display:none;z-index:9999}}
+</style>
+</head>
+<body>
+<div class="header">
+  <a class="back-btn" href="/admin">← Admin</a>
+  <h1>🔀 Routing Editor</h1>
+</div>
+<div class="container">
+  <div class="card">
+    <h2>Intent → Model Mapping</h2>
+    <p>เปลี่ยน model ต่อ intent ได้เลย — มีผลทันทีโดยไม่ต้อง restart</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Intent</th>
+          <th>Label</th>
+          <th>Model</th>
+          <th>Cost</th>
+        </tr>
+      </thead>
+      <tbody id="routing-table">
+        <tr><td colspan="4" style="color:#6b7280;text-align:center;padding:32px">กำลังโหลด...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+const MODEL_INFO = {json.dumps(_MODEL_INFO)};
+const MODEL_OPTIONS = `{options_html}`;
+
+function showToast(msg) {{
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.style.display = 'block';
+  setTimeout(() => {{ t.style.display = 'none'; }}, 2500);
+}}
+
+async function updateRouting(intent, model) {{
+  try {{
+    const res = await fetch('/admin/api/routing/' + intent, {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{model}})
+    }});
+    if (res.ok) showToast('✅ Saved: ' + intent + ' → ' + model);
+    else showToast('❌ Save failed');
+  }} catch(e) {{ showToast('❌ ' + e.message); }}
+}}
+
+async function loadRouting() {{
+  try {{
+    const res = await fetch('/admin/api/routing');
+    const rows = await res.json();
+    const tbody = document.getElementById('routing-table');
+    tbody.innerHTML = rows.map(row => {{
+      const info = MODEL_INFO[row.model] || {{}};
+      const opts = Object.entries(MODEL_INFO).map(([k, v]) =>
+        `<option value="${{k}}" ${{k === row.model ? 'selected' : ''}}>${{v.badge}} ${{v.label}} (${{v.note}})</option>`
+      ).join('');
+      return `<tr>
+        <td><span class="intent-tag">${{row.intent}}</span></td>
+        <td><span class="label-text">${{row.label || ''}}</span></td>
+        <td>
+          <select onchange="updateRouting('${{row.intent}}', this.value)">${{opts}}</select>
+        </td>
+        <td style="color:#9ca3af;font-size:0.8rem">${{info.cost || '-'}}</td>
+      </tr>`;
+    }}).join('');
+  }} catch(e) {{
+    document.getElementById('routing-table').innerHTML =
+      '<tr><td colspan="4" style="color:#ef4444;text-align:center">โหลดไม่สำเร็จ: ' + e.message + '</td></tr>';
+  }}
+}}
+
+loadRouting();
+</script>
+</body>
+</html>"""
+    return HTMLResponse(html)
+
+
+@app.get("/admin/routing")
+async def admin_routing_page(request: Request):
+    await _verify_admin_session(request)
+    return build_routing_html()
+
+
+@app.get("/admin/api/routing")
+async def admin_routing_get(request: Request):
+    await _verify_admin_session(request)
+    from app.core.database import get_db
+    async with get_db() as db:
+        cur = await db.execute(
+            "SELECT intent, model, label FROM routing_config ORDER BY intent"
+        )
+        rows = [dict(r) for r in await cur.fetchall()]
+    return JSONResponse(rows)
+
+
+@app.post("/admin/api/routing/{intent}")
+async def admin_routing_update(intent: str, request: Request):
+    await _verify_admin_session(request)
+    body = await request.json()
+    model = body.get("model", "").strip()
+    if not model:
+        return JSONResponse({"ok": False, "error": "model required"}, status_code=400)
+    from app.core.database import get_db
+    async with get_db() as db:
+        await db.execute(
+            "UPDATE routing_config SET model=?, updated_at=datetime('now') WHERE intent=?",
+            (model, intent),
+        )
+        await db.commit()
+    return JSONResponse({"ok": True})
+
+
+# ── API Status Monitor ────────────────────────────────────────────────────────
+
+def build_api_status_html() -> HTMLResponse:
+    html = """<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>API Status — Ener-AI Admin</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0a0a0a;color:#e5e7eb;font-family:system-ui,sans-serif;min-height:100vh}
+  .header{background:#111;border-bottom:1px solid #222;padding:16px 24px;display:flex;align-items:center;gap:16px}
+  .header h1{font-size:1.2rem;font-weight:700;color:#f9fafb}
+  .back-btn{background:#1e293b;color:#94a3b8;border:1px solid #334;padding:6px 14px;border-radius:6px;text-decoration:none;font-size:0.85rem}
+  .back-btn:hover{background:#273449;color:#e2e8f0}
+  .container{max-width:1100px;margin:32px auto;padding:0 24px}
+  .toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+  .toolbar span{color:#6b7280;font-size:0.85rem}
+  .refresh-btn{background:#1e293b;color:#94a3b8;border:1px solid #334;padding:7px 16px;border-radius:6px;cursor:pointer;font-size:0.85rem}
+  .refresh-btn:hover{background:#273449;color:#e2e8f0}
+  .status-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px}
+  .api-card{background:#111;border:1px solid #1f2937;border-radius:12px;padding:20px}
+  .api-card.ok{border-left:3px solid #22c55e}
+  .api-card.error{border-left:3px solid #ef4444}
+  .api-card.no_key{border-left:3px solid #4b5563}
+  .api-name{font-size:1rem;font-weight:600;color:#f9fafb;margin-bottom:10px}
+  .api-status{font-size:0.9rem;font-weight:600;margin-bottom:6px}
+  .api-latency{font-size:0.8rem;color:#9ca3af;margin-bottom:4px}
+  .api-error{font-size:0.75rem;color:#f87171;margin-top:6px;word-break:break-word;background:#1a0a0a;padding:6px 8px;border-radius:4px}
+  .loading{color:#6b7280;text-align:center;padding:48px;grid-column:1/-1}
+</style>
+</head>
+<body>
+<div class="header">
+  <a class="back-btn" href="/admin">← Admin</a>
+  <h1>📡 API Status Monitor</h1>
+</div>
+<div class="container">
+  <div class="toolbar">
+    <span id="checked-at">กำลังตรวจสอบ...</span>
+    <button class="refresh-btn" onclick="loadStatus()">🔄 Refresh</button>
+  </div>
+  <div class="status-grid" id="status-grid">
+    <div class="loading">กำลังโหลด...</div>
+  </div>
+</div>
+<script>
+const STATUS_COLOR = {ok:'#22c55e', error:'#ef4444', no_key:'#9ca3af'};
+const STATUS_ICON  = {ok:'✅ Online', error:'❌ Error', no_key:'⚪ No Key'};
+
+async function loadStatus() {
+  document.getElementById('checked-at').textContent = 'กำลังตรวจสอบ...';
+  document.getElementById('status-grid').innerHTML = '<div class="loading">กำลังตรวจสอบ — อาจใช้เวลา 10-15 วินาที...</div>';
+  try {
+    const res = await fetch('/admin/api/provider-status');
+    const d = await res.json();
+    const grid = document.getElementById('status-grid');
+    grid.innerHTML = d.providers.map(p => `
+      <div class="api-card ${p.status}">
+        <div class="api-name">${p.name}</div>
+        <div class="api-status" style="color:${STATUS_COLOR[p.status]}">${STATUS_ICON[p.status]}</div>
+        <div class="api-latency">${p.latency_ms > 0 ? p.latency_ms + 'ms' : '-'}</div>
+        ${p.error ? '<div class="api-error">' + p.error + '</div>' : ''}
+      </div>
+    `).join('');
+    document.getElementById('checked-at').textContent = 'Updated: ' + d.checked_at;
+  } catch(e) {
+    document.getElementById('status-grid').innerHTML =
+      '<div class="loading" style="color:#ef4444">โหลดไม่สำเร็จ: ' + e.message + '</div>';
+  }
+}
+
+setInterval(loadStatus, 60000);
+loadStatus();
+</script>
+</body>
+</html>"""
+    return HTMLResponse(html)
+
+
+@app.get("/admin/api-status")
+async def admin_api_status_page(request: Request):
+    await _verify_admin_session(request)
+    return build_api_status_html()
+
+
+@app.get("/admin/api/provider-status")
+async def admin_provider_status(request: Request):
+    import asyncio as _asyncio
+    import time as _time
+    await _verify_admin_session(request)
+    from app.core.config import settings as _s
+    from app.core.database import get_config
+
+    deepseek_key = _s.deepseek_api_key or await get_config("deepseek_api_key", "")
+    openai_key   = _s.openai_api_key   or await get_config("openai_api_key",   "")
+    xai_key      = _s.xai_api_key      or await get_config("xai_api_key",      "")
+    moonshot_key = _s.moonshot_api_key or await get_config("moonshot_api_key", "")
+
+    async def ping(name: str, url: str, headers_fn, payload: dict, key: str):
+        if not key:
+            return {"name": name, "status": "no_key", "latency_ms": -1, "error": "API key not configured"}
+        start = _time.time()
+        try:
+            import httpx as _httpx
+            async with _httpx.AsyncClient() as client:
+                resp = await client.post(url, headers=headers_fn(key), json=payload, timeout=10.0)
+            latency = int((_time.time() - start) * 1000)
+            if resp.status_code in (200, 201):
+                return {"name": name, "status": "ok", "latency_ms": latency, "error": None}
+            return {"name": name, "status": "error", "latency_ms": latency, "error": f"HTTP {resp.status_code}"}
+        except Exception as exc:
+            return {"name": name, "status": "error", "latency_ms": int((_time.time() - start) * 1000), "error": str(exc)[:120]}
+
+    base = {"messages": [{"role": "user", "content": "hi"}], "max_tokens": 5}
+    tasks = [
+        ping("Groq", "https://api.groq.com/openai/v1/chat/completions",
+             lambda k: {"Authorization": f"Bearer {k}", "Content-Type": "application/json"},
+             {**base, "model": "llama-3.1-8b-instant"}, _s.groq_api_key),
+        ping("Anthropic (Haiku)", "https://api.anthropic.com/v1/messages",
+             lambda k: {"x-api-key": k, "anthropic-version": "2023-06-01", "Content-Type": "application/json"},
+             {"model": "claude-haiku-4-5-20251001", "max_tokens": 5, "messages": [{"role": "user", "content": "hi"}]},
+             _s.anthropic_api_key),
+        ping("DeepSeek", "https://api.deepseek.com/chat/completions",
+             lambda k: {"Authorization": f"Bearer {k}", "Content-Type": "application/json"},
+             {**base, "model": "deepseek-chat"}, deepseek_key),
+        ping("OpenAI", "https://api.openai.com/v1/chat/completions",
+             lambda k: {"Authorization": f"Bearer {k}", "Content-Type": "application/json"},
+             {**base, "model": "gpt-4o-mini"}, openai_key),
+        ping("xAI Grok", "https://api.x.ai/v1/chat/completions",
+             lambda k: {"Authorization": f"Bearer {k}", "Content-Type": "application/json"},
+             {**base, "model": "grok-4.1-fast"}, xai_key),
+        ping("Moonshot Kimi", "https://api.moonshot.cn/v1/chat/completions",
+             lambda k: {"Authorization": f"Bearer {k}", "Content-Type": "application/json"},
+             {**base, "model": "kimi-k2-5"}, moonshot_key),
+    ]
+    import asyncio as _asyncio2
+    results = await _asyncio2.gather(*tasks)
+    return JSONResponse({"providers": list(results), "checked_at": _time.strftime("%H:%M:%S")})
 
 
 @app.get("/admin/otp")

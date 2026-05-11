@@ -252,6 +252,13 @@ async def init_db():
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS routing_config (
+                intent TEXT PRIMARY KEY,
+                model TEXT NOT NULL,
+                label TEXT,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE INDEX IF NOT EXISTS idx_agent_events_agent
                 ON agent_events(agent_name, result, created_at);
             CREATE INDEX IF NOT EXISTS idx_agent_events_tags
@@ -325,6 +332,26 @@ async def init_db():
                 ("deepseek_api_key", "", "DeepSeek API Key (platform.deepseek.com)", 1),
                 ("moonshot_api_key", "", "Kimi Moonshot API Key (platform.moonshot.cn)", 1),
                 ("openai_api_key", "", "OpenAI API Key (platform.openai.com)", 1),
+            ],
+        )
+        await db.executemany(
+            """
+            INSERT OR IGNORE INTO routing_config (intent, model, label)
+            VALUES (?, ?, ?)
+            """,
+            [
+                ("default_chat",    "groq",            "Chat ทั่วไป"),
+                ("task_note",       "groq",            "Task / Note / Memory"),
+                ("location",        "gemini",          "หาสถานที่ / แผนที่"),
+                ("news",            "gemini",          "ข่าว / ข้อมูลปัจจุบัน"),
+                ("tarot",           "haiku",           "ดวง / ทาโรต์"),
+                ("ener_scan",       "haiku",           "Ener Scan / Content / Caption"),
+                ("code",            "groq",            "Code / GitHub / Debug"),
+                ("vendor_analysis", "deepseek-direct", "วิเคราะห์ Vendor / Hospital IT"),
+                ("email_draft",     "haiku",           "Email / Draft / รายงาน"),
+                ("brainstorm",      "deepseek-direct", "Brainstorm / แผน / Strategy"),
+                ("critical",        "sonnet",          "ตัดสินใจสำคัญ"),
+                ("system",          "groq",            "ระบบ / Code introspection"),
             ],
         )
         await db.commit()
