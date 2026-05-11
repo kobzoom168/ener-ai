@@ -48,7 +48,22 @@ async def _log_audit(action: str, details: str):
 
 
 async def _send_scheduled_message(bot: Bot, text: str, action: str):
-    await bot.send_message(chat_id=settings.telegram_chat_id, text=text, parse_mode=None)
+    MAX_LEN = 4000
+    if len(text) <= MAX_LEN:
+        await bot.send_message(
+            chat_id=settings.telegram_chat_id,
+            text=text,
+            parse_mode=None,
+        )
+    else:
+        chunks = [text[i:i + MAX_LEN] for i in range(0, len(text), MAX_LEN)]
+        for i, chunk in enumerate(chunks):
+            prefix = f"({i + 1}/{len(chunks)}) " if len(chunks) > 1 else ""
+            await bot.send_message(
+                chat_id=settings.telegram_chat_id,
+                text=prefix + chunk,
+                parse_mode=None,
+            )
     await _log_audit(action, f"chat_id={settings.telegram_chat_id}")
 
 
