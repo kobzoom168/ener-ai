@@ -7622,7 +7622,7 @@ async def admin_provider_status(request: Request):
              {**base, "model": "gpt-4o-mini"}, openai_key),
         ping("xAI Grok", "https://api.x.ai/v1/chat/completions",
              lambda k: {"Authorization": f"Bearer {k}", "Content-Type": "application/json"},
-             {**base, "model": "grok-4.1-fast"}, xai_key),
+             {**base, "model": "grok-3"}, xai_key),
         ping("Moonshot Kimi", "https://api.moonshot.cn/v1/chat/completions",
              lambda k: {"Authorization": f"Bearer {k}", "Content-Type": "application/json"},
              {**base, "model": "kimi-k2-5"}, moonshot_key),
