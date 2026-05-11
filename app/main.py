@@ -5625,9 +5625,16 @@ def build_workspace_html() -> HTMLResponse:
     <div id="panel-code" class="panel" style="display:none">
       <div class="panel-header" style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
         <h2 style="margin:0;font-size:20px;font-weight:600">💻 Code Assistant</h2>
-        <div style="display:flex;gap:8px;align-items:center">
-          <select id="code-file-select" style="background:#2a2a2a;border:1px solid #444;border-radius:6px;padding:6px 12px;color:#e5e5e5;font-size:13px;max-width:320px" onchange="loadCodeFile(this.value)">
-            <option value="">-- Select file --</option>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <select id="code-folder-select" style="background:#2a2a2a;border:1px solid #444;border-radius:6px;padding:6px 12px;color:#e5e5e5;font-size:13px" onchange="loadFolder(this.value)">
+            <option value="">-- หรือเลือก folder --</option>
+            <option value="app/agents">📦 app/agents</option>
+            <option value="app/core">⚙️ app/core</option>
+            <option value="app/bot">🤖 app/bot</option>
+            <option value="app">🏠 app (ทั้งหมด)</option>
+          </select>
+          <select id="code-file-select" style="background:#2a2a2a;border:1px solid #444;border-radius:6px;padding:6px 12px;color:#e5e5e5;font-size:13px;max-width:280px" onchange="loadCodeFile(this.value)">
+            <option value="">-- หรือเลือก file --</option>
           </select>
           <button onclick="loadGitLog()" style="background:#1a1a1a;border:1px solid #444;border-radius:6px;padding:6px 12px;color:#aaa;font-size:13px;cursor:pointer">📋 Git Log</button>
         </div>
@@ -6639,6 +6646,7 @@ document.addEventListener('DOMContentLoaded', function() {
   // ── Code Assistant ───────────────────────────────────────────────────────────
   let _codeCurrentFile = "";
   let _codeCurrentContent = "";
+  let _codeFolderData = null;
 
   async function loadCodePanel() {
     try {
@@ -6654,6 +6662,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
   async function loadCodeFile(path) {
     if (!path) return;
+    _codeFolderData = null;  // clear folder context when switching to file
+    const folderSel = document.getElementById('code-folder-select');
+    if (folderSel) folderSel.value = '';
     _codeCurrentFile = path;
     const viewer = document.getElementById('code-viewer');
     const info = document.getElementById('code-file-info');
@@ -6666,6 +6677,36 @@ document.addEventListener('DOMContentLoaded', function() {
       if (info) info.textContent = `${path} · ${d.lines} lines · ${d.size} bytes`;
     } catch(e) {
       if (viewer) viewer.textContent = 'Error loading file: ' + e.message;
+    }
+  }
+
+  async function loadFolder(folderPath) {
+    if (!folderPath) return;
+    _codeCurrentFile = "";
+    _codeCurrentContent = "";
+    _codeFolderData = null;
+    const viewer = document.getElementById('code-viewer');
+    const info = document.getElementById('code-file-info');
+    // Reset file select
+    const fileSel = document.getElementById('code-file-select');
+    if (fileSel) fileSel.value = '';
+    if (viewer) viewer.textContent = 'Loading folder...';
+    try {
+      const res = await fetch('/workspace/code/folder?path=' + encodeURIComponent(folderPath));
+      const d = await res.json();
+      _codeFolderData = d;
+      const summary = d.files.map(f =>
+        `# ${f.path} (${f.lines} lines)\n${f.preview}\n${'─'.repeat(60)}`
+      ).join('\n\n');
+      if (viewer) viewer.textContent = summary || '(no .py files found)';
+      if (info) info.textContent = `📁 ${folderPath} · ${d.file_count} files · ${d.total_lines} lines total`;
+      const msgs = document.getElementById('code-chat-messages');
+      if (msgs) {
+        msgs.innerHTML += `<div style="color:#888;font-size:12px;padding:4px;text-align:center">📁 โหลด ${d.file_count} files จาก ${folderPath} แล้ว — ถามได้เลย</div>`;
+        msgs.scrollTop = msgs.scrollHeight;
+      }
+    } catch(e) {
+      if (viewer) viewer.textContent = 'Error: ' + e.message;
     }
   }
 
@@ -6709,7 +6750,8 @@ document.addEventListener('DOMContentLoaded', function() {
         body: JSON.stringify({
           question,
           file_path: _codeCurrentFile,
-          file_content: _codeCurrentContent.substring(0, 8000)
+          file_content: _codeCurrentContent.substring(0, 8000),
+          folder_data: _codeFolderData
         })
       });
       const d = await res.json();
@@ -6748,6 +6790,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   window.loadCodePanel = loadCodePanel;
   window.loadCodeFile = loadCodeFile;
+  window.loadFolder = loadFolder;
   window.loadGitLog = loadGitLog;
   window.askCodeAI = askCodeAI;
   window.saveCodeMemory = saveCodeMemory;
@@ -7541,11 +7584,27 @@ async def workspace_code_chat(request: Request):
     question = body.get("question", "").strip()
     file_path = body.get("file_path", "")
     file_content = body.get("file_content", "")
+    folder_data = body.get("folder_data", None)
     if not question:
         raise HTTPException(400, "question required")
     from app.core.ai import chat as ai_chat
     file_context = ""
-    if file_path and file_content:
+    if folder_data:
+        file_list = "\n".join([
+            f"- {f['path']} ({f['lines']} lines)"
+            for f in folder_data.get("files", [])
+        ])
+        previews = "\n\n".join([
+            f"### {f['path']}\n```python\n{f['preview']}\n```"
+            for f in folder_data.get("files", [])[:10]
+        ])
+        file_context = (
+            f"\n\n=== Folder: {folder_data.get('folder')} ===\n"
+            f"{folder_data.get('file_count')} files, {folder_data.get('total_lines')} total lines\n\n"
+            f"Files:\n{file_list}\n\n"
+            f"Code Previews (first 50 lines each):\n{previews}\n"
+        )
+    elif file_path and file_content:
         lines = file_content.splitlines()
         preview = "\n".join(lines[:200])
         file_context = (
@@ -7604,6 +7663,44 @@ async def workspace_code_git_log(request: Request):
         return JSONResponse({"commits": commits})
     except Exception as exc:
         return JSONResponse({"commits": [], "error": str(exc)})
+
+
+@app.get("/workspace/code/folder")
+async def workspace_code_folder(request: Request, path: str = "app"):
+    await _require_admin(request)
+    import os
+    base = "/app"
+    folder = os.path.normpath(os.path.join(base, path))
+    if not folder.startswith(base):
+        raise HTTPException(400, "invalid path")
+    files_content = []
+    total_lines = 0
+    for root, dirs, files in os.walk(folder):
+        dirs[:] = [d for d in dirs if d not in {"__pycache__", ".git"}]
+        for f in sorted(files):
+            if not f.endswith(".py"):
+                continue
+            full_path = os.path.join(root, f)
+            rel = os.path.relpath(full_path, base)
+            try:
+                with open(full_path, "r", encoding="utf-8") as fh:
+                    content = fh.read()
+                lines = content.splitlines()
+                total_lines += len(lines)
+                files_content.append({
+                    "path": rel.replace("\\", "/"),
+                    "lines": len(lines),
+                    "preview": "\n".join(lines[:50]),
+                    "content": content[:3000],
+                })
+            except Exception:
+                pass
+    return JSONResponse({
+        "folder": path,
+        "file_count": len(files_content),
+        "total_lines": total_lines,
+        "files": files_content,
+    })
 
 
 @app.post("/workspace/files/upload")
