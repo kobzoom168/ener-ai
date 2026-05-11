@@ -49,12 +49,76 @@ async def _get_model_handoff() -> str:
     return row["value"] if row else ""
 
 
+async def _build_self_context() -> str:
+    from pathlib import Path
+
+    from app.core.agents import COMMAND_AGENT_MAP, SCHEDULER_AGENTS
+    from app.core.ai import get_active_model, get_model_label
+    from app.core.database import get_system_stats
+
+    stats = await get_system_stats()
+    active_model = await get_active_model()
+    model_label = get_model_label(active_model or "")
+    agents_dir = Path(__file__).resolve().parent
+    try:
+        agent_files = sorted(
+            file_path.stem
+            for file_path in agents_dir.glob("*.py")
+            if file_path.name != "__init__.py"
+        )
+    except Exception:
+        agent_files = sorted(set(COMMAND_AGENT_MAP.values()))
+
+    return f"""
+=== ข้อมูลระบบ Ener-AI (real-time) ===
+🤖 Model ที่ใช้อยู่: {model_label}
+🏗️ Architecture: FastAPI + SQLite + Telegram + Web Workspace
+
+📦 Agents ({len(agent_files)} ตัว):
+{", ".join(agent_files)}
+
+📊 Database Stats:
+- Messages: {stats.get("messages", 0)} ข้อความ
+- Notes: {stats.get("notes", 0)} notes
+- Tasks ทั้งหมด: {stats.get("tasks", 0)} | เปิดอยู่: {stats.get("open_tasks", 0)}
+- Memories: {stats.get("memories", 0)} | Long-term: {stats.get("long_term_memories", 0)}
+- AI Runs: {stats.get("ai_runs", 0)} ครั้ง
+- Files uploaded: {stats.get("uploads", 0)}
+
+⏰ Scheduler Jobs:
+- 07:30 จันทร์-ศุกร์: Daily Standup -> Telegram
+- 08:00 ทุกวัน: ดึงข่าว + Morning Briefing
+- 21:00 ทุกวัน: Daily Digest + Session Log
+- จันทร์ 09:00: Weekly Review
+
+🌐 Endpoints:
+- Web Workspace: /workspace
+- Admin Dashboard: /admin
+- Telegram Webhook: /webhook
+- Health: /health
+
+💾 Files:
+- app/agents/ -> {len(agent_files)} agents
+- app/core/ -> ai.py, database.py, policy.py, tools.py, memory.py
+- app/bot/router.py -> Telegram handlers
+- app/main.py -> FastAPI routes + Web UI
+- app/scheduler.py -> Cron jobs
+
+🧭 Registries:
+- Command agents: {len(set(COMMAND_AGENT_MAP.values()))}
+- Scheduler agents: {len(set(SCHEDULER_AGENTS.values()))}
+
+พี่รู้จักตัวเองครบแล้ว ถ้ากบถามเรื่องระบบตอบได้เลย
+""".strip()
+
+
 async def _build_system_prompt() -> str:
     agent_memory = await get_agent_context("MainChatAgent", ["chat", "conversation", "tools"])
     time_context = get_time_context()
     long_term = await get_long_term_context()
     summaries = await get_recent_summaries()
     handoff = await _get_model_handoff()
+    self_context = await _build_self_context()
     handoff_section = f"\n\n=== Handoff จาก Model ก่อนหน้า ===\n{handoff}" if handoff else ""
     return build_system_prompt(f"""
 
@@ -66,6 +130,8 @@ async def _build_system_prompt() -> str:
 {summaries}
 {handoff_section}
 
+{self_context}
+
 หมายเหตุ: ข้อมูลเหล่านี้คือสิ่งที่กบบอกไว้ก่อนหน้า จำและใช้ตอบได้เลย
 
 {agent_memory}
@@ -73,6 +139,7 @@ async def _build_system_prompt() -> str:
 หน้าที่:
 - คุยกับกบเหมือนผู้ช่วยส่วนตัวแบบ conversational
 - ตอบเป็นภาษาไทย กระชับ ตรงประเด็น
+- รู้จักตัวเองและระบบครบ ตอบคำถามเกี่ยวกับระบบได้เลย
 - ถ้าต้องบันทึก task, note, memory หรือเรียกความสามารถอื่น ให้ใช้ tools ตามความจำเป็น
 - ถ้าไม่จำเป็นต้องใช้ tool ให้ตอบข้อความธรรมดาได้เลย
 - ตอบเป็นข้อความธรรมดาเท่านั้น ไม่ต้องตอบเป็น JSON

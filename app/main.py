@@ -4507,6 +4507,74 @@ def build_workspace_html() -> HTMLResponse:
       margin-top: 12px;
     }
 
+    .sys-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .sys-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px;
+    }
+
+    .sys-label {
+      font-size: 12px;
+      color: var(--subtext);
+      margin-bottom: 6px;
+    }
+
+    .sys-value {
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .sched-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .sched-item {
+      display: flex;
+      gap: 16px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      padding: 10px 16px;
+      border-radius: 10px;
+      align-items: center;
+    }
+
+    .sched-time {
+      color: var(--accent);
+      font-weight: 600;
+      min-width: 120px;
+      font-size: 13px;
+    }
+
+    .sched-job {
+      color: var(--text);
+      font-size: 14px;
+    }
+
+    .agent-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .agent-chip {
+      background: #2a2a2a;
+      border: 1px solid #444;
+      border-radius: 20px;
+      padding: 4px 12px;
+      font-size: 12px;
+      color: #aaa;
+    }
+
     #drop-zone {
       border: 1px dashed var(--border);
       border-radius: 16px;
@@ -4589,6 +4657,10 @@ def build_workspace_html() -> HTMLResponse:
         grid-template-columns: 1fr;
       }
 
+      .sys-grid {
+        grid-template-columns: 1fr;
+      }
+
       .task-input-wrap {
         grid-template-columns: 1fr;
       }
@@ -4635,6 +4707,7 @@ def build_workspace_html() -> HTMLResponse:
       <a class="nav-item" onclick="showPanel('news')" data-panel="news">📰 News</a>
       <a class="nav-item" onclick="showPanel('memory')" data-panel="memory">🧠 Memory</a>
       <a class="nav-item" onclick="showPanel('files')" data-panel="files">📁 Files</a>
+      <a class="nav-item" onclick="showPanel('system')" data-panel="system">⚙️ System</a>
     </nav>
 
     <div class="sidebar-section">
@@ -4735,6 +4808,11 @@ def build_workspace_html() -> HTMLResponse:
         <input type="file" id="file-input" accept=".pdf,.docx,.txt,.md" style="display:none">
         <div id="files-list"></div>
       </div>
+    </div>
+
+    <div id="panel-system" class="panel">
+      <div class="panel-header"><h2>⚙️ System Info</h2></div>
+      <div id="system-content" class="panel-body"></div>
     </div>
   </main>
 </div>
@@ -4956,6 +5034,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (name === 'news') await loadNews();
     if (name === 'memory') await loadMemory();
     if (name === 'files') await loadFiles();
+    if (name === 'system') await loadSystem();
   }
 
   function newChat() {
@@ -5482,6 +5561,62 @@ document.addEventListener('DOMContentLoaded', function() {
         </div>
       </div>
     `).join('');
+  }
+
+  async function loadSystem() {
+    const container = document.getElementById('system-content');
+    if (!container) return;
+    container.innerHTML = '<div class="empty-state">Loading system info...</div>';
+    try {
+      const data = await api('/workspace/system/info');
+      const stats = data.stats || {};
+      const agents = data.agents || [];
+      const scheduler = data.scheduler || [];
+      container.innerHTML = `
+        <div class="sys-grid">
+          <div class="sys-card">
+            <div class="sys-label">🤖 Active Model</div>
+            <div class="sys-value">${escapeHtml(data.model || '-')}</div>
+          </div>
+          <div class="sys-card">
+            <div class="sys-label">📦 Agents</div>
+            <div class="sys-value">${Number(data.agent_count || 0).toLocaleString()} ตัว</div>
+          </div>
+          <div class="sys-card">
+            <div class="sys-label">💬 Messages</div>
+            <div class="sys-value">${Number(stats.messages || 0).toLocaleString()}</div>
+          </div>
+          <div class="sys-card">
+            <div class="sys-label">✅ Tasks (open)</div>
+            <div class="sys-value">${Number(stats.open_tasks || 0).toLocaleString()} / ${Number(stats.tasks || 0).toLocaleString()}</div>
+          </div>
+          <div class="sys-card">
+            <div class="sys-label">🧠 Memories</div>
+            <div class="sys-value">${Number(stats.memories || 0).toLocaleString()} + ${Number(stats.long_term_memories || 0).toLocaleString()} LT</div>
+          </div>
+          <div class="sys-card">
+            <div class="sys-label">📝 Notes</div>
+            <div class="sys-value">${Number(stats.notes || 0).toLocaleString()}</div>
+          </div>
+        </div>
+        <h3 style="margin:24px 0 12px">⏰ Scheduler</h3>
+        <div class="sched-list">
+          ${scheduler.map((item) => `
+            <div class="sched-item">
+              <span class="sched-time">${escapeHtml(item.time || '')}</span>
+              <span class="sched-job">${escapeHtml(item.job || '')}</span>
+            </div>
+          `).join('')}
+        </div>
+        <h3 style="margin:24px 0 12px">📦 Agents (${Number(data.agent_count || 0).toLocaleString()})</h3>
+        <div class="agent-chips">
+          ${agents.map((agent) => `<span class="agent-chip">${escapeHtml(agent || '')}</span>`).join('')}
+        </div>
+      `;
+    } catch (error) {
+      container.innerHTML = '<div class="empty-state">โหลด system info ไม่สำเร็จ</div>';
+      showToast(error.message || 'Load system info failed');
+    }
   }
 
   dropZone.addEventListener('click', () => fileInput.click());
@@ -6014,6 +6149,38 @@ async def workspace_files(request: Request):
                 }
                 for row in rows
             ]
+        }
+    )
+
+
+@app.get("/workspace/system/info")
+async def workspace_system_info(request: Request):
+    await _require_admin(request)
+    from app.core.database import get_system_stats
+
+    stats = await get_system_stats()
+    active_model = await get_active_model()
+    agents_dir = Path(__file__).resolve().parent / "agents"
+    try:
+        agent_files = sorted(
+            file_path.stem
+            for file_path in agents_dir.glob("*.py")
+            if file_path.name != "__init__.py"
+        )
+    except Exception:
+        agent_files = []
+    return JSONResponse(
+        {
+            "model": get_model_label(active_model or ""),
+            "stats": stats,
+            "agents": agent_files,
+            "agent_count": len(agent_files),
+            "scheduler": [
+                {"time": "07:30 จ-ศ", "job": "Daily Standup -> Telegram"},
+                {"time": "08:00 ทุกวัน", "job": "News + Morning Briefing"},
+                {"time": "21:00 ทุกวัน", "job": "Daily Digest + Session Log"},
+                {"time": "จันทร์ 09:00", "job": "Weekly Review"},
+            ],
         }
     )
 

@@ -1,4 +1,5 @@
 from datetime import date
+from pathlib import Path
 
 from app.core.database import get_db
 
@@ -203,6 +204,62 @@ TOOLS = [
             "required": ["query"],
         },
     },
+    {
+        "name": "get_system_info",
+        "description": "ดูข้อมูลระบบ Ener-AI แบบ real-time: agent list, DB stats, scheduler, model ที่ใช้อยู่",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "section": {
+                    "type": "string",
+                    "description": "ส่วนที่ต้องการ: all, agents, db, scheduler, files",
+                    "enum": ["all", "agents", "db", "scheduler", "files"],
+                }
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "read_code_file",
+        "description": "อ่าน source code ของระบบ Ener-AI เพื่อวิเคราะห์หรือช่วย debug",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "filepath": {
+                    "type": "string",
+                    "description": "path เช่น app/agents/chat.py, app/core/policy.py",
+                },
+                "lines": {
+                    "type": "integer",
+                    "description": "จำนวนบรรทัดที่ต้องการอ่าน (default 100)",
+                },
+            },
+            "required": ["filepath"],
+        },
+    },
+    {
+        "name": "generate_cursor_prompt",
+        "description": "สร้าง Cursor prompt พร้อมใช้งาน เมื่อกบต้องการเพิ่ม/แก้ feature ในระบบ",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "feature_request": {
+                    "type": "string",
+                    "description": "สิ่งที่กบต้องการเพิ่มหรือแก้ไข",
+                },
+                "affected_files": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "ไฟล์ที่ต้องแก้ไข เช่น ['app/main.py', 'app/agents/chat.py']",
+                },
+                "context": {
+                    "type": "string",
+                    "description": "บริบทเพิ่มเติม เช่น code เดิมที่เกี่ยวข้อง",
+                },
+            },
+            "required": ["feature_request"],
+        },
+    },
 ]
 
 
@@ -337,5 +394,111 @@ async def execute_tool(tool_name: str, tool_input: dict) -> str:
         if not query:
             return "กรุณาระบุคำค้นหา"
         return await _gemini_grounded_search(query)
+
+    if tool_name == "get_system_info":
+        from app.core.ai import get_active_model, get_model_label
+        from app.core.database import get_system_stats
+
+        section = str(payload.get("section", "all")).strip().lower() or "all"
+        stats = await get_system_stats()
+        active_model = await get_active_model()
+        model_label = get_model_label(active_model or "")
+        agents_dir = Path(__file__).resolve().parent.parent / "agents"
+        try:
+            agent_files = sorted(
+                file_path.stem
+                for file_path in agents_dir.glob("*.py")
+                if file_path.name != "__init__.py"
+            )
+        except Exception:
+            agent_files = []
+
+        model_info = f"Model: {model_label}" if section == "all" else ""
+        arch_info = "Architecture: FastAPI + SQLite + Telegram + Web Workspace" if section == "all" else ""
+        db_info = ""
+        agents_info = ""
+        sched_info = ""
+        files_info = ""
+
+        if section in {"all", "db"}:
+            db_info = (
+                f"Messages: {stats.get('messages', 0)} | "
+                f"Notes: {stats.get('notes', 0)} | "
+                f"Tasks: {stats.get('tasks', 0)} (open: {stats.get('open_tasks', 0)}) | "
+                f"Memories: {stats.get('memories', 0)} | "
+                f"Long-term: {stats.get('long_term_memories', 0)} | "
+                f"AI Runs: {stats.get('ai_runs', 0)} | "
+                f"Uploads: {stats.get('uploads', 0)}"
+            )
+        if section in {"all", "agents"}:
+            agents_info = f"Agents ({len(agent_files)}): {', '.join(agent_files)}"
+        if section in {"all", "scheduler"}:
+            sched_info = (
+                "Scheduler: 07:30 Standup | 08:00 News+Briefing | "
+                "21:00 Digest+Session Log | จันทร์ 09:00 Weekly Review"
+            )
+        if section in {"all", "files"}:
+            files_info = "\n".join(
+                [
+                    "Files:",
+                    f"- app/agents/ -> {len(agent_files)} agents",
+                    "- app/core/ -> ai.py, database.py, policy.py, tools.py, memory.py",
+                    "- app/bot/router.py -> Telegram handlers",
+                    "- app/main.py -> FastAPI routes + Web UI",
+                    "- app/scheduler.py -> Cron jobs",
+                ]
+            )
+        return "\n".join(filter(None, [model_info, arch_info, db_info, agents_info, sched_info, files_info]))
+
+    if tool_name == "read_code_file":
+        filepath = str(payload.get("filepath", "")).strip().replace("\\", "/")
+        try:
+            lines_limit = int(payload.get("lines", 100))
+        except (TypeError, ValueError):
+            lines_limit = 100
+        lines_limit = max(1, min(lines_limit, 400))
+        project_root = Path(__file__).resolve().parent.parent.parent
+        app_root = (project_root / "app").resolve(strict=False)
+        if not filepath or not filepath.startswith("app/"):
+            return "❌ อนุญาตให้อ่านเฉพาะไฟล์ใน app/ เท่านั้น"
+        full_path = (project_root / filepath).resolve(strict=False)
+        try:
+            full_path.relative_to(app_root)
+        except ValueError:
+            return "❌ ไม่อนุญาตให้อ่านไฟล์นอก app/ directory"
+        try:
+            content = full_path.read_text(encoding="utf-8").splitlines(keepends=True)
+            total = len(content)
+            preview = "".join(content[:lines_limit])
+            return (
+                f"📄 {filepath} ({total} บรรทัด, แสดง {min(lines_limit, total)} บรรทัด)\n\n"
+                f"{preview}"
+            )
+        except FileNotFoundError:
+            return f"❌ ไม่พบไฟล์ {filepath}"
+        except Exception as exc:
+            return f"❌ อ่านไม่ได้: {exc}"
+
+    if tool_name == "generate_cursor_prompt":
+        feature_request = str(payload.get("feature_request", "")).strip()
+        affected_files = payload.get("affected_files", [])
+        if not isinstance(affected_files, list):
+            affected_files = [str(affected_files)]
+        affected_files = [str(item).strip() for item in affected_files if str(item).strip()]
+        context = str(payload.get("context", "")).strip()
+        files_section = ""
+        if affected_files:
+            files_section = "\n\n## FILES TO MODIFY\n" + "\n".join(f"- {file_path}" for file_path in affected_files)
+        context_section = f"\n\n## CONTEXT\n{context}" if context else ""
+        prompt = f"""```cursor-prompt
+{feature_request}{context_section}{files_section}
+
+## RULES
+- Maintain existing code style
+- Do NOT break existing functionality
+- Thai language for user-facing text
+- No new dependencies unless necessary
+```"""
+        return f"📋 Cursor Prompt พร้อมใช้:\n\n{prompt}"
 
     return f"ไม่รู้จัก tool: {tool_name}"
