@@ -172,6 +172,31 @@ def get_model_availability() -> dict[str, bool]:
     }
 
 
+async def get_model_availability_async() -> dict[str, bool]:
+    """Like get_model_availability() but also checks DB config for keys not in .env."""
+    from app.core.database import get_config
+    xai = settings.xai_api_key or await get_config("xai_api_key", "")
+    deepseek = settings.deepseek_api_key or await get_config("deepseek_api_key", "")
+    moonshot = settings.moonshot_api_key or await get_config("moonshot_api_key", "")
+    openai = settings.openai_api_key or await get_config("openai_api_key", "")
+    return {
+        "haiku": bool(settings.anthropic_api_key),
+        "groq": bool(settings.groq_api_key),
+        "gemini": bool(settings.gemini_api_key),
+        "qwen3b": True,
+        "qwen7b": True,
+        "sonnet": bool(settings.anthropic_api_key),
+        "opus": bool(settings.anthropic_api_key),
+        "gemini-pro": bool(settings.gemini_api_key),
+        "llama4": bool(settings.groq_api_key),
+        "grok": bool(xai),
+        "deepseek-direct": bool(deepseek),
+        "kimi": bool(moonshot),
+        "gpt-4o-mini": bool(openai),
+        "gpt-4o": bool(openai),
+    }
+
+
 def _default_model(availability: dict[str, bool] | None = None) -> str:
     available = availability or get_model_availability()
     if available.get("groq"):
@@ -516,7 +541,9 @@ async def _call_grok(
     agent: str,
 ) -> str:
     """Grok 3 Mini via xAI API (OpenAI-compatible)."""
-    if not settings.xai_api_key:
+    from app.core.database import get_config
+    api_key = settings.xai_api_key or await get_config("xai_api_key", "")
+    if not api_key:
         raise RuntimeError("xAI API key not set")
     started_at = time.perf_counter()
     try:
@@ -529,10 +556,10 @@ async def _call_grok(
             resp = await client.post(
                 "https://api.x.ai/v1/chat/completions",
                 headers={
-                    "Authorization": f"Bearer {settings.xai_api_key}",
+                    "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
                 },
-                json={"model": "grok-3-mini", "messages": msgs, "max_tokens": 2048},
+                json={"model": "grok-4.3", "messages": msgs, "max_tokens": 2048},
                 timeout=30.0,
             )
             resp.raise_for_status()
@@ -558,7 +585,9 @@ async def _call_deepseek_direct(
     agent: str,
 ) -> str:
     """DeepSeek V3 via direct API (cheaper than Groq relay)."""
-    if not settings.deepseek_api_key:
+    from app.core.database import get_config
+    api_key = settings.deepseek_api_key or await get_config("deepseek_api_key", "")
+    if not api_key:
         raise RuntimeError("DeepSeek API key not set")
     started_at = time.perf_counter()
     try:
@@ -571,10 +600,10 @@ async def _call_deepseek_direct(
             resp = await client.post(
                 "https://api.deepseek.com/chat/completions",
                 headers={
-                    "Authorization": f"Bearer {settings.deepseek_api_key}",
+                    "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
                 },
-                json={"model": "deepseek-v4-flash", "messages": msgs, "max_tokens": 2048},
+                json={"model": "deepseek-chat", "messages": msgs, "max_tokens": 2048},
                 timeout=30.0,
             )
             resp.raise_for_status()
@@ -600,7 +629,9 @@ async def _call_kimi(
     agent: str,
 ) -> str:
     """Kimi K2 via Moonshot API (OpenAI-compatible)."""
-    if not settings.moonshot_api_key:
+    from app.core.database import get_config
+    api_key = settings.moonshot_api_key or await get_config("moonshot_api_key", "")
+    if not api_key:
         raise RuntimeError("Moonshot API key not set")
     started_at = time.perf_counter()
     try:
@@ -613,7 +644,7 @@ async def _call_kimi(
             resp = await client.post(
                 "https://api.moonshot.cn/v1/chat/completions",
                 headers={
-                    "Authorization": f"Bearer {settings.moonshot_api_key}",
+                    "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
                 },
                 json={"model": "kimi-k2-5", "messages": msgs, "max_tokens": 2048},
@@ -643,7 +674,9 @@ async def _call_openai(
     model: str = "gpt-4o-mini",
 ) -> str:
     """GPT-4o / GPT-4o Mini via OpenAI API."""
-    if not settings.openai_api_key:
+    from app.core.database import get_config
+    api_key = settings.openai_api_key or await get_config("openai_api_key", "")
+    if not api_key:
         raise RuntimeError("OpenAI API key not set")
     started_at = time.perf_counter()
     try:
@@ -656,7 +689,7 @@ async def _call_openai(
             resp = await client.post(
                 "https://api.openai.com/v1/chat/completions",
                 headers={
-                    "Authorization": f"Bearer {settings.openai_api_key}",
+                    "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
                 },
                 json={"model": model, "messages": msgs, "max_tokens": 2048},
@@ -1059,7 +1092,7 @@ async def chat(
     preferred_model: str | None = None,
     strict_model: bool = False,
 ) -> str:
-    availability = get_model_availability()
+    availability = await get_model_availability_async()
     if preferred_model == "deepseek":
         if settings.groq_api_key:
             return await _call_deepseek(prompt, system, messages, agent)
