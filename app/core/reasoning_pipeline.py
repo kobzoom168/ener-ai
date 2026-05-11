@@ -199,12 +199,15 @@ async def reason(
     system_prompt: str,
     route: dict,
 ) -> str:
+    from app.core.context_builder import build_context
+
     complexity = route.get("complexity", "simple")
     model = route.get("model", "groq")
     tool_names = route.get("tools", [])
     selected_tools = _select_tools(tool_names)
 
-    enhanced_system = system_prompt
+    grounded = await build_context(text, route)
+    enhanced_system = system_prompt + grounded
     if complexity in ("complex", "critical"):
         enhanced_system += """
 
