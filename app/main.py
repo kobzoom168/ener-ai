@@ -4147,13 +4147,17 @@ def build_workspace_html() -> HTMLResponse:
     .user-bubble {
       background: var(--user-bubble);
       border-radius: 18px 18px 4px 18px;
+      min-width: 60px;
+      max-width: 65%;
+      white-space: pre-wrap;
+      word-break: break-word;
     }
 
     .ai-bubble {
       background: transparent;
       border-radius: 0;
       padding-left: 0;
-      max-width: 85%;
+      max-width: 80%;
     }
 
     .msg-text {
@@ -4162,10 +4166,15 @@ def build_workspace_html() -> HTMLResponse:
     }
 
     .msg-meta {
-      font-size: 12px;
-      color: var(--subtext);
+      display: block;
+      font-size: 11px;
+      color: #666;
       margin-top: 4px;
-      padding: 0 2px;
+      text-align: right;
+    }
+
+    .ai-row .msg-meta {
+      text-align: left;
     }
 
     #chat-input-wrap {
@@ -4227,6 +4236,47 @@ def build_workspace_html() -> HTMLResponse:
     #send-btn:disabled {
       background: var(--border);
       cursor: not-allowed;
+    }
+
+    #slash-menu {
+      position: fixed;
+      bottom: 80px;
+      left: 50%;
+      transform: translateX(-50%);
+      max-width: 700px;
+      width: calc(100% - 240px - 48px);
+      background: #2f2f2f;
+      border: 1px solid #444;
+      border-radius: 12px;
+      overflow: hidden;
+      z-index: 100;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    }
+
+    .slash-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 16px;
+      cursor: pointer;
+      font-size: 15px;
+      transition: background 0.1s;
+    }
+
+    .slash-item:hover,
+    .slash-item.selected {
+      background: #3f3f3f;
+    }
+
+    .slash-cmd {
+      color: #7c3aed;
+      font-weight: 600;
+      min-width: 120px;
+    }
+
+    .slash-desc {
+      color: #999;
+      font-size: 14px;
     }
 
     .thinking {
@@ -4631,6 +4681,7 @@ def build_workspace_html() -> HTMLResponse:
 </div>
 
 <div id="toast"></div>
+<div id="slash-menu" style="display:none"></div>
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
@@ -4648,6 +4699,23 @@ document.addEventListener('DOMContentLoaded', function() {
   const activeModelBadge = document.getElementById('active-model-badge');
   const dropZone = document.getElementById('drop-zone');
   const fileInput = document.getElementById('file-input');
+  const slashMenu = document.getElementById('slash-menu');
+  const SLASH_COMMANDS = [
+    { cmd: '/note', desc: 'บันทึกความคิด → BrainAgent' },
+    { cmd: '/task', desc: 'สร้าง task ใหม่' },
+    { cmd: '/tasks', desc: 'ดู task ทั้งหมด' },
+    { cmd: '/remember', desc: 'บันทึก long-term memory' },
+    { cmd: '/memory', desc: 'ดู memory ทั้งหมด' },
+    { cmd: '/think', desc: 'ถกไอเดีย 3 รอบ (brainstorm)' },
+    { cmd: '/news', desc: 'ดูข่าว AI/Tech วันนี้' },
+    { cmd: '/today', desc: 'สรุปวันนี้' },
+    { cmd: '/tarot', desc: 'ดูดวงไพ่ทาโรต์' },
+    { cmd: '/code', desc: 'เขียน/review code' },
+    { cmd: '/content', desc: 'สร้าง caption/script' },
+    { cmd: '/ener', desc: 'วิเคราะห์พระเครื่อง' },
+    { cmd: '/learn', desc: 'บันทึกบทเรียน' },
+    { cmd: '/help', desc: 'ดูคำสั่งทั้งหมด' },
+  ];
 
   function escapeHtml(text) {
     return String(text || '')
@@ -4691,14 +4759,45 @@ document.addEventListener('DOMContentLoaded', function() {
     sendBtn.textContent = loading ? '...' : '↑';
   }
 
-  function appendUserBubble(text, meta='You • now') {
+  function currentTimeLabel() {
+    return new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+  }
+
+  function updateSlashMenu(value) {
+    if (!value.startsWith('/')) {
+      slashMenu.style.display = 'none';
+      return;
+    }
+    const q = value.toLowerCase();
+    const matches = SLASH_COMMANDS.filter((c) => c.cmd.startsWith(q));
+    if (matches.length === 0) {
+      slashMenu.style.display = 'none';
+      return;
+    }
+    slashMenu.innerHTML = matches.map((c, i) => `
+      <div class="slash-item ${i === 0 ? 'selected' : ''}" onclick="selectSlash('${c.cmd}')">
+        <span class="slash-cmd">${c.cmd}</span>
+        <span class="slash-desc">${c.desc}</span>
+      </div>
+    `).join('');
+    slashMenu.style.display = 'block';
+    window._slashIndex = 0;
+  }
+
+  function selectSlash(cmd) {
+    chatInput.value = cmd + ' ';
+    chatInput.style.height = 'auto';
+    chatInput.style.height = Math.min(chatInput.scrollHeight, 200) + 'px';
+    chatInput.focus();
+    slashMenu.style.display = 'none';
+  }
+
+  function appendUserBubble(text, meta=`Web • ${currentTimeLabel()}`) {
     const row = document.createElement('div');
     row.className = 'msg-row user-row';
     row.innerHTML = `
-      <div>
-        <div class="msg-bubble user-bubble">
-          <div class="msg-text">${escapeHtml(text)}</div>
-        </div>
+      <div class="msg-bubble user-bubble">
+        <div class="msg-text">${escapeHtml(text)}</div>
         <div class="msg-meta">${escapeHtml(meta)}</div>
       </div>
     `;
@@ -4802,7 +4901,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     chatInput.value = '';
     chatInput.style.height = 'auto';
-    appendUserBubble(msg, state.projectName || 'You • web');
+    slashMenu.style.display = 'none';
+    appendUserBubble(msg, `Web • ${currentTimeLabel()}`);
 
     const thinkingId = 'thinking-' + Date.now();
     appendThinkingBubble(thinkingId);
@@ -5279,16 +5379,43 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   });
 
-  chatInput.addEventListener('keydown', (e) => {
+  chatInput.addEventListener('input', function() {
+    this.style.height = 'auto';
+    this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+    updateSlashMenu(this.value);
+  });
+
+  chatInput.addEventListener('keydown', function(e) {
+    const items = slashMenu.querySelectorAll('.slash-item');
+    if (slashMenu.style.display !== 'none' && items.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        window._slashIndex = Math.min((window._slashIndex || 0) + 1, items.length - 1);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        window._slashIndex = Math.max((window._slashIndex || 0) - 1, 0);
+      } else if (e.key === 'Tab' || (e.key === 'Enter' && slashMenu.style.display !== 'none' && this.value.startsWith('/'))) {
+        e.preventDefault();
+        const selected = items[window._slashIndex || 0];
+        if (selected) selected.click();
+        return;
+      } else if (e.key === 'Escape') {
+        slashMenu.style.display = 'none';
+        return;
+      }
+      items.forEach((el, i) => el.classList.toggle('selected', i === (window._slashIndex || 0)));
+      return;
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
     }
   });
 
-  chatInput.addEventListener('input', function() {
-    this.style.height = 'auto';
-    this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+  document.addEventListener('click', function(e) {
+    if (!e.target.closest('#slash-menu') && !e.target.closest('#chat-input')) {
+      slashMenu.style.display = 'none';
+    }
   });
 
   document.getElementById('proj-name-input').addEventListener('keydown', (e) => {
@@ -5311,6 +5438,7 @@ document.addEventListener('DOMContentLoaded', function() {
   window.fetchNews = fetchNews;
   window.summarizeFile = summarizeFile;
   window.askFile = askFile;
+  window.selectSlash = selectSlash;
 
   window._currentProject = null;
   loadActiveModelBadge();
