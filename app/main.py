@@ -6281,7 +6281,11 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
-  dropZone.addEventListener('click', () => fileInput.click());
+  function dropZoneClick() {
+    fileInput.click();
+  }
+
+  dropZone.addEventListener('click', dropZoneClick);
   fileInput.addEventListener('change', async () => {
     const file = fileInput.files[0];
     if (!file) return;
@@ -6380,6 +6384,7 @@ document.addEventListener('DOMContentLoaded', function() {
   window.fetchNews = fetchNews;
   window.summarizeFile = summarizeFile;
   window.askFile = askFile;
+  window.dropZoneClick = dropZoneClick;
   window.selectSlash = selectSlash;
   window.showToast = showToast;
   window.api = api;
