@@ -2482,16 +2482,30 @@ def build_admin_html(overview: dict) -> HTMLResponse:
 
     {errors_html}
 
-    <section id="api-status-section" style="background:#111;border:1px solid #1f2937;border-radius:12px;padding:20px;margin:16px 0;width:100%;box-sizing:border-box;overflow:hidden">
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px">
-        <span style="font-weight:600;font-size:0.95rem;color:#f9fafb">📡 API Status</span>
-        <button onclick="refreshApiStatus()" style="font-size:12px;padding:4px 12px;background:#1a1a1a;border:1px solid #444;border-radius:6px;color:#aaa;cursor:pointer">↻ Refresh</button>
-        <span id="api-status-time" style="font-size:11px;color:#666"></span>
+    <div id="api-status-widget" style="position:fixed;bottom:20px;left:20px;width:560px;min-width:280px;
+         background:#0a0a0a;border:1px solid #333;border-radius:8px;z-index:998;
+         box-shadow:0 4px 20px rgba(0,136,255,0.08);overflow:hidden">
+      <div id="api-status-drag-handle" style="display:flex;justify-content:space-between;align-items:center;
+           padding:6px 10px;background:#111;border-bottom:1px solid #222;
+           cursor:grab;user-select:none;font-size:11px;color:#888">
+        <span>📡 API Status</span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <span id="api-status-time" style="font-size:10px;color:#555"></span>
+          <button onclick="refreshApiStatus()" style="background:#222;border:1px solid #333;color:#888;
+                  padding:2px 6px;border-radius:4px;cursor:pointer;font-size:10px">↻</button>
+          <button onclick="toggleApiStatus()" id="api-status-toggle-btn" style="background:#222;border:1px solid #333;
+                  color:#888;padding:2px 6px;border-radius:4px;cursor:pointer;font-size:10px">_</button>
+        </div>
       </div>
-      <div id="api-status-grid" style="display:flex;flex-direction:row;flex-wrap:nowrap;gap:12px;padding:16px 0 8px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:thin;scrollbar-color:#444 #1a1a1a">
-        <span style="color:#555;font-size:0.85rem">Loading...</span>
+      <div id="api-status-body" style="overflow:hidden">
+        <div id="api-status-grid" style="display:flex;flex-direction:row;flex-wrap:nowrap;gap:10px;
+             padding:12px;overflow-x:auto;-webkit-overflow-scrolling:touch;
+             scrollbar-width:thin;scrollbar-color:#444 #111">
+          <span style="color:#555;font-size:0.85rem">Loading...</span>
+        </div>
       </div>
-    </section>
+      <div id="api-status-resize" style="text-align:right;padding:0 4px 2px;color:#444;font-size:10px;cursor:se-resize;user-select:none">⠿</div>
+    </div>
   </main>
   {live_log_tail_html}
 
@@ -3184,19 +3198,19 @@ def build_admin_html(overview: dict) -> HTMLResponse:
         grid.innerHTML = d.providers.map(p => `
           <div style="background:#1a1a1a;border:1px solid ${{STATUS_COLOR[p.status]}}40;
                       border-left:3px solid ${{STATUS_COLOR[p.status]}};
-                      border-radius:8px;padding:12px;min-width:160px;flex-shrink:0">
-            <div style="font-weight:600;font-size:13px;margin-bottom:4px">${{p.name}}</div>
-            <div style="color:${{STATUS_COLOR[p.status]}};font-size:12px">
+                      border-radius:8px;padding:12px;min-width:150px;flex-shrink:0">
+            <div style="font-weight:600;font-size:12px;margin-bottom:4px">${{p.name}}</div>
+            <div style="color:${{STATUS_COLOR[p.status]}};font-size:11px">
               ${{STATUS_ICON[p.status]}}
               ${{p.status==='ok' ? 'Online' : p.status==='no_key' ? 'No Key' : 'Error'}}
             </div>
-            <div style="color:#666;font-size:11px;margin-top:2px">
+            <div style="color:#666;font-size:10px;margin-top:2px">
               ${{p.latency_ms > 0 ? p.latency_ms+'ms' : '-'}}
               ${{p.error ? '<br><span style="color:#ef444488">'+p.error+'</span>' : ''}}
             </div>
           </div>
         `).join('');
-        document.getElementById('api-status-time').textContent = 'Updated: ' + d.checked_at;
+        document.getElementById('api-status-time').textContent = d.checked_at;
       }} catch(e) {{
         const grid = document.getElementById('api-status-grid');
         if (grid) grid.textContent = 'Load failed';
@@ -3204,6 +3218,74 @@ def build_admin_html(overview: dict) -> HTMLResponse:
     }}
     refreshApiStatus();
     setInterval(refreshApiStatus, 60000);
+
+    // ── API Status widget drag + resize + collapse ────────────────────────
+    (function initApiStatusWidget() {{
+      const apiWidget  = document.getElementById('api-status-widget');
+      const apiHandle  = document.getElementById('api-status-drag-handle');
+      const apiResize  = document.getElementById('api-status-resize');
+      const apiBody    = document.getElementById('api-status-body');
+      const API_POS_KEY = 'api-status-pos-v1';
+      let isDrag = false, isResize = false;
+      let sx = 0, sy = 0, sl = 0, st = 0;
+      let rsw = 0, rsh = 0, rsx = 0, rsy = 0;
+
+      function savePos() {{
+        localStorage.setItem(API_POS_KEY, JSON.stringify({{
+          left: apiWidget.style.left,
+          top:  apiWidget.style.top,
+          width: apiWidget.style.width,
+        }}));
+      }}
+      function loadPos() {{
+        try {{
+          const p = JSON.parse(localStorage.getItem(API_POS_KEY) || '{{}}');
+          if (p.left) {{ apiWidget.style.left = p.left; apiWidget.style.right = 'auto'; }}
+          if (p.top)  {{ apiWidget.style.top  = p.top;  apiWidget.style.bottom = 'auto'; }}
+          if (p.width) apiWidget.style.width = p.width;
+        }} catch(e) {{}}
+      }}
+      loadPos();
+
+      apiHandle.addEventListener('mousedown', e => {{
+        if (e.target.closest('button')) return;
+        isDrag = true;
+        sx = e.clientX; sy = e.clientY;
+        const rect = apiWidget.getBoundingClientRect();
+        sl = rect.left; st = rect.top;
+        apiWidget.style.right = 'auto'; apiWidget.style.bottom = 'auto';
+        e.preventDefault();
+      }});
+      apiResize.addEventListener('mousedown', e => {{
+        isResize = true;
+        rsx = e.clientX; rsy = e.clientY;
+        rsw = apiWidget.offsetWidth; rsh = apiWidget.offsetHeight;
+        e.preventDefault(); e.stopPropagation();
+      }});
+      document.addEventListener('mousemove', e => {{
+        if (isDrag) {{
+          apiWidget.style.left = (sl + e.clientX - sx) + 'px';
+          apiWidget.style.top  = (st + e.clientY - sy) + 'px';
+        }}
+        if (isResize) {{
+          apiWidget.style.width = Math.max(280, rsw + e.clientX - rsx) + 'px';
+        }}
+      }});
+      document.addEventListener('mouseup', () => {{
+        if (isDrag || isResize) savePos();
+        isDrag = false; isResize = false;
+      }});
+    }})();
+
+    function toggleApiStatus() {{
+      const body = document.getElementById('api-status-body');
+      const btn  = document.getElementById('api-status-toggle-btn');
+      const resize = document.getElementById('api-status-resize');
+      const collapsed = body.style.display === 'none';
+      body.style.display = collapsed ? '' : 'none';
+      resize.style.display = collapsed ? '' : 'none';
+      btn.textContent = collapsed ? '_' : '▲';
+    }}
 
     (function initAutoRefresh() {{
       const sel = document.getElementById('auto-refresh-select');
