@@ -21,12 +21,15 @@ CHECKER_PROMPT = """ตรวจคำตอบนี้ก่อนส่งใ
 
 
 def route_fast(text: str) -> dict:
-    """Python keyword router — 0-5ms, no LLM call."""
+    """Python keyword router — 0-5ms, no LLM call.
+    Routes to optimal model per task based on cost/quality balance.
+    """
     t = text.lower()
 
+    # Location / current info → Gemini (free, grounded)
     if any(k in t for k in [
         "หาร้าน", "ที่ไหน", "ใกล้", "พิกัด", "เบอร์โทร", "ราคา",
-        "ข่าวล่าสุด", "today", "แผนที่", "restaurant", "where",
+        "ข่าวล่าสุด", "แผนที่", "restaurant", "where",
         "เวียงจันทร์", "กรุงเทพ", "เชียงใหม่", "ปทุม",
     ]):
         return {
@@ -35,9 +38,10 @@ def route_fast(text: str) -> dict:
             "model": "gemini",
             "tools": ["make_maps_links", "search_memory"],
             "needs_check": True,
-            "reason": "location/current info — grounded required",
+            "reason": "location/current info",
         }
 
+    # Task / note / memory → Groq (free + fast)
     if any(k in t for k in [
         "จด", "จำไว้", "todo", "task", "เพิ่มงาน", "บันทึก",
         "/task", "/note", "/remember", "save this", "remind",
@@ -48,9 +52,10 @@ def route_fast(text: str) -> dict:
             "model": "groq",
             "tools": ["save_task", "save_note", "remember_fact"],
             "needs_check": False,
-            "reason": "task/note direct operation",
+            "reason": "task/note direct",
         }
 
+    # Memory search → Groq (free + fast)
     if any(k in t for k in [
         "จำได้ไหม", "เมื่อก่อน", "บอกว่า", "ค้นหา", "ลืม",
         "/memory", "/search", "เคยบอก", "เคยคุย",
@@ -64,9 +69,10 @@ def route_fast(text: str) -> dict:
             "reason": "memory recall",
         }
 
+    # Tarot / spiritual → Haiku (Thai best)
     if any(k in t for k in [
         "ดวง", "ไพ่", "ทาโรต์", "ทำนาย", "โชค", "เสี่ยง",
-        "tarot", "fortune", "horoscope", "ดูดวง",
+        "tarot", "fortune", "ดูดวง",
     ]):
         return {
             "complexity": "simple",
@@ -77,6 +83,7 @@ def route_fast(text: str) -> dict:
             "reason": "tarot/spiritual",
         }
 
+    # Ener Scan content → Haiku (best Thai + creative)
     if any(k in t for k in [
         "พระ", "เครื่อง", "พลังงาน", "หลวงปู่", "สมเด็จ", "บูชา",
         "ener scan", "caption", "tiktok", "youtube", "content",
@@ -86,51 +93,73 @@ def route_fast(text: str) -> dict:
             "complexity": "complex",
             "domain": "analysis",
             "model": "haiku",
-            "tools": [
-                "analyze_amulet",
-                "create_content",
-                "draw_tarot_with_question",
-                "search_memory",
-            ],
+            "tools": ["analyze_amulet", "create_content",
+                      "draw_tarot_with_question", "search_memory"],
             "needs_check": False,
             "reason": "ener scan / amulet / content",
         }
 
+    # Code / GitHub → Groq (free + fast enough)
     if any(k in t for k in [
         "code", "github", "bug", "error", "โปรแกรม", "function",
         "deploy", "script", "dockerfile", "python", "api", "cursor",
-        "แก้โค้ด", "debug", "ระบบ",
+        "แก้โค้ด", "debug",
     ]):
         return {
             "complexity": "complex",
             "domain": "code",
             "model": "groq",
-            "tools": [
-                "read_github_file",
-                "list_github_repos",
-                "list_github_prs",
-                "read_code_file",
-                "generate_cursor_prompt",
-            ],
+            "tools": ["read_github_file", "list_github_repos",
+                      "list_github_prs", "read_code_file",
+                      "generate_cursor_prompt"],
             "needs_check": False,
             "reason": "code/technical",
         }
 
+    # Hospital IT / vendor analysis → DeepSeek (cheap + good reasoning)
     if any(k in t for k in [
         "วิเคราะห์", "เปรียบเทียบ", "vendor", "proposal", "risk",
-        "ควรเลือก", "hospital", "his", "server", "network", "backup",
-        "pbx", "crm", "infrastructure", "โรงพยาบาล", "it pm",
-        "procurement", "tor", "boq", "sow",
+        "ควรเลือก", "his", "server", "network", "backup",
+        "pbx", "crm", "infrastructure", "procurement", "tor", "boq", "sow",
     ]):
         return {
             "complexity": "critical",
             "domain": "analysis",
-            "model": "haiku",
+            "model": "deepseek-direct",
             "tools": ["search_memory", "run_brainstorm", "get_system_info"],
             "needs_check": True,
             "reason": "hospital IT / vendor analysis",
         }
 
+    # Draft email / important writing → Haiku (best Thai writing)
+    if any(k in t for k in [
+        "draft", "email", "จดหมาย", "เขียน", "รายงาน", "สรุป",
+        "ผู้บริหาร", "formal", "ทางการ", "เสนอ", "proposal",
+    ]):
+        return {
+            "complexity": "complex",
+            "domain": "writing",
+            "model": "haiku",
+            "tools": ["search_memory"],
+            "needs_check": False,
+            "reason": "formal writing / email",
+        }
+
+    # Critical decisions → Sonnet (best quality)
+    if any(k in t for k in [
+        "สำคัญมาก", "ตัดสินใจ", "critical", "ควรทำอะไร",
+        "ช่วยคิดสำคัญ", "strategy ใหญ่", "long term",
+    ]):
+        return {
+            "complexity": "critical",
+            "domain": "analysis",
+            "model": "sonnet",
+            "tools": ["search_memory", "run_brainstorm"],
+            "needs_check": True,
+            "reason": "critical decision",
+        }
+
+    # Brainstorm / planning → DeepSeek (cheap + good reasoning)
     if any(k in t for k in [
         "brainstorm", "ช่วยคิด", "แผน", "strategy", "แนะนำ",
         "ควรทำ", "pros cons", "ข้อดี", "ข้อเสีย", "คิดให้",
@@ -138,12 +167,13 @@ def route_fast(text: str) -> dict:
         return {
             "complexity": "complex",
             "domain": "analysis",
-            "model": "haiku",
+            "model": "deepseek-direct",
             "tools": ["run_brainstorm", "search_memory"],
             "needs_check": False,
             "reason": "brainstorm/planning",
         }
 
+    # System info → Groq (free)
     if any(k in t for k in [
         "ระบบมี", "agent กี่", "cursor prompt", "generate prompt",
         "read code", "อ่านโค้ด", "ระบบตัวเอง",
@@ -152,16 +182,19 @@ def route_fast(text: str) -> dict:
             "complexity": "simple",
             "domain": "code",
             "model": "groq",
-            "tools": ["get_system_info", "read_code_file", "generate_cursor_prompt"],
+            "tools": ["get_system_info", "read_code_file",
+                      "generate_cursor_prompt"],
             "needs_check": False,
             "reason": "system introspection",
         }
 
+    # Default: simple chat → Groq (free + fastest)
     return {
         "complexity": "simple",
         "domain": "chat",
         "model": "groq",
-        "tools": ["save_task", "save_note", "remember_fact", "search_memory"],
+        "tools": ["save_task", "save_note",
+                  "remember_fact", "search_memory"],
         "needs_check": False,
         "reason": "default simple chat",
     }
