@@ -16,14 +16,14 @@ _ACTIVE_MODEL_KEY = "active_model"
 _MODEL_LABELS = {
     "haiku": "Claude Haiku",
     "groq": "Groq",
-    "gemini": "Gemini Flash",
+    "gemini": "Gemini 2.5 Flash",
     "qwen3b": "Qwen 3B",
     "qwen7b": "Qwen 7B",
     "sonnet": "Claude Sonnet 4.6",
     "opus": "Claude Opus 4.7",
-    "gemini-pro": "Gemini 2.0 Pro",
+    "gemini-pro": "Gemini 2.5 Flash Pro",
     "llama4": "Llama 4 Scout (Groq)",
-    "grok": "Grok 4.3 (xAI)",
+    "grok": "Grok 4.1 Fast (xAI)",
     "deepseek-direct": "DeepSeek V4 Flash",
     "kimi": "Kimi K2 (Moonshot)",
     "gpt-4o-mini": "GPT-4o Mini (OpenAI)",
@@ -371,33 +371,18 @@ async def _call_gemini(
     try:
         client = genai.Client(api_key=settings.gemini_api_key)
         contents = _gemini_contents(prompt, system, messages)
-
-        def _generate():
-            return client.models.generate_content(
-                model="gemini-1.5-flash",
-                contents=contents,
-            )
-
-        response = await asyncio.to_thread(_generate)
-        usage = getattr(response, "usage_metadata", None)
-        await _log_ai_run(
-            agent,
-            "gemini",
-            getattr(usage, "prompt_token_count", 0) or 0,
-            getattr(usage, "candidates_token_count", 0) or 0,
-            int((time.perf_counter() - started_at) * 1000),
-            True,
+        response = await client.aio.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=contents,
+            config={"temperature": 0.7, "max_output_tokens": 2048},
         )
-        return getattr(response, "text", "") or ""
+        text = getattr(response, "text", "") or ""
+        elapsed = int((time.perf_counter() - started_at) * 1000)
+        await _log_ai_run(agent, "gemini", 0, 0, elapsed, True)
+        return text
     except Exception:
-        await _log_ai_run(
-            agent,
-            "gemini",
-            0,
-            0,
-            int((time.perf_counter() - started_at) * 1000),
-            False,
-        )
+        elapsed = int((time.perf_counter() - started_at) * 1000)
+        await _log_ai_run(agent, "gemini", 0, 0, elapsed, False)
         raise
 
 
@@ -473,32 +458,23 @@ async def _call_gemini_pro(
     messages: list[dict[str, str]] | None,
     agent: str,
 ) -> str:
-    """Gemini 2.0 Flash (gemini-pro alias) — smarter than Flash 1.5."""
+    """Gemini 2.5 Flash (gemini-pro alias) — native async."""
     started_at = time.perf_counter()
     try:
         client = genai.Client(api_key=settings.gemini_api_key)
         contents = _gemini_contents(prompt, system, messages)
-
-        def _generate():
-            return client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=contents,
-            )
-
-        response = await asyncio.to_thread(_generate)
-        usage = getattr(response, "usage_metadata", None)
-        await _log_ai_run(
-            agent, "gemini-pro",
-            getattr(usage, "prompt_token_count", 0) or 0,
-            getattr(usage, "candidates_token_count", 0) or 0,
-            int((time.perf_counter() - started_at) * 1000), True,
+        response = await client.aio.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=contents,
+            config={"temperature": 0.7, "max_output_tokens": 2048},
         )
-        return getattr(response, "text", "") or ""
+        text = getattr(response, "text", "") or ""
+        elapsed = int((time.perf_counter() - started_at) * 1000)
+        await _log_ai_run(agent, "gemini-pro", 0, 0, elapsed, True)
+        return text
     except Exception:
-        await _log_ai_run(
-            agent, "gemini-pro", 0, 0,
-            int((time.perf_counter() - started_at) * 1000), False,
-        )
+        elapsed = int((time.perf_counter() - started_at) * 1000)
+        await _log_ai_run(agent, "gemini-pro", 0, 0, elapsed, False)
         raise
 
 
@@ -540,7 +516,10 @@ async def _call_grok(
     messages: list[dict[str, str]] | None,
     agent: str,
 ) -> str:
-    """Grok 3 Mini via xAI API (OpenAI-compatible)."""
+    """Grok 4.1 Fast via xAI API (OpenAI-compatible).
+    NOTE: If deployed on Hetzner/datacenter IP, xAI may return 403.
+    This is an infra issue — use a residential proxy or disable this model.
+    """
     from app.core.database import get_config
     api_key = settings.xai_api_key or await get_config("xai_api_key", "")
     if not api_key:
@@ -559,7 +538,7 @@ async def _call_grok(
                     "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
                 },
-                json={"model": "grok-4.3", "messages": msgs, "max_tokens": 2048},
+                json={"model": "grok-4.1-fast", "messages": msgs, "max_tokens": 2048},
                 timeout=30.0,
             )
             resp.raise_for_status()
@@ -735,8 +714,8 @@ async def _gemini_grounded_search(query: str) -> str:
         formatted_query = f"{query} (สรุปสั้นๆ ไม่เกิน 5 รายการ)"
 
         _GROUNDING_MODELS = [
-            "gemini-2.5-flash-preview-05-20",
             "gemini-2.5-flash",
+            "gemini-2.5-flash-preview-05-20",
             "gemini-2.5-pro-preview-05-06",
         ]
 
@@ -744,14 +723,11 @@ async def _gemini_grounded_search(query: str) -> str:
         last_exc = None
         for model_name in _GROUNDING_MODELS:
             try:
-                def _generate(m=model_name):
-                    return client.models.generate_content(
-                        model=m,
-                        contents=formatted_query,
-                        config=config,
-                    )
-
-                response = await asyncio.to_thread(_generate)
+                response = await client.aio.models.generate_content(
+                    model=model_name,
+                    contents=formatted_query,
+                    config=config,
+                )
                 break
             except Exception as exc:
                 last_exc = exc
