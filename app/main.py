@@ -2205,31 +2205,48 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       background: none;
     }}
     .card-drag-handle {{
-      display: none;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
       cursor: grab;
       color: #444;
-      font-size: 10px;
-      padding: 2px 4px;
+      font-size: 11px;
+      padding: 4px 6px 4px 8px;
       user-select: none;
-      margin-bottom: 4px;
+      background: #0d0d0d;
+      border-bottom: 1px solid #1a1a1a;
+      border-radius: 6px 6px 0 0;
+      margin: -4px -4px 6px -4px;
     }}
     .card-drag-handle:active {{ cursor: grabbing; }}
+    .card-drag-handle .card-collapse-btn {{
+      background: none;
+      border: none;
+      color: #555;
+      cursor: pointer;
+      font-size: 13px;
+      padding: 0 4px;
+      line-height: 1;
+    }}
+    .card-drag-handle .card-collapse-btn:hover {{ color: #aaa; }}
     .card-resize-handle {{
-      display: none;
+      display: block;
       position: absolute;
       bottom: 2px;
       right: 2px;
       cursor: se-resize;
-      color: #333;
+      color: #2a2a2a;
       font-size: 14px;
+      user-select: none;
     }}
+    .card-resize-handle:hover {{ color: #555; }}
     .dashboard-card.draggable {{
-      border: 1px dashed #444 !important;
+      border: 1px dashed #333 !important;
       cursor: default;
       padding: 4px;
       background: rgba(17, 17, 17, 0.25);
     }}
-    .dashboard-card.draggable .card-drag-handle {{ display: block; }}
+    .dashboard-card.draggable .card-drag-handle {{ display: flex; }}
     .dashboard-card.draggable .card-resize-handle {{ display: block; }}
     .card-selected {{
       border-color: var(--green) !important;
@@ -2746,7 +2763,11 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       let dragTop = 0;
 
       dragHandle.addEventListener('mousedown', (event) => {{
-        if (!editMode || !dashboardContainer) return;
+        if (event.target.closest('button')) return;
+        if (!dashboardContainer) return;
+        if (!dashboardContainer.classList.contains('layout-freeform')) {{
+          snapshotDashboardCards();
+        }}
         dragActive = true;
         dragStartX = event.clientX;
         dragStartY = event.clientY;
@@ -2766,6 +2787,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       }});
 
       document.addEventListener('mouseup', () => {{
+        if (dragActive) _autoSaveLayout();
         dragActive = false;
       }});
     }}
@@ -2778,7 +2800,6 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       let startHeight = 0;
 
       resizeGrip.addEventListener('mousedown', (event) => {{
-        if (!editMode) return;
         resizeActive = true;
         startResizeX = event.clientX;
         startResizeY = event.clientY;
@@ -2796,7 +2817,74 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       }});
 
       document.addEventListener('mouseup', () => {{
+        if (resizeActive) _autoSaveLayout();
         resizeActive = false;
+      }});
+    }}
+
+    function _autoSaveLayout() {{
+      const layout = readSavedLayout();
+      document.querySelectorAll('.dashboard-card[id]').forEach((card) => {{
+        layout[card.id] = {{
+          left: card.style.left || '',
+          top: card.style.top || '',
+          width: card.style.width || '',
+          height: card.style.height || '',
+          collapsed: card.dataset.collapsed || '0',
+        }};
+      }});
+      writeSavedLayout(layout);
+    }}
+
+    function toggleCard(cardId) {{
+      const card = document.getElementById(cardId);
+      if (!card) return;
+      const isCollapsed = card.dataset.collapsed === '1';
+      const btn = card.querySelector('.card-collapse-btn');
+      Array.from(card.children).forEach(child => {{
+        if (child.classList.contains('card-drag-handle') ||
+            child.classList.contains('card-resize-handle')) return;
+        child.style.display = isCollapsed ? '' : 'none';
+      }});
+      card.dataset.collapsed = isCollapsed ? '0' : '1';
+      if (btn) btn.textContent = isCollapsed ? '−' : '▲';
+      _autoSaveLayout();
+    }}
+    window.toggleCard = toggleCard;
+
+    function initWidgets() {{
+      const SKIP = new Set(['log-tail-widget', 'api-status-widget']);
+      document.querySelectorAll('.dashboard-card[id]').forEach((card) => {{
+        if (SKIP.has(card.id)) return;
+        card.style.position = 'relative';
+
+        if (!card.querySelector('.card-drag-handle')) {{
+          const h = document.createElement('div');
+          h.className = 'card-drag-handle';
+          h.innerHTML = `<span>⠿ ${{card.id.replace('card-','')}}</span>
+            <button class="card-collapse-btn" onclick="toggleCard('${{card.id}}')">−</button>`;
+          card.prepend(h);
+          makeDraggable(card, h);
+        }}
+        if (!card.querySelector('.card-resize-handle')) {{
+          const r = document.createElement('div');
+          r.className = 'card-resize-handle';
+          r.innerHTML = '⠿';
+          card.appendChild(r);
+          makeResizable(card, r);
+        }}
+      }});
+
+      // Restore collapsed state from saved layout
+      const layout = readSavedLayout();
+      Object.entries(layout).forEach(([id, pos]) => {{
+        if (pos && pos.collapsed === '1') {{
+          const card = document.getElementById(id);
+          if (card && !['log-tail-widget','api-status-widget'].includes(id)) {{
+            card.dataset.collapsed = '0';
+            toggleCard(id);
+          }}
+        }}
       }});
     }}
 
@@ -2931,6 +3019,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       localStorage.removeItem('log-pos');
       localStorage.removeItem('log-font-size');
       localStorage.removeItem('log-widget-collapsed');
+      localStorage.removeItem('api-status-pos-v1');
       location.reload();
     }}
 
@@ -3135,6 +3224,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       isResizing = false;
     }});
 
+    initWidgets();
     loadLayout();
     loadStyle();
     (function loadCardStyles() {{
