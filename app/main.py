@@ -5379,25 +5379,29 @@ def build_workspace_html() -> HTMLResponse:
     </div>
 
     <div id="panel-benchmark" class="panel">
-      <div class="panel-header">
-        <h2>🏆 Model Benchmark</h2>
+      <div class="panel-header" style="padding:20px 24px 12px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+        <h2 style="margin:0;font-size:20px;font-weight:600">🏆 Model Benchmark</h2>
         <div style="display:flex;gap:8px;align-items:center">
           <select id="bench-category" style="background:#2a2a2a;border:1px solid #444;border-radius:6px;padding:6px 12px;color:#e5e5e5;font-size:14px">
-            <option value="">All Questions</option>
-            <option value="it">🏥 Hospital IT only</option>
-            <option value="en">⚡ Ener Scan only</option>
-            <option value="hal">🔍 Hallucination only</option>
-            <option value="ch">💬 Simple Chat only</option>
+            <option value="">All Questions (12)</option>
+            <option value="it">🏥 Hospital IT (3)</option>
+            <option value="en">⚡ Ener Scan (3)</option>
+            <option value="hal">🔍 Hallucination (3)</option>
+            <option value="ch">💬 Simple Chat (3)</option>
           </select>
           <button id="bench-run-btn" onclick="runBenchmark()" style="background:#7c3aed;color:white;border:none;border-radius:8px;padding:8px 20px;cursor:pointer;font-size:14px;font-weight:500">
             ▶ Run Benchmark
           </button>
         </div>
       </div>
-      <div id="bench-summary" style="padding:16px 24px;display:flex;gap:12px;flex-wrap:wrap"></div>
-      <div id="bench-progress" style="display:none;padding:8px 24px;color:#888;font-size:14px">⏳ Running benchmark...</div>
+      <div id="bench-summary" style="display:flex;gap:12px;flex-wrap:wrap;padding:16px 24px"></div>
+      <div id="bench-progress" style="display:none;padding:8px 24px;color:#888;font-size:14px"></div>
       <div style="flex:1;overflow-y:auto;padding:0 24px 24px">
-        <div id="bench-results"></div>
+        <div id="bench-results">
+          <p style="color:#888;padding:16px">
+            ยังไม่มีข้อมูล — กด ▶ Run Benchmark เพื่อเริ่ม
+          </p>
+        </div>
       </div>
     </div>
 
@@ -5604,29 +5608,33 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
-  async function showPanel(name) {
+  function showPanel(name) {
     document.querySelectorAll('.panel').forEach((panel) => {
       panel.classList.remove('active-panel');
+      panel.style.display = 'none';
     });
     const target = document.getElementById('panel-' + name);
-    if (target) target.classList.add('active-panel');
+    if (target) {
+      target.classList.add('active-panel');
+      target.style.display = 'flex';
+    }
 
     document.querySelectorAll('#tool-nav .nav-item').forEach((item) => {
       item.classList.toggle('active', item.dataset.panel === name);
     });
 
-    if (name === 'chat') await loadChatHistory();
-    if (name === 'notes') await loadNotes();
-    if (name === 'tasks') await loadTasks();
+    if (name === 'chat') loadChatHistory();
+    if (name === 'notes') loadNotes();
+    if (name === 'tasks') loadTasks();
     if (name === 'standup') {
-      await loadStandupProjects();
-      await generateStandup();
+      loadStandupProjects();
+      generateStandup();
     }
-    if (name === 'news') await loadNews();
-    if (name === 'memory') await loadMemory();
-    if (name === 'files') await loadFiles();
-    if (name === 'benchmark') await loadBenchmark();
-    if (name === 'system') await loadSystem();
+    if (name === 'news') loadNews();
+    if (name === 'memory') loadMemory();
+    if (name === 'files') loadFiles();
+    if (name === 'system') loadSystem();
+    if (name === 'benchmark') loadBenchmark();
   }
 
   function newChat() {
@@ -6493,15 +6501,24 @@ function renderBenchResults(groups) {
 }
 
 async function loadBenchmark() {
-  const apiFn = typeof window.api === 'function' ? window.api : null;
-  const data = apiFn
-    ? await apiFn('/workspace/benchmark/summary')
-    : await fetch('/workspace/benchmark/summary').then((res) => res.json());
-  renderBenchSummary(data.model_stats || []);
-  if ((data.recent || []).length > 0) {
-    renderBenchResults(groupByQuestion(data.recent || []));
-  } else {
-    renderBenchResults([]);
+  try {
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 5000);
+    const res = await fetch('/workspace/benchmark/summary', {
+      signal: ctrl.signal,
+      credentials: 'same-origin',
+    });
+    clearTimeout(timeout);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.model_stats && data.model_stats.length > 0) {
+      renderBenchSummary(data.model_stats);
+    }
+    if (data.recent && data.recent.length > 0) {
+      renderBenchResults(groupByQuestion(data.recent));
+    }
+  } catch (error) {
+    console.log('benchmark summary load failed:', error.message);
   }
 }
 
