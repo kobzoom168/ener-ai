@@ -83,8 +83,10 @@ async def run_benchmark(question_ids: list[str] | None = None) -> list[dict]:
                         result["error"],
                     ),
                 )
+                result["db_id"] = int(cursor.lastrowid)
                 saved_results.append(
                     {
+                        "db_id": int(cursor.lastrowid),
                         "id": int(cursor.lastrowid),
                         **result,
                     }

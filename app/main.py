@@ -6155,153 +6155,6 @@ document.addEventListener('DOMContentLoaded', function() {
     `).join('');
   }
 
-  const TEST_QUESTION_IDS = {
-    it: ['it_01', 'it_02', 'it_03'],
-    en: ['en_01', 'en_02', 'en_03'],
-    hal: ['hal_01', 'hal_02', 'hal_03'],
-    ch: ['ch_01', 'ch_02', 'ch_03'],
-  };
-
-  function renderBenchSummary(stats) {
-    const COLORS = {groq: '#22c55e', gemini: '#3b82f6', haiku: '#a855f7', 'deepseek-r1': '#f59e0b'};
-    const container = document.getElementById('bench-summary');
-    if (!container) return;
-    if (!stats.length) {
-      container.innerHTML = '<div class="empty-state">No benchmark data yet.</div>';
-      return;
-    }
-    const html = stats.map((s) => `
-      <div class="sys-card" style="min-width:160px">
-        <div class="sys-label" style="color:${COLORS[s.model] || '#888'}">
-          ${escapeHtml(String(s.model || '').toUpperCase())}
-        </div>
-        <div class="sys-value">${Math.round(Number(s.avg_ms || 0))}ms</div>
-        <div style="font-size:12px;color:#888;margin-top:4px">
-          ${Number(s.runs || 0)} runs
-          ${s.avg_rating ? ` · ⭐ ${parseFloat(s.avg_rating).toFixed(1)}` : ''}
-        </div>
-      </div>
-    `).join('');
-    container.innerHTML = html;
-  }
-
-  function groupByQuestion(rows) {
-    const groups = {};
-    for (const row of rows) {
-      if (!groups[row.question_id]) {
-        groups[row.question_id] = {
-          question_id: row.question_id,
-          category: row.category,
-          question: row.question,
-          models: {},
-        };
-      }
-      const current = groups[row.question_id].models[row.model];
-      if (!current || Number(row.id || 0) > Number(current.id || 0)) {
-        groups[row.question_id].models[row.model] = row;
-      }
-    }
-    return Object.values(groups);
-  }
-
-  function renderBenchResults(groups) {
-    const MODELS = ['groq', 'gemini', 'haiku'];
-    const container = document.getElementById('bench-results');
-    if (!container) return;
-    const html = groups.map((g) => `
-      <div style="background:#1a1a1a;border-radius:10px;margin-bottom:16px;overflow:hidden">
-        <div style="padding:12px 16px;background:#222;border-bottom:1px solid #333">
-          <span style="font-size:11px;color:#888;margin-right:8px">
-            ${escapeHtml(g.category || '')}
-          </span>
-          <span style="font-size:14px;font-weight:500">${escapeHtml(g.question || '')}</span>
-        </div>
-        <div style="display:grid;grid-template-columns:repeat(${MODELS.length},1fr);gap:1px;background:#333">
-          ${MODELS.map((m) => {
-            const r = g.models[m];
-            if (!r) return `<div style="padding:12px;background:#1a1a1a;color:#555;font-size:13px">-</div>`;
-            const latencyMs = Number(r.latency_ms || 0);
-            const color = latencyMs > 3000 ? '#ef4444' : latencyMs > 1500 ? '#f59e0b' : '#22c55e';
-            const stars = [1, 2, 3, 4, 5].map((n) =>
-              `<span onclick="rateBenchmark(${Number(r.id)}, ${n})"
-                     style="cursor:pointer;font-size:16px;color:${(Number(r.rating || 0) >= n) ? '#f59e0b' : '#444'}">★</span>`
-            ).join('');
-            return `
-              <div style="padding:12px 16px;background:#1a1a1a">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-                  <span style="font-size:12px;font-weight:600;color:${color}">${escapeHtml(m)}</span>
-                  <span style="font-size:11px;color:${color}">
-                    ${r.error ? '❌ error' : latencyMs + 'ms'}
-                  </span>
-                </div>
-                <div style="font-size:13px;line-height:1.6;color:#ccc;max-height:120px;overflow-y:auto">
-                  ${renderMarkdown(r.error || r.answer || '-')}
-                </div>
-                <div style="margin-top:8px">${stars}</div>
-              </div>`;
-          }).join('')}
-        </div>
-      </div>
-    `).join('');
-    container.innerHTML = html || '<p style="color:#888;padding:16px">No results yet. Click Run Benchmark.</p>';
-  }
-
-  async function loadBenchmark() {
-    const data = await api('/workspace/benchmark/summary');
-    renderBenchSummary(data.model_stats || []);
-    if ((data.recent || []).length > 0) {
-      renderBenchResults(groupByQuestion(data.recent || []));
-    } else {
-      renderBenchResults([]);
-    }
-  }
-
-  async function runBenchmark() {
-    const btn = document.getElementById('bench-run-btn');
-    const prog = document.getElementById('bench-progress');
-    btn.disabled = true;
-    btn.textContent = '⏳ Running...';
-    prog.style.display = 'block';
-
-    const cat = document.getElementById('bench-category').value;
-    const ids = cat ? TEST_QUESTION_IDS[cat] : null;
-
-    try {
-      const data = await api('/workspace/benchmark/run', {
-        method: 'POST',
-        body: JSON.stringify({question_ids: ids}),
-      });
-      const groups = groupByQuestion(
-        (data.results || []).flatMap((q) =>
-          (q.results || []).map((r) => ({
-            question_id: q.question_id,
-            category: q.category,
-            question: q.question,
-            ...r,
-          }))
-        )
-      );
-      renderBenchResults(groups);
-      await loadBenchmark();
-      showToast('✅ Benchmark complete!');
-    } catch (error) {
-      showToast('❌ Benchmark failed: ' + (error.message || 'unknown error'));
-    } finally {
-      btn.disabled = false;
-      btn.textContent = '▶ Run Benchmark';
-      prog.style.display = 'none';
-    }
-  }
-
-  async function rateBenchmark(id, rating) {
-    await api('/workspace/benchmark/rate', {
-      method: 'POST',
-      body: JSON.stringify({id, rating}),
-    });
-    showToast(`⭐ Rated ${rating}/5`);
-    await loadBenchmark();
-  }
-
   async function loadSystem() {
     const container = document.getElementById('system-content');
     if (!container) return;
@@ -6520,6 +6373,10 @@ document.addEventListener('DOMContentLoaded', function() {
   window.summarizeFile = summarizeFile;
   window.askFile = askFile;
   window.selectSlash = selectSlash;
+  window.showToast = showToast;
+  window.api = api;
+  window.escapeHtml = escapeHtml;
+  window.renderMarkdown = renderMarkdown;
 
   window._currentProject = null;
   loadActiveModelBadge();
@@ -6527,6 +6384,206 @@ document.addEventListener('DOMContentLoaded', function() {
   loadProjects();
   loadChatHistory();
 });
+
+const TEST_QUESTION_IDS = {
+  it: ['it_01', 'it_02', 'it_03'],
+  en: ['en_01', 'en_02', 'en_03'],
+  hal: ['hal_01', 'hal_02', 'hal_03'],
+  ch: ['ch_01', 'ch_02', 'ch_03'],
+};
+
+function _benchEscapeHtml(text) {
+  if (typeof window.escapeHtml === 'function') return window.escapeHtml(text);
+  return String(text || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function _benchRenderMarkdown(text) {
+  if (typeof window.renderMarkdown === 'function') return window.renderMarkdown(text);
+  return _benchEscapeHtml(text || '').replace(/\n/g, '<br>');
+}
+
+function renderBenchSummary(stats) {
+  const COLORS = {groq: '#22c55e', gemini: '#3b82f6', haiku: '#a855f7', 'deepseek-r1': '#f59e0b'};
+  const container = document.getElementById('bench-summary');
+  if (!container) return;
+  if (!stats.length) {
+    container.innerHTML = '<div class="empty-state">No benchmark data yet.</div>';
+    return;
+  }
+  const html = stats.map((s) => `
+    <div class="sys-card" style="min-width:160px">
+      <div class="sys-label" style="color:${COLORS[s.model] || '#888'}">
+        ${_benchEscapeHtml(String(s.model || '').toUpperCase())}
+      </div>
+      <div class="sys-value">${Math.round(Number(s.avg_ms || 0))}ms</div>
+      <div style="font-size:12px;color:#888;margin-top:4px">
+        ${Number(s.runs || 0)} runs
+        ${s.avg_rating ? ` · ⭐ ${parseFloat(s.avg_rating).toFixed(1)}` : ''}
+      </div>
+    </div>
+  `).join('');
+  container.innerHTML = html;
+}
+
+function groupByQuestion(rows) {
+  const groups = {};
+  for (const row of rows) {
+    if (!groups[row.question_id]) {
+      groups[row.question_id] = {
+        question_id: row.question_id,
+        category: row.category,
+        question: row.question,
+        models: {},
+      };
+    }
+    const current = groups[row.question_id].models[row.model];
+    if (!current || Number(row.id || row.db_id || 0) > Number(current.id || current.db_id || 0)) {
+      groups[row.question_id].models[row.model] = row;
+    }
+  }
+  return Object.values(groups);
+}
+
+function renderBenchResults(groups) {
+  const MODELS = ['groq', 'gemini', 'haiku'];
+  const container = document.getElementById('bench-results');
+  if (!container) return;
+  const html = groups.map((g) => `
+    <div style="background:#1a1a1a;border-radius:10px;margin-bottom:16px;overflow:hidden">
+      <div style="padding:12px 16px;background:#222;border-bottom:1px solid #333">
+        <span style="font-size:11px;color:#888;margin-right:8px">
+          ${_benchEscapeHtml(g.category || '')}
+        </span>
+        <span style="font-size:14px;font-weight:500">${_benchEscapeHtml(g.question || '')}</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(${MODELS.length},1fr);gap:1px;background:#333">
+        ${MODELS.map((m) => {
+          const r = g.models[m];
+          if (!r) return `<div style="padding:12px;background:#1a1a1a;color:#555;font-size:13px">-</div>`;
+          const latencyMs = Number(r.latency_ms || 0);
+          const color = latencyMs > 3000 ? '#ef4444' : latencyMs > 1500 ? '#f59e0b' : '#22c55e';
+          const resultId = Number(r.id || r.db_id || 0);
+          const stars = [1, 2, 3, 4, 5].map((n) =>
+            `<span onclick="rateBenchmark(${resultId}, ${n})"
+                   style="cursor:pointer;font-size:16px;color:${(Number(r.rating || 0) >= n) ? '#f59e0b' : '#444'}">★</span>`
+          ).join('');
+          return `
+            <div style="padding:12px 16px;background:#1a1a1a">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <span style="font-size:12px;font-weight:600;color:${color}">${_benchEscapeHtml(m)}</span>
+                <span style="font-size:11px;color:${color}">
+                  ${r.error ? '❌ error' : latencyMs + 'ms'}
+                </span>
+              </div>
+              <div style="font-size:13px;line-height:1.6;color:#ccc;max-height:120px;overflow-y:auto">
+                ${_benchRenderMarkdown(r.error || r.answer || '-')}
+              </div>
+              <div style="margin-top:8px">${stars}</div>
+            </div>`;
+        }).join('')}
+      </div>
+    </div>
+  `).join('');
+  container.innerHTML = html || '<p style="color:#888;padding:16px">No results yet. Click Run Benchmark.</p>';
+}
+
+async function loadBenchmark() {
+  const apiFn = typeof window.api === 'function' ? window.api : null;
+  const data = apiFn
+    ? await apiFn('/workspace/benchmark/summary')
+    : await fetch('/workspace/benchmark/summary').then((res) => res.json());
+  renderBenchSummary(data.model_stats || []);
+  if ((data.recent || []).length > 0) {
+    renderBenchResults(groupByQuestion(data.recent || []));
+  } else {
+    renderBenchResults([]);
+  }
+}
+
+async function runBenchmark() {
+  const btn = document.getElementById('bench-run-btn');
+  if (!btn || btn.disabled) return;
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Running...';
+
+  const prog = document.getElementById('bench-progress');
+  if (prog) prog.style.display = 'block';
+
+  const resultsEl = document.getElementById('bench-results');
+  if (resultsEl) {
+    resultsEl.innerHTML = '<p style="color:#888;padding:24px">⏳ Running benchmark — may take 60-120 seconds...</p>';
+  }
+
+  try {
+    const cat = document.getElementById('bench-category')?.value || '';
+    const ids = cat ? TEST_QUESTION_IDS[cat] : null;
+
+    const res = await fetch('/workspace/benchmark/run', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      credentials: 'same-origin',
+      body: JSON.stringify({question_ids: ids}),
+    });
+
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+
+    const flat = [];
+    for (const q of data.results || []) {
+      for (const r of q.results || []) {
+        flat.push({
+          question_id: q.question_id,
+          category: q.category,
+          question: q.question,
+          id: r.db_id || r.id || (Date.now() + Math.random()),
+          db_id: r.db_id || null,
+          model: r.model,
+          answer: r.answer,
+          latency_ms: r.latency_ms,
+          rating: r.rating || 0,
+          error: r.error,
+        });
+      }
+    }
+    renderBenchResults(groupByQuestion(flat));
+    await loadBenchmark();
+    if (typeof window.showToast === 'function') window.showToast('✅ Benchmark complete!');
+  } catch (error) {
+    if (typeof window.showToast === 'function') window.showToast('❌ Error: ' + error.message);
+    if (resultsEl) {
+      resultsEl.innerHTML = '<p style="color:#ef4444;padding:24px">❌ ' + _benchEscapeHtml(error.message) + '</p>';
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '▶ Run Benchmark';
+    if (prog) prog.style.display = 'none';
+  }
+}
+
+async function rateBenchmark(id, rating) {
+  const apiFn = typeof window.api === 'function' ? window.api : null;
+  if (apiFn) {
+    await apiFn('/workspace/benchmark/rate', {
+      method: 'POST',
+      body: JSON.stringify({id, rating}),
+    });
+  } else {
+    await fetch('/workspace/benchmark/rate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      credentials: 'same-origin',
+      body: JSON.stringify({id, rating}),
+    });
+  }
+  if (typeof window.showToast === 'function') window.showToast(`⭐ Rated ${rating}/5`);
+  await loadBenchmark();
+}
 </script>
 </body>
 </html>"""
@@ -6992,9 +7049,13 @@ async def workspace_benchmark_run(request: Request):
     body = await request.json()
     ids = body.get("question_ids") or None
     from app.agents.benchmark_agent import run_benchmark
+    import asyncio
 
-    results = await run_benchmark(ids)
-    return JSONResponse({"results": results})
+    try:
+        results = await asyncio.wait_for(run_benchmark(ids), timeout=180.0)
+        return JSONResponse({"results": results})
+    except asyncio.TimeoutError:
+        return JSONResponse({"error": "timeout", "results": []}, status_code=408)
 
 
 @app.get("/workspace/benchmark/summary")
