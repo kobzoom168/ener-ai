@@ -206,6 +206,13 @@ def _extract_json_payload(raw: str) -> str:
     return cleaned
 
 
+def _strip_reasoning_block(text: str) -> str:
+    import re
+
+    cleaned = re.sub(r"<think>.*?</think>", "", str(text or ""), flags=re.DOTALL | re.IGNORECASE)
+    return cleaned.strip()
+
+
 async def _call_anthropic(
     prompt: str,
     system: str,
@@ -260,6 +267,44 @@ async def _call_groq(
         await _log_ai_run(
             agent,
             "groq",
+            0,
+            0,
+            int((time.perf_counter() - started_at) * 1000),
+            False,
+        )
+        raise
+
+
+async def _call_deepseek(
+    prompt: str,
+    system: str,
+    messages: list[dict[str, str]] | None,
+    agent: str,
+) -> str:
+    started_at = time.perf_counter()
+    try:
+        client = AsyncGroq(api_key=settings.groq_api_key)
+        response = await client.chat.completions.create(
+            model="deepseek-r1-distill-llama-70b",
+            messages=_groq_messages(prompt, system, messages),
+            max_tokens=4096,
+            temperature=0.6,
+        )
+        usage = response.usage
+        await _log_ai_run(
+            agent,
+            "deepseek",
+            getattr(usage, "prompt_tokens", 0) or 0,
+            getattr(usage, "completion_tokens", 0) or 0,
+            int((time.perf_counter() - started_at) * 1000),
+            True,
+        )
+        content = response.choices[0].message.content or ""
+        return _strip_reasoning_block(content)
+    except Exception:
+        await _log_ai_run(
+            agent,
+            "deepseek",
             0,
             0,
             int((time.perf_counter() - started_at) * 1000),
@@ -687,6 +732,11 @@ async def chat(
     strict_model: bool = False,
 ) -> str:
     availability = get_model_availability()
+    if preferred_model == "deepseek":
+        if settings.groq_api_key:
+            return await _call_deepseek(prompt, system, messages, agent)
+        if strict_model:
+            raise RuntimeError("model unavailable: deepseek")
     active_model = (await get_active_model()) or _default_model(availability)
     requested_model = (
         preferred_model
@@ -735,20 +785,41 @@ async def chat_with_tools(
     messages: list[dict[str, str]] | None,
     tools: list[dict],
     agent: str = "chat",
+    preferred_model: str | None = None,
 ) -> dict:
     """
     เรียก AI พร้อม tool definitions
     Return: {"text": str, "tool_calls": list}
     """
     availability = get_model_availability()
+    if preferred_model == "deepseek":
+        text = await chat(
+            prompt,
+            system=system,
+            agent=agent,
+            messages=messages,
+            preferred_model="deepseek",
+        )
+        return {"text": text, "tool_calls": []}
+
     active = (await get_active_model()) or _default_model(availability)
+    if preferred_model == "haiku" and availability.get("haiku"):
+        return await _call_anthropic_with_tools(prompt, system, messages, tools, agent)
+    if preferred_model == "groq" and availability.get("groq"):
+        return await _call_groq_with_tools(prompt, system, messages, tools, agent)
 
     if active == "haiku" and availability.get("haiku"):
         return await _call_anthropic_with_tools(prompt, system, messages, tools, agent)
     if active == "groq" and availability.get("groq"):
         return await _call_groq_with_tools(prompt, system, messages, tools, agent)
 
-    text = await chat(prompt, system=system, agent=agent, messages=messages)
+    text = await chat(
+        prompt,
+        system=system,
+        agent=agent,
+        messages=messages,
+        preferred_model=preferred_model,
+    )
     return {"text": text, "tool_calls": []}
 
 
