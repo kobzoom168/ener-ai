@@ -5491,6 +5491,7 @@ def build_workspace_html() -> HTMLResponse:
       <a class="nav-item" onclick="showPanel('memory')" data-panel="memory">🧠 Memory</a>
       <a class="nav-item" onclick="showPanel('files')" data-panel="files">📁 Files</a>
       <a class="nav-item" onclick="showPanel('benchmark')" data-panel="benchmark">🏆 Benchmark</a>
+      <a class="nav-item" onclick="showPanel('code')" data-panel="code">💻 Code</a>
       <a class="nav-item" onclick="showPanel('system')" data-panel="system">⚙️ System</a>
     </nav>
 
@@ -5617,6 +5618,55 @@ def build_workspace_html() -> HTMLResponse:
           <p style="color:#888;padding:16px">
             ยังไม่มีข้อมูล — กด ▶ Run Benchmark เพื่อเริ่ม
           </p>
+        </div>
+      </div>
+    </div>
+
+    <div id="panel-code" class="panel" style="display:none">
+      <div class="panel-header" style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+        <h2 style="margin:0;font-size:20px;font-weight:600">💻 Code Assistant</h2>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="code-file-select" style="background:#2a2a2a;border:1px solid #444;border-radius:6px;padding:6px 12px;color:#e5e5e5;font-size:13px;max-width:320px" onchange="loadCodeFile(this.value)">
+            <option value="">-- Select file --</option>
+          </select>
+          <button onclick="loadGitLog()" style="background:#1a1a1a;border:1px solid #444;border-radius:6px;padding:6px 12px;color:#aaa;font-size:13px;cursor:pointer">📋 Git Log</button>
+        </div>
+      </div>
+
+      <div style="display:flex;flex:1;overflow:hidden;gap:0">
+
+        <!-- Left: File viewer -->
+        <div style="flex:1;display:flex;flex-direction:column;border-right:1px solid #2a2a2a;min-width:0">
+          <div id="code-file-info" style="padding:8px 16px;font-size:12px;color:#888;border-bottom:1px solid #2a2a2a;min-height:32px"></div>
+          <pre id="code-viewer" style="flex:1;overflow:auto;margin:0;padding:16px;font-family:'Fira Code',monospace;font-size:13px;line-height:1.6;color:#e5e5e5;white-space:pre;background:#0d0d0d">Select a file to view its content</pre>
+        </div>
+
+        <!-- Right: AI Chat + Git Log -->
+        <div style="width:420px;display:flex;flex-direction:column;flex-shrink:0">
+
+          <!-- Git Log -->
+          <div id="git-log-panel" style="display:none;flex:0 0 200px;overflow-y:auto;border-bottom:1px solid #2a2a2a;padding:12px">
+            <div style="font-size:12px;color:#888;margin-bottom:8px">📋 Recent Commits</div>
+            <div id="git-log-list"></div>
+          </div>
+
+          <!-- AI Chat -->
+          <div id="code-chat-messages" style="flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px"></div>
+
+          <!-- Input -->
+          <div style="padding:12px;border-top:1px solid #2a2a2a">
+            <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+              <button onclick="askCodeAI('อธิบาย file นี้')" style="font-size:11px;padding:4px 10px;background:#2a2a2a;border:1px solid #444;border-radius:6px;color:#aaa;cursor:pointer">📖 อธิบาย</button>
+              <button onclick="askCodeAI('หา bug ใน code นี้')" style="font-size:11px;padding:4px 10px;background:#2a2a2a;border:1px solid #444;border-radius:6px;color:#aaa;cursor:pointer">🐛 หา Bug</button>
+              <button onclick="askCodeAI('สร้าง Cursor prompt เพื่อปรับปรุง code นี้')" style="font-size:11px;padding:4px 10px;background:#2a2a2a;border:1px solid #444;border-radius:6px;color:#aaa;cursor:pointer">⚡ Cursor Prompt</button>
+            </div>
+            <div style="display:flex;gap:8px">
+              <input id="code-question-input" type="text" placeholder="ถามเกี่ยวกับ code..."
+                     style="flex:1;background:#2a2a2a;border:1px solid #444;border-radius:8px;padding:10px 14px;color:#e5e5e5;font-size:14px;font-family:inherit"
+                     onkeydown="if(event.key==='Enter')askCodeAI()">
+              <button onclick="askCodeAI()" style="background:#7c3aed;color:white;border:none;border-radius:8px;padding:10px 16px;cursor:pointer;font-size:14px">↑</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -5852,6 +5902,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (name === 'files') loadFiles();
     if (name === 'system') loadSystem();
     if (name === 'benchmark') loadBenchmark();
+    if (name === 'code') loadCodePanel();
   }
 
   function newChat() {
@@ -6584,6 +6635,122 @@ document.addEventListener('DOMContentLoaded', function() {
       createProject();
     }
   });
+
+  // ── Code Assistant ───────────────────────────────────────────────────────────
+  let _codeCurrentFile = "";
+  let _codeCurrentContent = "";
+
+  async function loadCodePanel() {
+    try {
+      const res = await fetch('/workspace/code/files');
+      const d = await res.json();
+      const sel = document.getElementById('code-file-select');
+      if (sel) {
+        sel.innerHTML = '<option value="">-- Select file --</option>' +
+          d.files.map(f => `<option value="${f}">${f}</option>`).join('');
+      }
+    } catch(e) { console.log('loadCodePanel error:', e); }
+  }
+
+  async function loadCodeFile(path) {
+    if (!path) return;
+    _codeCurrentFile = path;
+    const viewer = document.getElementById('code-viewer');
+    const info = document.getElementById('code-file-info');
+    if (viewer) viewer.textContent = 'Loading...';
+    try {
+      const res = await fetch('/workspace/code/file?path=' + encodeURIComponent(path));
+      const d = await res.json();
+      _codeCurrentContent = d.content || '';
+      if (viewer) viewer.textContent = d.content;
+      if (info) info.textContent = `${path} · ${d.lines} lines · ${d.size} bytes`;
+    } catch(e) {
+      if (viewer) viewer.textContent = 'Error loading file: ' + e.message;
+    }
+  }
+
+  async function loadGitLog() {
+    const panel = document.getElementById('git-log-panel');
+    const list = document.getElementById('git-log-list');
+    if (!panel || !list) return;
+    panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    if (panel.style.display === 'none') return;
+    list.innerHTML = 'Loading...';
+    try {
+      const res = await fetch('/workspace/code/git-log');
+      const d = await res.json();
+      list.innerHTML = d.commits.map(c => `
+        <div style="padding:6px 0;border-bottom:1px solid #222;font-size:12px">
+          <span style="color:#7c3aed;font-family:monospace">${c.hash}</span>
+          <span style="color:#e5e5e5;margin-left:8px">${c.message}</span>
+          <div style="color:#666;margin-top:2px">${c.time} · ${c.author}</div>
+        </div>
+      `).join('') || 'No commits found';
+    } catch(e) {
+      list.textContent = 'Error: ' + e.message;
+    }
+  }
+
+  async function askCodeAI(preset) {
+    const input = document.getElementById('code-question-input');
+    const question = preset || (input ? input.value.trim() : '');
+    if (!question) return;
+    if (input && !preset) input.value = '';
+    const msgs = document.getElementById('code-chat-messages');
+    if (!msgs) return;
+    msgs.innerHTML += `<div style="align-self:flex-end;background:#2f2f2f;padding:8px 12px;border-radius:12px;font-size:14px;max-width:85%">${question}</div>`;
+    const thinkId = 'think-' + Date.now();
+    msgs.innerHTML += `<div id="${thinkId}" style="color:#888;font-size:13px;padding:4px">💭 กำลังวิเคราะห์ code...</div>`;
+    msgs.scrollTop = msgs.scrollHeight;
+    try {
+      const res = await fetch('/workspace/code/chat', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          question,
+          file_path: _codeCurrentFile,
+          file_content: _codeCurrentContent.substring(0, 8000)
+        })
+      });
+      const d = await res.json();
+      const el = document.getElementById(thinkId);
+      if (el) el.remove();
+      const answerId = 'ans-' + Date.now();
+      msgs.innerHTML += `
+        <div id="${answerId}" style="align-self:flex-start;background:#1a1a1a;padding:12px;border-radius:12px;font-size:14px;max-width:90%;border-left:3px solid #7c3aed">
+          <div style="line-height:1.7">${(d.answer||'').replace(/\n/g,'<br>')}</div>
+          <button onclick="saveCodeMemory('${answerId}')" style="margin-top:8px;font-size:11px;padding:3px 10px;background:#2a2a2a;border:1px solid #444;border-radius:6px;color:#888;cursor:pointer">💾 บันทึกใน Memory</button>
+        </div>`;
+      msgs.scrollTop = msgs.scrollHeight;
+    } catch(e) {
+      const el = document.getElementById(thinkId);
+      if (el) el.outerHTML = `<div style="color:#ef4444;font-size:13px">Error: ${e.message}</div>`;
+    }
+  }
+
+  async function saveCodeMemory(answerId) {
+    const el = document.getElementById(answerId);
+    if (!el) return;
+    const text = el.querySelector('div').textContent;
+    const content = (_codeCurrentFile ? '[' + _codeCurrentFile + '] ' : '') + text.substring(0, 500);
+    try {
+      await fetch('/workspace/code/remember', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({content})
+      });
+      const btn = el.querySelector('button');
+      if (btn) { btn.textContent = '✅ บันทึกแล้ว'; btn.disabled = true; }
+    } catch(e) {
+      if (typeof showToast === 'function') showToast('❌ Save failed');
+    }
+  }
+
+  window.loadCodePanel = loadCodePanel;
+  window.loadCodeFile = loadCodeFile;
+  window.loadGitLog = loadGitLog;
+  window.askCodeAI = askCodeAI;
+  window.saveCodeMemory = saveCodeMemory;
 
   window.showPanel = showPanel;
   window.newChat = newChat;
@@ -7327,6 +7494,116 @@ async def workspace_benchmark_rate(request: Request):
 
     await save_rating(int(body["id"]), int(body["rating"]))
     return JSONResponse({"ok": True})
+
+
+# ── Code Assistant routes ─────────────────────────────────────────────────────
+
+@app.get("/workspace/code/files")
+async def workspace_code_files(request: Request):
+    await _require_admin(request)
+    import os
+    base = "/app"
+    file_list = []
+    for root, dirs, files in os.walk(base):
+        dirs[:] = [d for d in dirs if d not in
+                   {".git", "__pycache__", ".venv", "node_modules", "backups", "data"}]
+        for f in files:
+            if f.endswith((".py", ".yml", ".yaml", ".txt", ".md", ".env.example", ".json")):
+                rel = os.path.relpath(os.path.join(root, f), base)
+                file_list.append(rel.replace("\\", "/"))
+    return JSONResponse({"files": sorted(file_list)})
+
+
+@app.get("/workspace/code/file")
+async def workspace_code_file(request: Request, path: str = ""):
+    await _require_admin(request)
+    import os
+    base = "/app"
+    full = os.path.normpath(os.path.join(base, path))
+    if not full.startswith(base):
+        raise HTTPException(400, "invalid path")
+    try:
+        with open(full, "r", encoding="utf-8") as f:
+            content = f.read()
+        lines = content.splitlines()
+        return JSONResponse({"path": path, "content": content,
+                             "lines": len(lines), "size": len(content)})
+    except FileNotFoundError:
+        raise HTTPException(404, "file not found")
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
+@app.post("/workspace/code/chat")
+async def workspace_code_chat(request: Request):
+    await _require_admin(request)
+    body = await request.json()
+    question = body.get("question", "").strip()
+    file_path = body.get("file_path", "")
+    file_content = body.get("file_content", "")
+    if not question:
+        raise HTTPException(400, "question required")
+    from app.core.ai import chat as ai_chat
+    file_context = ""
+    if file_path and file_content:
+        lines = file_content.splitlines()
+        preview = "\n".join(lines[:200])
+        file_context = (
+            f"\n\n=== Current File: {file_path} ({len(lines)} lines) ===\n"
+            f"```python\n{preview}\n```\n"
+        )
+    system = (
+        f"คุณเป็น Ener-AI Code Assistant ผู้เชี่ยวชาญ Python/FastAPI\n"
+        f"ระบบ Ener-AI: FastAPI + SQLite + Telegram + agents + Web Workspace\n"
+        f"Stack: Python 3.11, FastAPI, aiosqlite, python-telegram-bot, Anthropic/Groq/Gemini APIs\n"
+        f"Server: Hetzner CPX22, Docker, domain my-ener.uk{file_context}\n\n"
+        f"เมื่อตอบ:\n"
+        f"- ถ้าต้องแก้ code → สร้าง Cursor prompt ให้พร้อมวาง\n"
+        f"- ถ้าอธิบาย → กระชับ ตรงประเด็น\n"
+        f"- ใช้ภาษาไทยผสม technical terms"
+    )
+    answer = await ai_chat(
+        question, system=system, agent="CodeAssistant",
+        messages=[], preferred_model="haiku", strict_model=False,
+    )
+    return JSONResponse({"answer": str(answer)})
+
+
+@app.post("/workspace/code/remember")
+async def workspace_code_remember(request: Request):
+    await _require_admin(request)
+    body = await request.json()
+    content = body.get("content", "").strip()
+    if not content:
+        raise HTTPException(400, "content required")
+    from app.core.config import settings as _s
+    async with get_db() as db:
+        await db.execute(
+            "INSERT INTO long_term_memories (content, memory_type, chat_id) VALUES (?,?,?)",
+            (f"[Code] {content}", "code_decision", str(_s.telegram_chat_id)),
+        )
+        await db.commit()
+    return JSONResponse({"ok": True})
+
+
+@app.get("/workspace/code/git-log")
+async def workspace_code_git_log(request: Request):
+    await _require_admin(request)
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["git", "log", "--oneline", "-20", "--format=%h|%s|%ar|%an"],
+            capture_output=True, text=True, cwd="/app",
+        )
+        commits = []
+        for line in result.stdout.strip().splitlines():
+            parts = line.split("|", 3)
+            if len(parts) == 4:
+                commits.append({"hash": parts[0], "message": parts[1],
+                                "time": parts[2], "author": parts[3]})
+        return JSONResponse({"commits": commits})
+    except Exception as exc:
+        return JSONResponse({"commits": [], "error": str(exc)})
 
 
 @app.post("/workspace/files/upload")
