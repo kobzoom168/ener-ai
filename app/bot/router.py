@@ -46,23 +46,31 @@ TAROT_KEYWORDS = [
 ]
 
 
+_REPLY_MAX_LEN = 4000
+
+
 async def _reply_text_with_markdown_fallback(
     message,
     text: str,
     reply_markup: InlineKeyboardMarkup | None = None,
 ):
-    try:
-        await message.reply_text(
-            text,
-            reply_markup=reply_markup,
-            parse_mode=ParseMode.MARKDOWN,
-        )
-    except Exception:
-        await message.reply_text(
-            text,
-            reply_markup=reply_markup,
-            parse_mode=None,
-        )
+    chunks = [text[i:i + _REPLY_MAX_LEN] for i in range(0, len(text), _REPLY_MAX_LEN)]
+    for i, chunk in enumerate(chunks):
+        prefix = f"({i + 1}/{len(chunks)}) " if len(chunks) > 1 else ""
+        content = prefix + chunk
+        is_last = i == len(chunks) - 1
+        try:
+            await message.reply_text(
+                content,
+                reply_markup=reply_markup if is_last else None,
+                parse_mode=ParseMode.MARKDOWN,
+            )
+        except Exception:
+            await message.reply_text(
+                content,
+                reply_markup=reply_markup if is_last else None,
+                parse_mode=None,
+            )
 
 
 def _merge_voice_button(
