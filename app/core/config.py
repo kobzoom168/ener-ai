@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
     gemini_api_key: str = ""
     github_token: str = ""
+    xai_api_key: str = ""
+    deepseek_api_key: str = ""
+    moonshot_api_key: str = ""
 
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "qwen2.5:7b"

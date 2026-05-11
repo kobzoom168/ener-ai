@@ -19,12 +19,23 @@ _MODEL_LABELS = {
     "gemini": "Gemini Flash",
     "qwen3b": "Qwen 3B",
     "qwen7b": "Qwen 7B",
+    "sonnet": "Claude Sonnet 4.6",
+    "opus": "Claude Opus 4.7",
+    "gemini-pro": "Gemini 2.0 Pro",
+    "llama4": "Llama 4 Scout (Groq)",
+    "grok": "Grok 3 Mini (xAI)",
+    "deepseek-direct": "DeepSeek V3",
+    "kimi": "Kimi K2 (Moonshot)",
 }
 _OLLAMA_MODEL_MAP = {
     "qwen3b": "qwen2.5:3b",
     "qwen7b": "qwen2.5:7b",
 }
-_VALID_MODELS = {"haiku", "groq", "gemini", "qwen3b", "qwen7b"}
+_VALID_MODELS = {
+    "haiku", "groq", "gemini", "qwen3b", "qwen7b",
+    "sonnet", "opus", "gemini-pro", "llama4",
+    "grok", "deepseek-direct", "kimi",
+}
 _FALLBACK_SEQUENCE = ["groq", "haiku", "qwen3b"]
 
 
@@ -146,6 +157,13 @@ def get_model_availability() -> dict[str, bool]:
         "gemini": bool(settings.gemini_api_key),
         "qwen3b": True,
         "qwen7b": True,
+        "sonnet": bool(settings.anthropic_api_key),
+        "opus": bool(settings.anthropic_api_key),
+        "gemini-pro": bool(settings.gemini_api_key),
+        "llama4": bool(settings.groq_api_key),
+        "grok": bool(settings.xai_api_key),
+        "deepseek-direct": bool(settings.deepseek_api_key),
+        "kimi": bool(settings.moonshot_api_key),
     }
 
 
@@ -351,6 +369,268 @@ async def _call_gemini(
             False,
         )
         raise
+
+
+# ── New model call functions ────────────────────────────────────────────────
+
+async def _call_anthropic_sonnet(
+    prompt: str,
+    system: str,
+    messages: list[dict[str, str]] | None,
+    agent: str,
+) -> str:
+    """Claude Sonnet 4.6 — better than Haiku, cheaper than Opus."""
+    started_at = time.perf_counter()
+    try:
+        client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        response = await client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=4096,
+            system=system or "You are a helpful assistant.",
+            messages=_anthropic_messages(prompt, messages),
+        )
+        text = "".join(getattr(block, "text", "") for block in response.content)
+        input_tokens = getattr(response.usage, "input_tokens", 0)
+        output_tokens = getattr(response.usage, "output_tokens", 0)
+        await _log_ai_run(
+            agent, "sonnet", input_tokens, output_tokens,
+            int((time.perf_counter() - started_at) * 1000), True,
+        )
+        return text
+    except Exception:
+        await _log_ai_run(
+            agent, "sonnet", 0, 0,
+            int((time.perf_counter() - started_at) * 1000), False,
+        )
+        raise
+
+
+async def _call_anthropic_opus(
+    prompt: str,
+    system: str,
+    messages: list[dict[str, str]] | None,
+    agent: str,
+) -> str:
+    """Claude Opus 4.7 — highest quality, use for critical tasks."""
+    started_at = time.perf_counter()
+    try:
+        client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        response = await client.messages.create(
+            model="claude-opus-4-7",
+            max_tokens=4096,
+            system=system or "You are a helpful assistant.",
+            messages=_anthropic_messages(prompt, messages),
+        )
+        text = "".join(getattr(block, "text", "") for block in response.content)
+        input_tokens = getattr(response.usage, "input_tokens", 0)
+        output_tokens = getattr(response.usage, "output_tokens", 0)
+        await _log_ai_run(
+            agent, "opus", input_tokens, output_tokens,
+            int((time.perf_counter() - started_at) * 1000), True,
+        )
+        return text
+    except Exception:
+        await _log_ai_run(
+            agent, "opus", 0, 0,
+            int((time.perf_counter() - started_at) * 1000), False,
+        )
+        raise
+
+
+async def _call_gemini_pro(
+    prompt: str,
+    system: str,
+    messages: list[dict[str, str]] | None,
+    agent: str,
+) -> str:
+    """Gemini 2.0 Flash (gemini-pro alias) — smarter than Flash 1.5."""
+    started_at = time.perf_counter()
+    try:
+        client = genai.Client(api_key=settings.gemini_api_key)
+        contents = _gemini_contents(prompt, system, messages)
+
+        def _generate():
+            return client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=contents,
+            )
+
+        response = await asyncio.to_thread(_generate)
+        usage = getattr(response, "usage_metadata", None)
+        await _log_ai_run(
+            agent, "gemini-pro",
+            getattr(usage, "prompt_token_count", 0) or 0,
+            getattr(usage, "candidates_token_count", 0) or 0,
+            int((time.perf_counter() - started_at) * 1000), True,
+        )
+        return getattr(response, "text", "") or ""
+    except Exception:
+        await _log_ai_run(
+            agent, "gemini-pro", 0, 0,
+            int((time.perf_counter() - started_at) * 1000), False,
+        )
+        raise
+
+
+async def _call_groq_llama4(
+    prompt: str,
+    system: str,
+    messages: list[dict[str, str]] | None,
+    agent: str,
+) -> str:
+    """Llama 4 Scout via Groq."""
+    started_at = time.perf_counter()
+    try:
+        client = AsyncGroq(api_key=settings.groq_api_key)
+        response = await client.chat.completions.create(
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            messages=_groq_messages(prompt, system, messages),
+            max_tokens=2048,
+            temperature=0.7,
+        )
+        usage = response.usage
+        await _log_ai_run(
+            agent, "llama4",
+            getattr(usage, "prompt_tokens", 0) or 0,
+            getattr(usage, "completion_tokens", 0) or 0,
+            int((time.perf_counter() - started_at) * 1000), True,
+        )
+        return response.choices[0].message.content or ""
+    except Exception:
+        await _log_ai_run(
+            agent, "llama4", 0, 0,
+            int((time.perf_counter() - started_at) * 1000), False,
+        )
+        raise
+
+
+async def _call_grok(
+    prompt: str,
+    system: str,
+    messages: list[dict[str, str]] | None,
+    agent: str,
+) -> str:
+    """Grok 3 Mini via xAI API (OpenAI-compatible)."""
+    if not settings.xai_api_key:
+        raise RuntimeError("xAI API key not set")
+    started_at = time.perf_counter()
+    try:
+        msgs = [{"role": "system", "content": system or ""}]
+        if messages:
+            msgs += [{"role": m["role"], "content": m["content"]}
+                     for m in messages[-20:]]
+        msgs.append({"role": "user", "content": prompt})
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                "https://api.x.ai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.xai_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={"model": "grok-3-mini", "messages": msgs, "max_tokens": 2048},
+                timeout=30.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        text = data["choices"][0]["message"]["content"] or ""
+        await _log_ai_run(
+            agent, "grok", 0, 0,
+            int((time.perf_counter() - started_at) * 1000), True,
+        )
+        return text
+    except Exception:
+        await _log_ai_run(
+            agent, "grok", 0, 0,
+            int((time.perf_counter() - started_at) * 1000), False,
+        )
+        raise
+
+
+async def _call_deepseek_direct(
+    prompt: str,
+    system: str,
+    messages: list[dict[str, str]] | None,
+    agent: str,
+) -> str:
+    """DeepSeek V3 via direct API (cheaper than Groq relay)."""
+    if not settings.deepseek_api_key:
+        raise RuntimeError("DeepSeek API key not set")
+    started_at = time.perf_counter()
+    try:
+        msgs = [{"role": "system", "content": system or ""}]
+        if messages:
+            msgs += [{"role": m["role"], "content": m["content"]}
+                     for m in messages[-20:]]
+        msgs.append({"role": "user", "content": prompt})
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                "https://api.deepseek.com/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.deepseek_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={"model": "deepseek-chat", "messages": msgs, "max_tokens": 2048},
+                timeout=30.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        text = data["choices"][0]["message"]["content"] or ""
+        await _log_ai_run(
+            agent, "deepseek-direct", 0, 0,
+            int((time.perf_counter() - started_at) * 1000), True,
+        )
+        return text
+    except Exception:
+        await _log_ai_run(
+            agent, "deepseek-direct", 0, 0,
+            int((time.perf_counter() - started_at) * 1000), False,
+        )
+        raise
+
+
+async def _call_kimi(
+    prompt: str,
+    system: str,
+    messages: list[dict[str, str]] | None,
+    agent: str,
+) -> str:
+    """Kimi K2 via Moonshot API (OpenAI-compatible)."""
+    if not settings.moonshot_api_key:
+        raise RuntimeError("Moonshot API key not set")
+    started_at = time.perf_counter()
+    try:
+        msgs = [{"role": "system", "content": system or ""}]
+        if messages:
+            msgs += [{"role": m["role"], "content": m["content"]}
+                     for m in messages[-20:]]
+        msgs.append({"role": "user", "content": prompt})
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                "https://api.moonshot.cn/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.moonshot_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={"model": "moonshot-v1-8k", "messages": msgs, "max_tokens": 2048},
+                timeout=30.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        text = data["choices"][0]["message"]["content"] or ""
+        await _log_ai_run(
+            agent, "kimi", 0, 0,
+            int((time.perf_counter() - started_at) * 1000), True,
+        )
+        return text
+    except Exception:
+        await _log_ai_run(
+            agent, "kimi", 0, 0,
+            int((time.perf_counter() - started_at) * 1000), False,
+        )
+        raise
+
+
+# ── End new model call functions ────────────────────────────────────────────
 
 
 async def _gemini_grounded_search(query: str) -> str:
@@ -752,7 +1032,7 @@ async def chat(
             candidates.insert(0, active_model)
 
     for candidate in candidates:
-        if candidate in {"haiku", "groq", "gemini"} and not availability.get(candidate, False):
+        if not availability.get(candidate, candidate in {"qwen3b", "qwen7b"}):
             continue
         try:
             if candidate == "haiku":
@@ -763,6 +1043,20 @@ async def chat(
                 return await _call_gemini(prompt, system, messages, agent)
             if candidate in {"qwen3b", "qwen7b"}:
                 return await _call_ollama(prompt, system, messages, agent, candidate)
+            if candidate == "sonnet":
+                return await _call_anthropic_sonnet(prompt, system, messages, agent)
+            if candidate == "opus":
+                return await _call_anthropic_opus(prompt, system, messages, agent)
+            if candidate == "gemini-pro":
+                return await _call_gemini_pro(prompt, system, messages, agent)
+            if candidate == "llama4":
+                return await _call_groq_llama4(prompt, system, messages, agent)
+            if candidate == "grok":
+                return await _call_grok(prompt, system, messages, agent)
+            if candidate == "deepseek-direct":
+                return await _call_deepseek_direct(prompt, system, messages, agent)
+            if candidate == "kimi":
+                return await _call_kimi(prompt, system, messages, agent)
         except Exception:
             continue
 

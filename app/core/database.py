@@ -321,6 +321,9 @@ async def init_db():
                 ("standup_auto_send_line", "false", "Auto-send standup to LINE at 07:30", 0),
                 ("standup_mention", "@Noom", "LINE mention tag in standup report", 0),
                 ("telegram_chat_id", str(settings.telegram_chat_id or "").strip(), "Owner Telegram Chat ID", 0),
+                ("xai_api_key", "", "Grok xAI API Key (console.x.ai)", 1),
+                ("deepseek_api_key", "", "DeepSeek API Key (platform.deepseek.com)", 1),
+                ("moonshot_api_key", "", "Kimi Moonshot API Key (platform.moonshot.cn)", 1),
             ],
         )
         await db.commit()

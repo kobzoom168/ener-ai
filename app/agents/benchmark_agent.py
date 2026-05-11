@@ -2,6 +2,7 @@ import asyncio
 import time
 
 from app.core.ai import chat
+from app.core.config import settings
 from app.core.database import get_db
 
 # Gemini free tier = 15 RPM → max 3 concurrent calls with buffer
@@ -23,6 +24,14 @@ TEST_QUESTIONS = [
 ]
 
 MODELS = ["groq", "gemini", "haiku"]
+if settings.anthropic_api_key:
+    MODELS += ["sonnet"]
+if settings.xai_api_key:
+    MODELS += ["grok"]
+if settings.deepseek_api_key:
+    MODELS += ["deepseek-direct"]
+if settings.moonshot_api_key:
+    MODELS += ["kimi"]
 
 SYSTEM = (
     "คุณเป็น Ener-AI ผู้ช่วยส่วนตัว ตอบเป็นภาษาไทย กระชับ\n"
