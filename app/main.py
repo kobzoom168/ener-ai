@@ -6718,7 +6718,7 @@ document.addEventListener('DOMContentLoaded', function() {
       const answerId = 'ans-' + Date.now();
       msgs.innerHTML += `
         <div id="${answerId}" style="align-self:flex-start;background:#1a1a1a;padding:12px;border-radius:12px;font-size:14px;max-width:90%;border-left:3px solid #7c3aed">
-          <div style="line-height:1.7">${(d.answer||'').replace(/\n/g,'<br>')}</div>
+          <div style="line-height:1.7">${(d.answer||'').replace(/\\n/g,'<br>')}</div>
           <button onclick="saveCodeMemory('${answerId}')" style="margin-top:8px;font-size:11px;padding:3px 10px;background:#2a2a2a;border:1px solid #444;border-radius:6px;color:#888;cursor:pointer">💾 บันทึกใน Memory</button>
         </div>`;
       msgs.scrollTop = msgs.scrollHeight;
