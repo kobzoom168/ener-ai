@@ -1,22 +1,9 @@
+import re
 import time
 
 from app.core.ai import chat, chat_json, chat_with_tools
 from app.core.event_log import log_event
 from app.core.tools import TOOLS, execute_tool
-
-ROUTER_PROMPT = """Classify this message. Reply JSON only:
-{
-  "complexity": "simple|complex|critical",
-  "domain": "chat|analysis|code|location|spiritual|task",
-  "needs_thinking": true/false,
-  "reason": "one line why"
-}
-
-Rules:
-- simple: greetings, short questions, task CRUD, memory save
-- complex: analysis, comparison, planning, strategy, "ช่วยคิด", "แนะนำ", "วิเคราะห์", "ควรทำ"
-- critical: medical, legal, financial decisions, hospital IT decisions
-- needs_thinking: true if complex or critical"""
 
 CHECKER_PROMPT = """ตรวจคำตอบนี้ก่อนส่งให้ user ตอบ JSON เท่านั้น:
 {
@@ -33,28 +20,177 @@ CHECKER_PROMPT = """ตรวจคำตอบนี้ก่อนส่งใ
 5. ถ้าทุกอย่างโอเค -> ok: true, fixed_answer: null"""
 
 
-async def route_message(text: str) -> dict:
-    try:
-        result = await chat_json(
-            f"Message: {text}",
-            system=ROUTER_PROMPT,
-            agent="Router",
-            preferred_model="groq",
-            strict_model=True,
-        )
+def route_fast(text: str) -> dict:
+    """Python keyword router — 0-5ms, no LLM call."""
+    t = text.lower()
+
+    if any(k in t for k in [
+        "หาร้าน", "ที่ไหน", "ใกล้", "พิกัด", "เบอร์โทร", "ราคา",
+        "ข่าวล่าสุด", "today", "แผนที่", "restaurant", "where",
+        "เวียงจันทร์", "กรุงเทพ", "เชียงใหม่", "ปทุม",
+    ]):
         return {
-            "complexity": str(result.get("complexity", "simple") or "simple"),
-            "domain": str(result.get("domain", "chat") or "chat"),
-            "needs_thinking": bool(result.get("needs_thinking", False)),
-            "reason": str(result.get("reason", "") or ""),
+            "complexity": "grounded",
+            "domain": "location",
+            "model": "gemini",
+            "tools": ["make_maps_links", "search_memory"],
+            "needs_check": True,
+            "reason": "location/current info — grounded required",
         }
-    except Exception:
+
+    if any(k in t for k in [
+        "จด", "จำไว้", "todo", "task", "เพิ่มงาน", "บันทึก",
+        "/task", "/note", "/remember", "save this", "remind",
+    ]):
+        return {
+            "complexity": "simple",
+            "domain": "task",
+            "model": "groq",
+            "tools": ["save_task", "save_note", "remember_fact"],
+            "needs_check": False,
+            "reason": "task/note direct operation",
+        }
+
+    if any(k in t for k in [
+        "จำได้ไหม", "เมื่อก่อน", "บอกว่า", "ค้นหา", "ลืม",
+        "/memory", "/search", "เคยบอก", "เคยคุย",
+    ]):
         return {
             "complexity": "simple",
             "domain": "chat",
-            "needs_thinking": False,
-            "reason": "router failed",
+            "model": "groq",
+            "tools": ["search_memory", "remember_fact"],
+            "needs_check": False,
+            "reason": "memory recall",
         }
+
+    if any(k in t for k in [
+        "ดวง", "ไพ่", "ทาโรต์", "ทำนาย", "โชค", "เสี่ยง",
+        "tarot", "fortune", "horoscope", "ดูดวง",
+    ]):
+        return {
+            "complexity": "simple",
+            "domain": "spiritual",
+            "model": "haiku",
+            "tools": ["draw_tarot", "draw_tarot_with_question"],
+            "needs_check": False,
+            "reason": "tarot/spiritual",
+        }
+
+    if any(k in t for k in [
+        "พระ", "เครื่อง", "พลังงาน", "หลวงปู่", "สมเด็จ", "บูชา",
+        "ener scan", "caption", "tiktok", "youtube", "content",
+        "script", "โพสต์", "ขายพระ", "วัตถุมงคล",
+    ]):
+        return {
+            "complexity": "complex",
+            "domain": "analysis",
+            "model": "haiku",
+            "tools": [
+                "analyze_amulet",
+                "create_content",
+                "draw_tarot_with_question",
+                "search_memory",
+            ],
+            "needs_check": False,
+            "reason": "ener scan / amulet / content",
+        }
+
+    if any(k in t for k in [
+        "code", "github", "bug", "error", "โปรแกรม", "function",
+        "deploy", "script", "dockerfile", "python", "api", "cursor",
+        "แก้โค้ด", "debug", "ระบบ",
+    ]):
+        return {
+            "complexity": "complex",
+            "domain": "code",
+            "model": "groq",
+            "tools": [
+                "read_github_file",
+                "list_github_repos",
+                "list_github_prs",
+                "read_code_file",
+                "generate_cursor_prompt",
+            ],
+            "needs_check": False,
+            "reason": "code/technical",
+        }
+
+    if any(k in t for k in [
+        "วิเคราะห์", "เปรียบเทียบ", "vendor", "proposal", "risk",
+        "ควรเลือก", "hospital", "his", "server", "network", "backup",
+        "pbx", "crm", "infrastructure", "โรงพยาบาล", "it pm",
+        "procurement", "tor", "boq", "sow",
+    ]):
+        return {
+            "complexity": "critical",
+            "domain": "analysis",
+            "model": "haiku",
+            "tools": ["search_memory", "run_brainstorm", "get_system_info"],
+            "needs_check": True,
+            "reason": "hospital IT / vendor analysis",
+        }
+
+    if any(k in t for k in [
+        "brainstorm", "ช่วยคิด", "แผน", "strategy", "แนะนำ",
+        "ควรทำ", "pros cons", "ข้อดี", "ข้อเสีย", "คิดให้",
+    ]):
+        return {
+            "complexity": "complex",
+            "domain": "analysis",
+            "model": "haiku",
+            "tools": ["run_brainstorm", "search_memory"],
+            "needs_check": False,
+            "reason": "brainstorm/planning",
+        }
+
+    if any(k in t for k in [
+        "ระบบมี", "agent กี่", "cursor prompt", "generate prompt",
+        "read code", "อ่านโค้ด", "ระบบตัวเอง",
+    ]):
+        return {
+            "complexity": "simple",
+            "domain": "code",
+            "model": "groq",
+            "tools": ["get_system_info", "read_code_file", "generate_cursor_prompt"],
+            "needs_check": False,
+            "reason": "system introspection",
+        }
+
+    return {
+        "complexity": "simple",
+        "domain": "chat",
+        "model": "groq",
+        "tools": ["save_task", "save_note", "remember_fact", "search_memory"],
+        "needs_check": False,
+        "reason": "default simple chat",
+    }
+
+
+def _select_tools(tool_names: list[str]) -> list[dict]:
+    """Return only the tools needed for this intent."""
+    return [tool for tool in TOOLS if tool["name"] in tool_names]
+
+
+def _deterministic_check(answer: str) -> list[str]:
+    """Fast regex-based check. No LLM call."""
+    issues = []
+
+    fake_internal = re.findall(
+        r"https?://my-ener\.uk/(?!admin|workspace|health|webhook)\S+",
+        answer,
+    )
+    if fake_internal:
+        issues.append(f"fake_internal_url: {fake_internal}")
+
+    phones = re.findall(r"0\d{1,2}[-\s]?\d{3}[-\s]?\d{4}", answer)
+    if phones:
+        issues.append(f"unverified_phone: {phones}")
+
+    if re.search(r"\bVendor\s+[A-C]\b", answer, re.IGNORECASE):
+        issues.append("generic_vendor_names")
+
+    return issues
 
 
 async def reason(
@@ -64,33 +200,24 @@ async def reason(
     route: dict,
 ) -> str:
     complexity = route.get("complexity", "simple")
-    needs_thinking = route.get("needs_thinking", False)
-
-    if complexity == "critical":
-        model = "haiku"
-    elif needs_thinking:
-        model = "deepseek"
-    else:
-        model = "groq"
+    model = route.get("model", "groq")
+    tool_names = route.get("tools", [])
+    selected_tools = _select_tools(tool_names)
 
     enhanced_system = system_prompt
-    if needs_thinking:
+    if complexity in ("complex", "critical"):
         enhanced_system += """
 
 === Reasoning Mode ===
-คำถามนี้ต้องการการวิเคราะห์อย่างละเอียด
-กรุณา:
-1. คิดทีละขั้นตอน (step by step)
-2. พิจารณาหลายมุมมอง
-3. สรุปคำตอบที่ชัดเจนในตอนท้าย
-อย่ารีบตอบ - ความแม่นยำสำคัญกว่าความเร็ว"""
+คิดทีละขั้นตอน พิจารณาหลายมุมมอง สรุปชัดเจน
+ความแม่นยำสำคัญกว่าความเร็ว"""
 
     try:
         response = await chat_with_tools(
             prompt=text,
             system=enhanced_system,
             messages=history,
-            tools=TOOLS,
+            tools=selected_tools,
             agent="Reasoner",
             preferred_model=model,
         )
@@ -127,12 +254,19 @@ async def check_answer(
     answer: str,
     route: dict,
 ) -> str:
-    if route.get("complexity") == "simple" and len(answer) < 200:
+    if not route.get("needs_check", False):
+        return answer
+
+    if len(answer) < 300:
+        return answer
+
+    issues = _deterministic_check(answer)
+    if not issues:
         return answer
 
     try:
         result = await chat_json(
-            f"คำถาม: {original_question}\n\nคำตอบ: {answer}",
+            f"คำถาม: {original_question}\n\nคำตอบ: {answer}\n\nPotential issues: {issues}",
             system=CHECKER_PROMPT,
             agent="Checker",
             preferred_model="groq",
@@ -199,7 +333,7 @@ async def run_pipeline(
     total_start = time.time()
 
     t1 = time.time()
-    route = await route_message(text)
+    route = route_fast(text)
     router_ms = int((time.time() - t1) * 1000)
 
     t2 = time.time()
@@ -211,13 +345,7 @@ async def run_pipeline(
     checker_ms = int((time.time() - t3) * 1000)
     total_ms = int((time.time() - total_start) * 1000)
 
-    model_used = (
-        "haiku"
-        if route.get("complexity") == "critical"
-        else "deepseek-r1"
-        if route.get("needs_thinking")
-        else "groq"
-    )
+    model_used = str(route.get("model", "groq") or "groq")
 
     metadata = {
         "complexity": route.get("complexity", "simple"),
