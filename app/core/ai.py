@@ -532,7 +532,7 @@ async def _call_grok(
                     "Authorization": f"Bearer {settings.xai_api_key}",
                     "Content-Type": "application/json",
                 },
-                json={"model": "grok-4.3", "messages": msgs, "max_tokens": 2048},
+                json={"model": "grok-3-mini", "messages": msgs, "max_tokens": 2048},
                 timeout=30.0,
             )
             resp.raise_for_status()
