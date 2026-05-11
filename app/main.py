@@ -2481,6 +2481,17 @@ def build_admin_html(overview: dict) -> HTMLResponse:
     </div>
 
     {errors_html}
+
+    <section id="api-status-section" style="background:#111;border:1px solid #1f2937;border-radius:12px;padding:20px;margin:16px 0">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px">
+        <span style="font-weight:600;font-size:0.95rem;color:#f9fafb">📡 API Status</span>
+        <button onclick="refreshApiStatus()" style="font-size:12px;padding:4px 12px;background:#1a1a1a;border:1px solid #444;border-radius:6px;color:#aaa;cursor:pointer">↻ Refresh</button>
+        <span id="api-status-time" style="font-size:11px;color:#666"></span>
+      </div>
+      <div id="api-status-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;padding:16px 0">
+        <span style="color:#555;font-size:0.85rem">Loading...</span>
+      </div>
+    </section>
   </main>
   {live_log_tail_html}
 
@@ -3162,6 +3173,37 @@ def build_admin_html(overview: dict) -> HTMLResponse:
 
     fetchLogs();
     setInterval(fetchLogs, 10000);
+
+    async function refreshApiStatus() {{
+      try {{
+        const res = await fetch('/admin/api/provider-status');
+        const d = await res.json();
+        const grid = document.getElementById('api-status-grid');
+        const STATUS_COLOR = {{ok:'#22c55e', error:'#ef4444', no_key:'#555'}};
+        const STATUS_ICON  = {{ok:'●', error:'✕', no_key:'○'}};
+        grid.innerHTML = d.providers.map(p => `
+          <div style="background:#1a1a1a;border:1px solid ${{STATUS_COLOR[p.status]}}40;
+                      border-left:3px solid ${{STATUS_COLOR[p.status]}};
+                      border-radius:8px;padding:12px">
+            <div style="font-weight:600;font-size:13px;margin-bottom:4px">${{p.name}}</div>
+            <div style="color:${{STATUS_COLOR[p.status]}};font-size:12px">
+              ${{STATUS_ICON[p.status]}}
+              ${{p.status==='ok' ? 'Online' : p.status==='no_key' ? 'No Key' : 'Error'}}
+            </div>
+            <div style="color:#666;font-size:11px;margin-top:2px">
+              ${{p.latency_ms > 0 ? p.latency_ms+'ms' : '-'}}
+              ${{p.error ? '<br><span style="color:#ef444488">'+p.error+'</span>' : ''}}
+            </div>
+          </div>
+        `).join('');
+        document.getElementById('api-status-time').textContent = 'Updated: ' + d.checked_at;
+      }} catch(e) {{
+        const grid = document.getElementById('api-status-grid');
+        if (grid) grid.textContent = 'Load failed';
+      }}
+    }}
+    refreshApiStatus();
+    setInterval(refreshApiStatus, 60000);
 
     (function initAutoRefresh() {{
       const sel = document.getElementById('auto-refresh-select');
