@@ -6431,7 +6431,7 @@ function _benchEscapeHtml(text) {
 
 function _benchRenderMarkdown(text) {
   if (typeof window.renderMarkdown === 'function') return window.renderMarkdown(text);
-  return _benchEscapeHtml(text || '').replace(/\n/g, '<br>');
+  return _benchEscapeHtml(text || '').replace(/\\n/g, '<br>');
 }
 
 function renderBenchSummary(stats) {
