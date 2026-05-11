@@ -2488,7 +2488,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
         <button onclick="refreshApiStatus()" style="font-size:12px;padding:4px 12px;background:#1a1a1a;border:1px solid #444;border-radius:6px;color:#aaa;cursor:pointer">↻ Refresh</button>
         <span id="api-status-time" style="font-size:11px;color:#666"></span>
       </div>
-      <div id="api-status-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;padding:16px 0">
+      <div id="api-status-grid" style="display:flex;flex-direction:row;gap:12px;padding:16px 0;overflow-x:auto;flex-wrap:nowrap;scrollbar-width:thin;scrollbar-color:#444 #1a1a1a">
         <span style="color:#555;font-size:0.85rem">Loading...</span>
       </div>
     </section>
@@ -3184,7 +3184,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
         grid.innerHTML = d.providers.map(p => `
           <div style="background:#1a1a1a;border:1px solid ${{STATUS_COLOR[p.status]}}40;
                       border-left:3px solid ${{STATUS_COLOR[p.status]}};
-                      border-radius:8px;padding:12px">
+                      border-radius:8px;padding:12px;min-width:160px;flex-shrink:0">
             <div style="font-weight:600;font-size:13px;margin-bottom:4px">${{p.name}}</div>
             <div style="color:${{STATUS_COLOR[p.status]}};font-size:12px">
               ${{STATUS_ICON[p.status]}}
