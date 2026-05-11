@@ -5636,6 +5636,15 @@ def build_workspace_html() -> HTMLResponse:
           <select id="code-file-select" style="background:#2a2a2a;border:1px solid #444;border-radius:6px;padding:6px 12px;color:#e5e5e5;font-size:13px;max-width:280px" onchange="loadCodeFile(this.value)">
             <option value="">-- หรือเลือก file --</option>
           </select>
+          <select id="code-model-select" style="background:#2a2a2a;border:1px solid #7c3aed;border-radius:6px;padding:6px 12px;color:#e5e5e5;font-size:13px;font-weight:500">
+            <option value="sonnet">🔴 Claude Sonnet — เก่งสุด (code)</option>
+            <option value="haiku" selected>🟠 Claude Haiku — เร็ว ดี</option>
+            <option value="deepseek-direct">💛 DeepSeek — reasoning ดี</option>
+            <option value="gpt-4o">💛 GPT-4o — code ดีมาก</option>
+            <option value="gpt-4o-mini">💚 GPT-4o-mini — เร็ว ถูก</option>
+            <option value="groq">💚 Groq — เร็วสุด ฟรี</option>
+            <option value="grok">⚡ Grok 3 — reasoning</option>
+          </select>
           <button onclick="loadGitLog()" style="background:#1a1a1a;border:1px solid #444;border-radius:6px;padding:6px 12px;color:#aaa;font-size:13px;cursor:pointer">📋 Git Log</button>
         </div>
       </div>
@@ -6737,11 +6746,13 @@ document.addEventListener('DOMContentLoaded', function() {
     const question = preset || (input ? input.value.trim() : '');
     if (!question) return;
     if (input && !preset) input.value = '';
+    const modelSelect = document.getElementById('code-model-select');
+    const selectedModel = modelSelect ? modelSelect.value : 'haiku';
     const msgs = document.getElementById('code-chat-messages');
     if (!msgs) return;
     msgs.innerHTML += `<div style="align-self:flex-end;background:#2f2f2f;padding:8px 12px;border-radius:12px;font-size:14px;max-width:85%">${question}</div>`;
     const thinkId = 'think-' + Date.now();
-    msgs.innerHTML += `<div id="${thinkId}" style="color:#888;font-size:13px;padding:4px">💭 กำลังวิเคราะห์ code...</div>`;
+    msgs.innerHTML += `<div id="${thinkId}" style="color:#888;font-size:13px;padding:4px">💭 กำลังวิเคราะห์ด้วย ${selectedModel}...</div>`;
     msgs.scrollTop = msgs.scrollHeight;
     try {
       const res = await fetch('/workspace/code/chat', {
@@ -6751,7 +6762,8 @@ document.addEventListener('DOMContentLoaded', function() {
           question,
           file_path: _codeCurrentFile,
           file_content: _codeCurrentContent.substring(0, 8000),
-          folder_data: _codeFolderData
+          folder_data: _codeFolderData,
+          model: selectedModel
         })
       });
       const d = await res.json();
@@ -6760,7 +6772,8 @@ document.addEventListener('DOMContentLoaded', function() {
       const answerId = 'ans-' + Date.now();
       msgs.innerHTML += `
         <div id="${answerId}" style="align-self:flex-start;background:#1a1a1a;padding:12px;border-radius:12px;font-size:14px;max-width:90%;border-left:3px solid #7c3aed">
-          <div style="line-height:1.7">${(d.answer||'').replace(/\\n/g,'<br>')}</div>
+          <div style="font-size:11px;color:#7c3aed;margin-bottom:6px">🤖 ${selectedModel.toUpperCase()}</div>
+          <div style="line-height:1.7">${(d.answer||'').replace(/\n/g,'<br>')}</div>
           <button onclick="saveCodeMemory('${answerId}')" style="margin-top:8px;font-size:11px;padding:3px 10px;background:#2a2a2a;border:1px solid #444;border-radius:6px;color:#888;cursor:pointer">💾 บันทึกใน Memory</button>
         </div>`;
       msgs.scrollTop = msgs.scrollHeight;
@@ -7585,9 +7598,12 @@ async def workspace_code_chat(request: Request):
     file_path = body.get("file_path", "")
     file_content = body.get("file_content", "")
     folder_data = body.get("folder_data", None)
+    model = body.get("model", "haiku")
     if not question:
         raise HTTPException(400, "question required")
-    from app.core.ai import chat as ai_chat
+    from app.core.ai import chat as ai_chat, _VALID_MODELS
+    if model not in _VALID_MODELS:
+        model = "haiku"
     file_context = ""
     if folder_data:
         file_list = "\n".join([
@@ -7623,7 +7639,7 @@ async def workspace_code_chat(request: Request):
     )
     answer = await ai_chat(
         question, system=system, agent="CodeAssistant",
-        messages=[], preferred_model="haiku", strict_model=False,
+        messages=[], preferred_model=model, strict_model=False,
     )
     return JSONResponse({"answer": str(answer)})
 
