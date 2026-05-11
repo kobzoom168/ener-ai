@@ -48,6 +48,10 @@ _OTP_SEND_COOLDOWN = 10
 _ADMIN_OTP_CODE_KEY = "admin_otp_code"
 _ADMIN_OTP_EXPIRE_KEY = "admin_otp_expire"
 _ADMIN_OTP_LAST_SENT_KEY = "admin_otp_last_sent"
+_ADMIN_RESET_OTP_CODE_KEY = "admin_reset_otp_code"
+_ADMIN_RESET_OTP_EXPIRE_KEY = "admin_reset_otp_expire"
+_ADMIN_RESET_OTP_LAST_SENT_KEY = "admin_reset_otp_last_sent"
+_ADMIN_PASSWORD_OVERRIDE_KEY = "admin_password_override"
 _TERMINAL_OTP_CODE_KEY = "terminal_otp_code"
 _TERMINAL_OTP_EXPIRE_KEY = "terminal_otp_expire"
 _TERMINAL_OTP_LAST_SENT_KEY = "terminal_otp_last_sent"
@@ -311,7 +315,13 @@ def _admin_unauthorized() -> HTTPException:
     return HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": "Basic"})
 
 
-def _validate_admin_basic_auth(request: Request) -> None:
+async def _get_admin_password() -> str:
+    values = await _get_memory_values([_ADMIN_PASSWORD_OVERRIDE_KEY])
+    password = str(values.get(_ADMIN_PASSWORD_OVERRIDE_KEY, "")).strip()
+    return password or settings.admin_password
+
+
+async def _validate_admin_basic_auth(request: Request) -> None:
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Basic "):
         raise _admin_unauthorized()
@@ -321,9 +331,10 @@ def _validate_admin_basic_auth(request: Request) -> None:
         username, password = decoded.split(":", 1)
     except Exception:
         raise _admin_unauthorized()
+    current_password = await _get_admin_password()
     if not (
         secrets.compare_digest(username, "admin")
-        and secrets.compare_digest(password, settings.admin_password)
+        and secrets.compare_digest(password, current_password)
     ):
         raise _admin_unauthorized()
 
@@ -419,6 +430,62 @@ async def _clear_admin_otp() -> None:
     ])
 
 
+async def _get_admin_reset_otp_state() -> dict[str, str]:
+    return await _get_memory_values(
+        [
+            _ADMIN_RESET_OTP_CODE_KEY,
+            _ADMIN_RESET_OTP_EXPIRE_KEY,
+            _ADMIN_RESET_OTP_LAST_SENT_KEY,
+        ]
+    )
+
+
+async def _store_admin_reset_otp(otp: str, expires_at: float, sent_at: float) -> None:
+    await _set_memory_values(
+        {
+            _ADMIN_RESET_OTP_CODE_KEY: otp,
+            _ADMIN_RESET_OTP_EXPIRE_KEY: str(expires_at),
+            _ADMIN_RESET_OTP_LAST_SENT_KEY: str(sent_at),
+        },
+        tag="admin_reset_otp",
+    )
+
+
+async def _clear_admin_reset_otp() -> None:
+    await _delete_memory_keys([
+        _ADMIN_RESET_OTP_CODE_KEY,
+        _ADMIN_RESET_OTP_EXPIRE_KEY,
+    ])
+
+
+async def _set_admin_password(password: str) -> None:
+    await _set_memory_values(
+        {_ADMIN_PASSWORD_OVERRIDE_KEY: password},
+        tag="admin_auth",
+    )
+
+
+async def _clear_all_admin_sessions() -> None:
+    async with get_db() as db:
+        await db.execute(
+            "DELETE FROM memories WHERE key LIKE ?",
+            (f"{_ADMIN_SESSION_PREFIX}%",),
+        )
+        await db.commit()
+
+
+def _validate_new_admin_password(password: str, confirm_password: str) -> str:
+    candidate = str(password or "").strip()
+    confirm = str(confirm_password or "").strip()
+    if len(candidate) < 8:
+        return "รหัสผ่านใหม่ต้องยาวอย่างน้อย 8 ตัวอักษร"
+    if len(candidate) > 128:
+        return "รหัสผ่านใหม่ยาวเกินไป"
+    if candidate != confirm:
+        return "ยืนยันรหัสผ่านไม่ตรงกัน"
+    return ""
+
+
 async def _get_terminal_otp_state() -> dict[str, str]:
     return await _get_memory_values(
         [
@@ -486,7 +553,7 @@ async def _require_admin(request: Request):
         return
     if request.url.path.startswith("/admin/api/"):
         raise HTTPException(status_code=401, detail="Session expired")
-    _validate_admin_basic_auth(request)
+    await _validate_admin_basic_auth(request)
     raise HTTPException(status_code=307, detail="OTP Required", headers={"Location": "/admin/otp"})
 
 
@@ -6342,7 +6409,7 @@ async def otp_page(request: Request):
     if await _is_valid_session(request):
         return RedirectResponse("/admin", status_code=303)
 
-    _validate_admin_basic_auth(request)
+    await _validate_admin_basic_auth(request)
     now = time.time()
     async with _admin_otp_lock:
         otp_state = await _get_admin_otp_state()
@@ -6435,6 +6502,11 @@ async def otp_page(request: Request):
 
     <div class="timer" id="timer">หมดอายุใน 5:00</div>
     <button class="resend-btn" onclick="resend()">ส่ง OTP ใหม่</button>
+    <div style="margin-top:16px;">
+      <a href="/admin/reset" style="color:#888; font-size:12px; text-decoration:underline;">
+        ลืมรหัสผ่าน? รีเซ็ตผ่าน Telegram OTP
+      </a>
+    </div>
     <div id="msg"></div>
   </div>
 
@@ -6485,7 +6557,7 @@ async def otp_page(request: Request):
 
 @app.post("/admin/otp/verify")
 async def verify_otp(request: Request):
-    _validate_admin_basic_auth(request)
+    await _validate_admin_basic_auth(request)
     form = await request.form()
     otp = str(form.get("otp", "")).strip()
     now = time.time()
@@ -6523,7 +6595,7 @@ async def verify_otp(request: Request):
 
 @app.post("/admin/otp/resend")
 async def resend_otp(request: Request):
-    _validate_admin_basic_auth(request)
+    await _validate_admin_basic_auth(request)
     otp_state = await _get_admin_otp_state()
     now = time.time()
     try:
@@ -6538,6 +6610,206 @@ async def resend_otp(request: Request):
     await _store_admin_otp(otp, now + OTP_EXPIRE, now)
     await _send_otp_telegram(otp)
     return {"ok": True}
+
+
+@app.get("/admin/reset")
+async def admin_reset_page(request: Request):
+    if await _is_valid_session(request):
+        return RedirectResponse("/admin", status_code=303)
+
+    now = time.time()
+    otp_state = await _get_admin_reset_otp_state()
+    try:
+        otp_expires_at = float(otp_state.get(_ADMIN_RESET_OTP_EXPIRE_KEY, "0") or 0)
+    except Exception:
+        otp_expires_at = 0.0
+    has_valid_otp = bool(otp_state.get(_ADMIN_RESET_OTP_CODE_KEY, "")) and otp_expires_at > now
+    initial_seconds = max(0, min(OTP_EXPIRE, int(otp_expires_at - now))) if has_valid_otp else 0
+    reset_html = """<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Reset Admin Password - Ener-AI</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body {
+      background:#000; color:#fff;
+      display:flex; align-items:center; justify-content:center;
+      min-height:100vh; font-family:monospace; padding:24px;
+    }
+    .reset-box {
+      background:#111; border:1px solid #222; border-radius:12px;
+      padding:32px; width:100%; max-width:420px; text-align:center;
+    }
+    .reset-box h2 { color:#00ff88; margin-bottom:8px; font-size:20px; }
+    .reset-box p { color:#888; font-size:13px; margin-bottom:18px; }
+    .hint { color:#ffaa00; font-size:12px; margin-bottom:16px; line-height:1.6; }
+    .field {
+      width:100%; padding:12px 14px; background:#000; border:1px solid #333;
+      color:#fff; border-radius:8px; margin-bottom:12px; font-size:15px;
+    }
+    .field.otp {
+      color:#00ff88; font-size:24px; letter-spacing:8px; text-align:center;
+    }
+    .field:focus { outline:none; border-color:#00ff88; }
+    .primary-btn, .secondary-btn {
+      width:100%; padding:12px; border:none; border-radius:8px;
+      font-size:14px; font-weight:bold; cursor:pointer;
+    }
+    .primary-btn { background:#00ff88; color:#000; margin-top:4px; }
+    .primary-btn:hover { background:#00cc70; }
+    .secondary-btn {
+      background:#1d1d1d; color:#fff; border:1px solid #333; margin-bottom:16px;
+    }
+    .secondary-btn:hover { background:#252525; }
+    .meta { color:#888; font-size:12px; margin-top:14px; }
+    .timer { color:#ffaa00; font-size:12px; margin:10px 0 16px; }
+    .msg { min-height:18px; font-size:12px; margin-bottom:12px; }
+    a { color:#888; font-size:12px; text-decoration:underline; }
+  </style>
+</head>
+<body>
+  <div class="reset-box">
+    <h2>🔐 Reset Admin Password</h2>
+    <p>รีเซ็ตรหัสเข้า `/admin` และ `/workspace` ผ่าน Telegram OTP</p>
+    <div class="hint">กดส่ง OTP แล้วเช็กรหัสใน Telegram จากนั้นตั้งรหัสใหม่ที่ต้องการ</div>
+    <button class="secondary-btn" onclick="sendResetOtp()">ส่ง OTP ไป Telegram</button>
+    <div class="timer" id="timer">__TIMER_COPY__</div>
+    <div class="msg" id="msg"></div>
+    <form method="POST" action="/admin/reset/confirm">
+      <input type="text" name="otp" class="field otp" maxlength="6" placeholder="000000"
+             autocomplete="one-time-code" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
+      <input type="password" name="new_password" class="field" placeholder="รหัสผ่านใหม่อย่างน้อย 8 ตัวอักษร">
+      <input type="password" name="confirm_password" class="field" placeholder="ยืนยันรหัสผ่านใหม่">
+      <button type="submit" class="primary-btn">บันทึกรหัสผ่านใหม่</button>
+    </form>
+    <div class="meta">username ยังคงเป็น <strong>admin</strong></div>
+    <div class="meta" style="margin-top:8px;"><a href="/admin">กลับไปหน้า login</a></div>
+  </div>
+  <script>
+    let seconds = __INITIAL_SECONDS__;
+    const timerEl = document.getElementById('timer');
+    function renderTimer() {
+      if (seconds > 0) {
+        const m = Math.floor(seconds / 60);
+        const s = seconds % 60;
+        timerEl.textContent = `OTP ใช้ได้อีก ${m}:${s.toString().padStart(2, '0')}`;
+        timerEl.style.color = '#ffaa00';
+      } else {
+        timerEl.textContent = 'ยังไม่ได้ส่ง OTP หรือ OTP หมดอายุแล้ว';
+        timerEl.style.color = '#888';
+      }
+    }
+    renderTimer();
+    const timer = setInterval(() => {
+      if (seconds > 0) {
+        seconds--;
+        renderTimer();
+      }
+    }, 1000);
+
+    async function sendResetOtp() {
+      const res = await fetch('/admin/reset/send', { method: 'POST' });
+      const msg = document.getElementById('msg');
+      if (!res.ok) {
+        msg.textContent = '❌ ส่ง OTP ไม่สำเร็จ';
+        msg.style.color = '#ff4444';
+        return;
+      }
+      const data = await res.json();
+      if (data.ok) {
+        seconds = Number(data.expires_in || 300);
+        renderTimer();
+        msg.textContent = '✅ ส่ง OTP ไป Telegram แล้ว';
+        msg.style.color = '#00ff88';
+      } else if (typeof data.wait === 'number') {
+        msg.textContent = `กรุณารอ ${data.wait} วินาที`;
+        msg.style.color = '#ffaa00';
+      } else {
+        msg.textContent = '❌ ส่ง OTP ไม่สำเร็จ';
+        msg.style.color = '#ff4444';
+      }
+    }
+  </script>
+</body>
+</html>"""
+    timer_copy = "OTP พร้อมใช้งาน" if has_valid_otp else "ยังไม่ได้ส่ง OTP หรือ OTP หมดอายุแล้ว"
+    return HTMLResponse(
+        reset_html
+        .replace("__INITIAL_SECONDS__", str(initial_seconds))
+        .replace("__TIMER_COPY__", escape(timer_copy))
+    )
+
+
+@app.post("/admin/reset/send")
+async def admin_reset_send(request: Request):
+    now = time.time()
+    async with _admin_otp_lock:
+        otp_state = await _get_admin_reset_otp_state()
+        try:
+            last_sent = float(otp_state.get(_ADMIN_RESET_OTP_LAST_SENT_KEY, "0") or 0)
+        except Exception:
+            last_sent = 0.0
+        if now - last_sent < 60:
+            remaining = int(60 - (now - last_sent))
+            return JSONResponse({"ok": False, "wait": remaining})
+
+        otp = _generate_otp()
+        await _store_admin_reset_otp(otp, now + OTP_EXPIRE, now)
+        await _send_otp_telegram(otp, title="Ener-AI Admin Password Reset OTP")
+    return JSONResponse({"ok": True, "expires_in": OTP_EXPIRE})
+
+
+@app.post("/admin/reset/confirm")
+async def admin_reset_confirm(request: Request):
+    form = await request.form()
+    otp = str(form.get("otp", "")).strip()
+    new_password = str(form.get("new_password", "")).strip()
+    confirm_password = str(form.get("confirm_password", "")).strip()
+    validation_error = _validate_new_admin_password(new_password, confirm_password)
+    if validation_error:
+        return HTMLResponse(
+            f"""
+        <script>
+        alert({json.dumps(validation_error, ensure_ascii=False)});
+        window.location.href = '/admin/reset';
+        </script>
+        """
+        )
+
+    now = time.time()
+    otp_state = await _get_admin_reset_otp_state()
+    stored_otp = otp_state.get(_ADMIN_RESET_OTP_CODE_KEY, "")
+    try:
+        otp_expires_at = float(otp_state.get(_ADMIN_RESET_OTP_EXPIRE_KEY, "0") or 0)
+    except Exception:
+        otp_expires_at = 0.0
+
+    if not stored_otp or otp != stored_otp or now > otp_expires_at:
+        return HTMLResponse(
+            """
+        <script>
+        alert('OTP ไม่ถูกต้องหรือหมดอายุแล้วครับ');
+        window.location.href = '/admin/reset';
+        </script>
+        """
+        )
+
+    await _set_admin_password(new_password)
+    await _clear_admin_reset_otp()
+    await _clear_admin_otp()
+    await _clear_all_admin_sessions()
+    response = HTMLResponse(
+        """
+    <script>
+    alert('เปลี่ยนรหัสผ่านเรียบร้อยแล้ว ใช้ username: admin และรหัสใหม่เพื่อเข้าใช้งาน');
+    window.location.href = '/admin';
+    </script>
+    """
+    )
+    response.delete_cookie("admin_session")
+    return response
 
 
 @app.post("/admin/logout")
@@ -6914,7 +7186,8 @@ async def verify_terminal(request: Request):
 
     await _clear_terminal_otp()
     _prune_terminal_tokens(now)
-    token = hashlib.sha256(f"{otp}{now}{settings.admin_password}".encode()).hexdigest()[:32]
+    current_password = await _get_admin_password()
+    token = hashlib.sha256(f"{otp}{now}{current_password}".encode()).hexdigest()[:32]
     _terminal_tokens[token] = now
     return {"token": token}
 
