@@ -16,6 +16,7 @@ from telegram.ext import (
 from app.agents import github_agent, gmail_agent, log_keeper, memory_curator, memory_keeper
 from app.agents.monitor_agent import cmd_errors, cmd_logs, cmd_server, cmd_status
 from app.agents.news_discovery import approve_source, list_active_sources, list_pending_sources
+from app.agents.standup_agent import generate_standup, parse_and_update_from_chat
 from app.agents.tarot_agent import read_cards, read_with_image
 from app.agents.vision_agent import (
     analyze_image as vision_analyze,
@@ -742,6 +743,7 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/task — สร้าง task (!! = high priority)\n"
         "/tasks — ดู task ทั้งหมด\n"
         "/done — ปิด task\n\n"
+        "/standup — สร้าง daily standup report\n\n"
         "**🧠 คิด & วิเคราะห์**\n"
         "/think — ถกไอเดีย 3 รอบ\n"
         "/brainstorm — เหมือน /think\n"
@@ -807,12 +809,25 @@ async def cmd_week(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await _reply_smart(update, result)
 
 
+async def cmd_standup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+    report = await generate_standup()
+    await _reply(update, report, enable_tts=False)
+
+
 async def msg_fallback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
     text = update.message.text or ""
     if not text.strip():
         return
+    lowered = text.lower()
+    if any(keyword in lowered for keyword in ["อัปเดต", "update", "%", "เปอร์เซ็น", "เสร็จแล้ว", "complete"]):
+        result = await parse_and_update_from_chat(text)
+        if result:
+            await _reply(update, result, enable_tts=False)
+            return
     chat_id = str(update.effective_chat.id)
     result = await MAIN_AGENT.run(chat_id, text)
     await _reply_smart(update, result)
@@ -854,6 +869,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("today", cmd_today))
     app.add_handler(CommandHandler("news", cmd_news))
     app.add_handler(CommandHandler("week", cmd_week))
+    app.add_handler(CommandHandler("standup", cmd_standup))
     app.add_handler(CommandHandler("cost", cmd_cost))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("h", cmd_help))

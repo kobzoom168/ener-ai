@@ -4279,6 +4279,51 @@ def build_workspace_html() -> HTMLResponse:
       font-size: 14px;
     }
 
+    .standup-panel-body {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+      gap: 16px;
+      align-items: start;
+    }
+
+    .standup-preview {
+      white-space: pre-wrap;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      background: #1a1a1a;
+      padding: 20px;
+      border-radius: 8px;
+      overflow-y: auto;
+      min-height: 520px;
+      border: 1px solid var(--border);
+    }
+
+    .standup-project-card {
+      background: var(--card);
+      border-radius: 10px;
+      padding: 16px;
+      margin-bottom: 12px;
+      border: 1px solid var(--border);
+    }
+
+    .sp-name { font-weight: 600; font-size: 15px; margin-bottom: 10px; color: #7c3aed; }
+
+    .sp-row { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; }
+
+    .sp-row label { font-size: 12px; color: #888; min-width: 70px; }
+
+    .sp-row input,
+    .sp-row textarea {
+      flex: 1;
+      background: #2a2a2a;
+      border: 1px solid #444;
+      border-radius: 6px;
+      padding: 6px 10px;
+      color: var(--text);
+      font-size: 14px;
+      font-family: inherit;
+    }
+
     .thinking {
       display: flex;
       gap: 5px;
@@ -4547,6 +4592,10 @@ def build_workspace_html() -> HTMLResponse:
       .task-input-wrap {
         grid-template-columns: 1fr;
       }
+
+      .standup-panel-body {
+        grid-template-columns: 1fr;
+      }
     }
 
     @media (max-width: 768px) {
@@ -4561,8 +4610,11 @@ def build_workspace_html() -> HTMLResponse:
         padding-left: 18px;
         padding-right: 18px;
       }
+      #slash-menu { width: calc(100% - 32px); }
       .msg-row { padding-left: 18px; padding-right: 18px; }
       .msg-bubble { max-width: 88%; }
+      .sp-row { align-items: flex-start; flex-direction: column; }
+      .sp-row label { min-width: 0; }
     }
   </style>
 </head>
@@ -4578,6 +4630,7 @@ def build_workspace_html() -> HTMLResponse:
       <a class="nav-item active" onclick="showPanel('chat')" data-panel="chat">💬 Chat</a>
       <a class="nav-item" onclick="showPanel('notes')" data-panel="notes">📝 Notes</a>
       <a class="nav-item" onclick="showPanel('tasks')" data-panel="tasks">✅ Tasks</a>
+      <a class="nav-item" onclick="showPanel('standup')" data-panel="standup">📋 Standup</a>
       <a class="nav-item" onclick="showPanel('brainstorm')" data-panel="brainstorm">🔥 Brainstorm</a>
       <a class="nav-item" onclick="showPanel('news')" data-panel="news">📰 News</a>
       <a class="nav-item" onclick="showPanel('memory')" data-panel="memory">🧠 Memory</a>
@@ -4630,6 +4683,20 @@ def build_workspace_html() -> HTMLResponse:
           <button class="primary-btn" onclick="createTask()">Add</button>
         </div>
         <div id="tasks-list"></div>
+      </div>
+    </div>
+
+    <div id="panel-standup" class="panel">
+      <div class="panel-header">
+        <h2>📋 Daily Standup</h2>
+        <div class="row-actions" style="margin-top:0">
+          <button class="secondary-btn" onclick="copyStandupReport()">Copy</button>
+          <button class="panel-action" onclick="generateStandup()">Generate Report</button>
+        </div>
+      </div>
+      <div class="panel-body standup-panel-body">
+        <div id="standup-preview" class="standup-preview">กด Generate Report เพื่อสร้าง standup ล่าสุด</div>
+        <div id="standup-projects"></div>
       </div>
     </div>
 
@@ -4704,6 +4771,7 @@ document.addEventListener('DOMContentLoaded', function() {
     { cmd: '/note', desc: 'บันทึกความคิด → BrainAgent' },
     { cmd: '/task', desc: 'สร้าง task ใหม่' },
     { cmd: '/tasks', desc: 'ดู task ทั้งหมด' },
+    { cmd: '/standup', desc: 'สร้าง daily standup report' },
     { cmd: '/remember', desc: 'บันทึก long-term memory' },
     { cmd: '/memory', desc: 'ดู memory ทั้งหมด' },
     { cmd: '/think', desc: 'ถกไอเดีย 3 รอบ (brainstorm)' },
@@ -4881,6 +4949,10 @@ document.addEventListener('DOMContentLoaded', function() {
     if (name === 'chat') await loadChatHistory();
     if (name === 'notes') await loadNotes();
     if (name === 'tasks') await loadTasks();
+    if (name === 'standup') {
+      await loadStandupProjects();
+      await generateStandup();
+    }
     if (name === 'news') await loadNews();
     if (name === 'memory') await loadMemory();
     if (name === 'files') await loadFiles();
@@ -5202,6 +5274,76 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
+  async function generateStandup() {
+    const preview = document.getElementById('standup-preview');
+    if (!preview) return;
+    try {
+      const data = await api('/workspace/standup/preview');
+      preview.textContent = data.report || '-';
+      showToast('Report generated! ✅');
+    } catch (error) {
+      showToast(error.message || 'Generate standup failed');
+    }
+  }
+
+  async function copyStandupReport() {
+    const preview = document.getElementById('standup-preview');
+    const text = (preview?.textContent || '').trim();
+    if (!text) {
+      showToast('ยังไม่มี report ให้ copy');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast('Copied ✅');
+    } catch (error) {
+      showToast('Copy failed');
+    }
+  }
+
+  async function loadStandupProjects() {
+    const data = await api('/workspace/standup/projects');
+    const projects = data.projects || data || [];
+    const el = document.getElementById('standup-projects');
+    el.innerHTML = '<h3 style="margin:0 0 12px">📊 Projects</h3>' + projects.map((p) => `
+      <div class="standup-project-card">
+        <div class="sp-name">${escapeHtml(p.name || '')}</div>
+        <div class="sp-row">
+          <label>% เสร็จ</label>
+          <input type="number" value="${Number(p.percent_complete || 0)}" min="0" max="100"
+            onchange="updateProject(${Number(p.id)}, 'percent_complete', this.value)">
+        </div>
+        <div class="sp-row">
+          <label>Status</label>
+          <input type="text" value="${escapeHtml(p.current_status || '')}"
+            onblur="updateProject(${Number(p.id)}, 'current_status', this.value)">
+        </div>
+        <div class="sp-row">
+          <label>Due</label>
+          <input type="text" value="${escapeHtml(p.due_date || '')}"
+            onblur="updateProject(${Number(p.id)}, 'due_date', this.value)">
+        </div>
+        <div class="sp-row">
+          <label>วันนี้ทำ</label>
+          <textarea rows="2"
+            onblur="updateProject(${Number(p.id)}, 'today_tasks', this.value)">${escapeHtml(p.today_tasks || '')}</textarea>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  async function updateProject(id, field, value) {
+    try {
+      await api('/workspace/standup/projects/' + id + '/update', {
+        method: 'POST',
+        body: JSON.stringify({field, value})
+      });
+      showToast('Saved ✅');
+    } catch (error) {
+      showToast(error.message || 'Save failed');
+    }
+  }
+
   async function runBrainstorm() {
     const input = document.getElementById('brainstorm-input');
     const topic = input.value.trim();
@@ -5434,6 +5576,9 @@ document.addEventListener('DOMContentLoaded', function() {
   window.selectProject = selectProject;
   window.saveNote = saveNote;
   window.createTask = createTask;
+  window.generateStandup = generateStandup;
+  window.copyStandupReport = copyStandupReport;
+  window.updateProject = updateProject;
   window.runBrainstorm = runBrainstorm;
   window.fetchNews = fetchNews;
   window.summarizeFile = summarizeFile;
@@ -5728,6 +5873,37 @@ async def workspace_tasks(request: Request):
             ]
         }
     )
+
+
+@app.get("/workspace/standup/preview")
+async def workspace_standup_preview(request: Request):
+    await _require_admin(request)
+    from app.agents.standup_agent import generate_standup
+
+    report = await generate_standup()
+    return JSONResponse({"report": report})
+
+
+@app.get("/workspace/standup/projects")
+async def workspace_standup_projects(request: Request):
+    await _require_admin(request)
+    from app.agents.standup_agent import list_projects
+
+    return JSONResponse({"projects": await list_projects()})
+
+
+@app.post("/workspace/standup/projects/{project_id}/update")
+async def workspace_standup_projects_update(project_id: int, request: Request):
+    await _require_admin(request)
+    from app.agents.standup_agent import update_project_field
+
+    payload = await request.json()
+    field = str(payload.get("field", "")).strip()
+    value = payload.get("value", "")
+    ok = await update_project_field(project_id, field, value)
+    if not ok:
+        raise HTTPException(status_code=400, detail="อัปเดตโปรเจ็กต์ไม่สำเร็จ")
+    return JSONResponse({"ok": True})
 
 
 @app.post("/workspace/brainstorm")

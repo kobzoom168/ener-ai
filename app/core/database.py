@@ -103,6 +103,20 @@ async def init_db():
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS standup_projects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                status TEXT DEFAULT 'In Progress',
+                percent_complete INTEGER DEFAULT 0,
+                current_status TEXT DEFAULT '',
+                next_steps TEXT DEFAULT '',
+                due_date TEXT DEFAULT '',
+                today_tasks TEXT DEFAULT '',
+                sort_order INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 1,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS news_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL,
@@ -223,4 +237,69 @@ async def init_db():
             await db.execute("ALTER TABLE messages ADD COLUMN project_id INTEGER REFERENCES projects(id)")
         if "source" not in message_columns:
             await db.execute("ALTER TABLE messages ADD COLUMN source TEXT DEFAULT 'telegram'")
+        await db.executescript("""
+            INSERT OR IGNORE INTO standup_projects
+            (id, name, status, percent_complete, current_status, next_steps, due_date, today_tasks, sort_order)
+            VALUES
+            (1, 'Cloud Contact Center และ Cloud PBX', 'In Progress', 5,
+             'PBX เอาระบบขึ้นภายใน May 2026 เปลี่ยนระบบจาก PABX เป็น PBX Phone System บน Cloud',
+             '1. ทบทวน TOR และ BOQ (ฉบับปรับปรุง)\n2. สรุป Proposal และคัดเลือก Vendor Phase 1\n3. แผนรองรับการขยาย Scalability & Integration',
+             'กรกฎาคม 2569',
+             'หา Headphone for Call Center\nตาม Scope of Work\nสรุปเรื่อง Report ค่า AVG การรอสาย',
+             1),
+            (2, 'Backup Solution', 'In Progress', 85,
+             'ติดตั้งเสร็จ เหลือ Backup to AWS + Training + Document',
+             'Meeting config backup to AWS 14:00\nทำ Document ให้เสร็จ',
+             '16-May-2026',
+             '14:00 Meeting config backup to AWS',
+             2),
+            (3, 'จัดหา Storage', 'In Progress', 20,
+             'อัปเดตราคาใหม่ เครื่องมือแพทย์ DB DICOM file network 25gb',
+             'อัปเดตราคา\nเสนอ solution',
+             'Jun-Jul 2026',
+             'ตามใบเสนอราคา',
+             3),
+            (4, 'Host VM Resource', 'In Progress', 30,
+             'นัดสรุป solution',
+             'ติดตามราคา\nนัด final solution',
+             'May 2026',
+             'ตามใบเสนอราคา + นัด final solution',
+             4),
+            (5, 'Improvement New Network', 'In Progress', 5,
+             'อยู่ในขั้นวางแผน',
+             'วางแผน infrastructure ใหม่',
+             'Dec 2026',
+             '',
+             5);
+        """)
         await db.commit()
+
+
+async def get_system_stats() -> dict:
+    async with get_db() as db:
+        stats = {}
+        for table, label in [
+            ("messages", "messages"),
+            ("notes", "notes"),
+            ("tasks", "tasks"),
+            ("memories", "memories"),
+            ("long_term_memories", "long_term_memories"),
+            ("ai_runs", "ai_runs"),
+            ("uploads", "uploads"),
+            ("standup_projects", "standup_projects"),
+        ]:
+            try:
+                cur = await db.execute(f"SELECT COUNT(*) AS c FROM {table}")
+                row = await cur.fetchone()
+                stats[label] = row["c"] if row else 0
+            except Exception:
+                stats[label] = 0
+        try:
+            cur = await db.execute(
+                "SELECT COUNT(*) AS c FROM tasks WHERE status = 'open'"
+            )
+            row = await cur.fetchone()
+            stats["open_tasks"] = row["c"] if row else 0
+        except Exception:
+            stats["open_tasks"] = 0
+    return stats

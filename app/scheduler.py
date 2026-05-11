@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from telegram import Bot
-from app.agents import briefing_agent, log_keeper, memory_curator, memory_keeper, monitor_agent, news, news_discovery, session_agent, summary
+from app.agents import briefing_agent, log_keeper, memory_curator, memory_keeper, monitor_agent, news, news_discovery, session_agent, standup_agent, summary
 from app.core.agents import log_agent_run
 from app.core.config import settings
 from app.core.database import get_db
@@ -109,6 +109,10 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
     async def send_agent_health_report():
         message = await log_keeper.analyze_agent_health(_agent_triggered_by="scheduler")
         await _send_scheduled_message(bot, message, "scheduled_agent_health_sent")
+
+    async def send_standup():
+        message = await standup_agent.generate_standup()
+        await _send_scheduled_message(bot, message, "scheduled_standup_sent")
 
     async def send_news_discovery():
         message = await news_discovery.discover_new_sources(_agent_triggered_by="scheduler")
@@ -224,6 +228,12 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
             )
             await db.commit()
 
+    scheduler.add_job(
+        send_standup,
+        CronTrigger(day_of_week="mon-fri", hour=7, minute=30, timezone=_BANGKOK),
+        id="standup_report",
+        replace_existing=True,
+    )
     scheduler.add_job(
         send_morning_briefing,
         CronTrigger(hour=8, minute=0, timezone=_BANGKOK),
