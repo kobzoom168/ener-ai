@@ -2402,6 +2402,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
     <div class="top-nav">
       <a class="nav-link active" href="/admin">Overview</a>
       <a class="nav-link" href="/admin/metrics">Metrics</a>
+      <a class="nav-link" href="/admin/pipeline">⚡ Pipeline</a>
       <a class="nav-link" href="/admin/logs">Logs</a>
       <a class="nav-link" href="/admin/config">⚙️ Config</a>
       <a class="nav-link" href="/admin/terminal" target="_blank" rel="noopener noreferrer">💻 Terminal</a>
@@ -3844,6 +3845,376 @@ def build_logs_html() -> HTMLResponse:
     });
     setInterval(() => { if (autoRefresh) loadLogs(); }, 10000);
     loadLogs();
+  </script>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
+
+def build_pipeline_html() -> HTMLResponse:
+    html = """<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ener-AI Pipeline</title>
+  <style>
+    :root {
+      --bg: #0f0f1a;
+      --panel: #111224;
+      --panel-2: #17172a;
+      --border: #2b2d42;
+      --text: #f2f3f7;
+      --muted: #9aa0b8;
+      --green: #22c55e;
+      --yellow: #f59e0b;
+      --red: #ef4444;
+      --blue: #60a5fa;
+      --purple: #a78bfa;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .wrap { max-width: 1440px; margin: 0 auto; padding: 18px 14px 40px; }
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    .title-block h1 { margin: 0; font-size: 24px; }
+    .title-block p { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+    .controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    button, a {
+      font: inherit;
+      text-decoration: none;
+    }
+    .link-btn, .btn {
+      background: #22243a;
+      border: 1px solid #35385a;
+      color: var(--text);
+      border-radius: 10px;
+      padding: 10px 12px;
+      cursor: pointer;
+    }
+    .meta-pill {
+      background: #17172a;
+      border: 1px solid #35385a;
+      color: var(--muted);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 13px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+    }
+    .card h3 {
+      margin: 0 0 6px;
+      font-size: 13px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .stat-value {
+      font-size: 32px;
+      font-weight: 700;
+      line-height: 1.1;
+    }
+    .stat-meta {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .section-title {
+      margin: 22px 0 12px;
+      font-size: 18px;
+    }
+    .chart-card { padding: 18px; }
+    .chart-legend {
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .legend-dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      margin-right: 6px;
+    }
+    .chart-list {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .chart-row {
+      display: grid;
+      grid-template-columns: 120px 1fr 92px;
+      gap: 12px;
+      align-items: center;
+    }
+    .chart-model {
+      font-weight: 600;
+      color: #dbe2ff;
+    }
+    .chart-track {
+      width: 100%;
+      height: 22px;
+      background: var(--panel-2);
+      border: 1px solid #35385a;
+      border-radius: 999px;
+      overflow: hidden;
+      display: flex;
+    }
+    .bar-router { background: var(--blue); }
+    .bar-reasoner { background: var(--purple); }
+    .bar-checker { background: var(--green); }
+    .chart-total {
+      text-align: right;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .table-card { overflow: hidden; }
+    .table-wrap { overflow: auto; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 980px;
+    }
+    th, td {
+      padding: 10px 8px;
+      border-bottom: 1px solid #23253a;
+      text-align: left;
+      font-size: 13px;
+      vertical-align: top;
+    }
+    th {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    td.num, th.num { text-align: right; }
+    td.center, th.center { text-align: center; }
+    .question {
+      max-width: 360px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .model-pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #22243a;
+      border: 1px solid #35385a;
+      font-size: 11px;
+    }
+    .ok { color: var(--green); font-weight: 700; }
+    .warn { color: var(--yellow); font-weight: 700; }
+    .bad { color: var(--red); font-weight: 700; }
+    .empty {
+      color: var(--muted);
+      text-align: center;
+      padding: 20px;
+    }
+    @media (max-width: 900px) {
+      .chart-row { grid-template-columns: 1fr; }
+      .chart-total { text-align: left; }
+      .question { max-width: 220px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="title-block">
+        <h1>⚡ Ener-AI Pipeline</h1>
+        <p>Reasoning latency monitor by stage: Router, Reasoner, Checker</p>
+      </div>
+      <div class="controls">
+        <div id="last-updated" class="meta-pill">Last updated: -</div>
+        <button id="refresh-btn" class="btn" type="button">Refresh</button>
+        <a class="link-btn" href="/admin">← กลับหน้า Admin</a>
+      </div>
+    </div>
+
+    <div id="summary-grid" class="grid">
+      <div class="card"><h3>Loading</h3><div class="stat-value">...</div></div>
+    </div>
+
+    <div class="card chart-card">
+      <div class="section-title">Stage Breakdown by Model</div>
+      <div class="chart-legend">
+        <span><span class="legend-dot bar-router"></span>Router</span>
+        <span><span class="legend-dot bar-reasoner"></span>Reasoner</span>
+        <span><span class="legend-dot bar-checker"></span>Checker</span>
+      </div>
+      <div id="chart-list" class="chart-list">
+        <div class="empty">Loading chart...</div>
+      </div>
+    </div>
+
+    <div class="card table-card" style="margin-top:18px;">
+      <div class="section-title">Recent Requests</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Question</th>
+              <th>Complexity</th>
+              <th>Model</th>
+              <th class="num">Router</th>
+              <th class="num">Reasoner</th>
+              <th class="num">Checker</th>
+              <th class="num">Total</th>
+              <th class="center">Fixed</th>
+            </tr>
+          </thead>
+          <tbody id="pipeline-tbody">
+            <tr><td colspan="9" class="empty">Loading requests...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const MODEL_ORDER = ["groq", "deepseek-r1", "haiku"];
+
+    function escapeHtml(text) {
+      return String(text)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function modelRows(payload) {
+      const map = new Map((payload.averages || []).map((item) => [String(item.model_used || ""), item]));
+      return MODEL_ORDER.map((model) => map.get(model) || {
+        model_used: model,
+        count: 0,
+        avg_total: 0,
+        avg_router: 0,
+        avg_reasoner: 0,
+        avg_checker: 0,
+      });
+    }
+
+    function totalClass(totalMs) {
+      if (totalMs > 3000) return "bad";
+      if (totalMs >= 1500) return "warn";
+      return "ok";
+    }
+
+    function renderSummary(rows) {
+      document.getElementById("summary-grid").innerHTML = rows.map((item) => `
+        <div class="card">
+          <h3>${escapeHtml(item.model_used)}</h3>
+          <div class="stat-value">${Math.round(Number(item.avg_total || 0))}ms</div>
+          <div class="stat-meta">
+            Router ${Math.round(Number(item.avg_router || 0))}ms |
+            Reasoner ${Math.round(Number(item.avg_reasoner || 0))}ms |
+            Checker ${Math.round(Number(item.avg_checker || 0))}ms
+          </div>
+          <div class="stat-meta">${Number(item.count || 0).toLocaleString()} requests / 24h</div>
+        </div>
+      `).join("");
+    }
+
+    function renderChart(rows) {
+      const maxTotal = Math.max(...rows.map((item) => Number(item.avg_total || 0)), 1);
+      document.getElementById("chart-list").innerHTML = rows.map((item) => {
+        const router = Number(item.avg_router || 0);
+        const reasoner = Number(item.avg_reasoner || 0);
+        const checker = Number(item.avg_checker || 0);
+        const total = Number(item.avg_total || 0);
+        return `
+          <div class="chart-row">
+            <div class="chart-model">${escapeHtml(item.model_used)}</div>
+            <div class="chart-track" title="Router ${Math.round(router)}ms | Reasoner ${Math.round(reasoner)}ms | Checker ${Math.round(checker)}ms">
+              <div class="bar-router" style="width:${(router / maxTotal) * 100}%"></div>
+              <div class="bar-reasoner" style="width:${(reasoner / maxTotal) * 100}%"></div>
+              <div class="bar-checker" style="width:${(checker / maxTotal) * 100}%"></div>
+            </div>
+            <div class="chart-total">${Math.round(total)}ms avg</div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function renderTable(rows) {
+      const tbody = document.getElementById("pipeline-tbody");
+      if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="9" class="empty">ยังไม่มี pipeline requests</td></tr>';
+        return;
+      }
+      tbody.innerHTML = rows.map((item) => {
+        const totalMs = Number(item.total_ms || 0);
+        const createdAt = item.created_at ? new Date(String(item.created_at).replace(" ", "T")) : null;
+        const timeText = createdAt && !Number.isNaN(createdAt.getTime())
+          ? createdAt.toLocaleTimeString("th-TH")
+          : escapeHtml(item.created_at || "-");
+        return `
+          <tr>
+            <td>${timeText}</td>
+            <td class="question" title="${escapeHtml(item.question_preview || "-")}">${escapeHtml(item.question_preview || "-")}</td>
+            <td>${escapeHtml(item.complexity || "-")}</td>
+            <td><span class="model-pill">${escapeHtml(item.model_used || "-")}</span></td>
+            <td class="num">${Number(item.router_ms || 0)}ms</td>
+            <td class="num">${Number(item.reasoner_ms || 0)}ms</td>
+            <td class="num">${Number(item.checker_ms || 0)}ms</td>
+            <td class="num ${totalClass(totalMs)}">${totalMs}ms</td>
+            <td class="center">${item.was_fixed ? "🔧" : "✅"}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    async function loadPipeline() {
+      const response = await fetch("/admin/pipeline-metrics", { cache: "no-store" });
+      if (!response.ok) throw new Error("load failed");
+      const payload = await response.json();
+      const rows = modelRows(payload);
+      renderSummary(rows);
+      renderChart(rows);
+      renderTable(payload.recent || []);
+      document.getElementById("last-updated").textContent =
+        `Last updated: ${new Date().toLocaleTimeString("th-TH")}`;
+    }
+
+    async function refreshNow() {
+      try {
+        await loadPipeline();
+      } catch (error) {
+        document.getElementById("chart-list").innerHTML = '<div class="empty">โหลด pipeline metrics ไม่สำเร็จ</div>';
+        document.getElementById("pipeline-tbody").innerHTML = '<tr><td colspan="9" class="empty">โหลด recent requests ไม่สำเร็จ</td></tr>';
+      }
+    }
+
+    document.getElementById("refresh-btn").addEventListener("click", refreshNow);
+    setInterval(refreshNow, 30000);
+    refreshNow();
   </script>
 </body>
 </html>"""
@@ -6614,7 +6985,7 @@ async def admin_pipeline_metrics(request: Request):
                    datetime(created_at, '+7 hours') AS created_at
             FROM pipeline_metrics
             ORDER BY id DESC
-            LIMIT 50
+            LIMIT 100
             """
         )
         rows = await cur.fetchall()
@@ -6649,6 +7020,12 @@ async def admin_pipeline_metrics(request: Request):
             "distribution": [dict(row) for row in dist],
         }
     )
+
+
+@app.get("/admin/pipeline")
+async def admin_pipeline_page(request: Request):
+    await _verify_admin_session(request)
+    return build_pipeline_html()
 
 
 @app.get("/admin/otp")
