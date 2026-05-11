@@ -2482,13 +2482,13 @@ def build_admin_html(overview: dict) -> HTMLResponse:
 
     {errors_html}
 
-    <section id="api-status-section" style="background:#111;border:1px solid #1f2937;border-radius:12px;padding:20px;margin:16px 0">
+    <section id="api-status-section" style="background:#111;border:1px solid #1f2937;border-radius:12px;padding:20px;margin:16px 0;width:100%;box-sizing:border-box;overflow:hidden">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px">
         <span style="font-weight:600;font-size:0.95rem;color:#f9fafb">📡 API Status</span>
         <button onclick="refreshApiStatus()" style="font-size:12px;padding:4px 12px;background:#1a1a1a;border:1px solid #444;border-radius:6px;color:#aaa;cursor:pointer">↻ Refresh</button>
         <span id="api-status-time" style="font-size:11px;color:#666"></span>
       </div>
-      <div id="api-status-grid" style="display:flex;flex-direction:row;gap:12px;padding:16px 0;overflow-x:auto;flex-wrap:nowrap;scrollbar-width:thin;scrollbar-color:#444 #1a1a1a">
+      <div id="api-status-grid" style="display:flex;flex-direction:row;flex-wrap:nowrap;gap:12px;padding:16px 0 8px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:thin;scrollbar-color:#444 #1a1a1a">
         <span style="color:#555;font-size:0.85rem">Loading...</span>
       </div>
     </section>
