@@ -4,6 +4,9 @@ import time
 from app.core.ai import chat
 from app.core.database import get_db
 
+# Gemini free tier = 15 RPM → max 3 concurrent calls with buffer
+_gemini_sem = asyncio.Semaphore(3)
+
 TEST_QUESTIONS = [
     {"id": "it_01", "cat": "🏥 Hospital IT", "q": "สรุป risk 3 ข้อของการย้าย HIS ไป Cloud สำหรับผู้บริหาร"},
     {"id": "it_02", "cat": "🏥 Hospital IT", "q": "draft email ภาษาไทยสั้นๆ แจ้ง vendor PBX ว่า delivery ล่าช้า"},
@@ -31,14 +34,27 @@ SYSTEM = (
 async def _run_single(question: str, model: str) -> dict:
     start = time.time()
     try:
-        answer = await chat(
-            question,
-            system=SYSTEM,
-            agent=f"benchmark_{model}",
-            messages=[],
-            preferred_model=model,
-            strict_model=True,
-        )
+        if model == "gemini":
+            # Rate limit protection: max 3 concurrent + 2s delay between calls
+            async with _gemini_sem:
+                await asyncio.sleep(2)
+                answer = await chat(
+                    question,
+                    system=SYSTEM,
+                    agent=f"benchmark_{model}",
+                    messages=[],
+                    preferred_model=model,
+                    strict_model=True,
+                )
+        else:
+            answer = await chat(
+                question,
+                system=SYSTEM,
+                agent=f"benchmark_{model}",
+                messages=[],
+                preferred_model=model,
+                strict_model=True,
+            )
         return {
             "model": model,
             "answer": str(answer),
