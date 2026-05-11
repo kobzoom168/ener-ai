@@ -162,29 +162,75 @@ async def check_answer(
         return answer
 
 
+async def _save_pipeline_metric(meta: dict, question_preview: str) -> None:
+    try:
+        from app.core.database import get_db
+
+        async with get_db() as db:
+            await db.execute(
+                """
+                INSERT INTO pipeline_metrics
+                    (complexity, domain, model_used, router_ms, reasoner_ms,
+                     checker_ms, total_ms, was_fixed, question_preview)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    meta.get("complexity", "simple"),
+                    meta.get("domain", "chat"),
+                    meta.get("model_used", "groq"),
+                    int(meta.get("router_ms", 0) or 0),
+                    int(meta.get("reasoner_ms", 0) or 0),
+                    int(meta.get("checker_ms", 0) or 0),
+                    int(meta.get("total_ms", 0) or 0),
+                    int(bool(meta.get("was_fixed", False))),
+                    str(question_preview or "")[:100],
+                ),
+            )
+            await db.commit()
+    except Exception:
+        pass
+
+
 async def run_pipeline(
     text: str,
     history: list[dict],
     system_prompt: str,
 ) -> tuple[str, dict]:
-    start = time.time()
+    total_start = time.time()
 
+    t1 = time.time()
     route = await route_message(text)
+    router_ms = int((time.time() - t1) * 1000)
+
+    t2 = time.time()
     raw_answer = await reason(text, history, system_prompt, route)
+    reasoner_ms = int((time.time() - t2) * 1000)
+
+    t3 = time.time()
     final_answer = await check_answer(text, raw_answer, route)
+    checker_ms = int((time.time() - t3) * 1000)
+    total_ms = int((time.time() - total_start) * 1000)
+
+    model_used = (
+        "haiku"
+        if route.get("complexity") == "critical"
+        else "deepseek-r1"
+        if route.get("needs_thinking")
+        else "groq"
+    )
 
     metadata = {
         "complexity": route.get("complexity", "simple"),
         "domain": route.get("domain", "chat"),
-        "model_used": (
-            "haiku"
-            if route.get("complexity") == "critical"
-            else "deepseek-r1"
-            if route.get("needs_thinking")
-            else "groq"
-        ),
+        "model_used": model_used,
         "was_fixed": final_answer != raw_answer,
-        "elapsed_ms": int((time.time() - start) * 1000),
+        "router_ms": router_ms,
+        "reasoner_ms": reasoner_ms,
+        "checker_ms": checker_ms,
+        "total_ms": total_ms,
+        "elapsed_ms": total_ms,
     }
+
+    await _save_pipeline_metric(metadata, text[:100])
 
     return final_answer, metadata

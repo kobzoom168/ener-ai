@@ -225,6 +225,20 @@ async def init_db():
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS pipeline_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                complexity TEXT,
+                domain TEXT,
+                model_used TEXT,
+                router_ms INTEGER,
+                reasoner_ms INTEGER,
+                checker_ms INTEGER,
+                total_ms INTEGER,
+                was_fixed INTEGER DEFAULT 0,
+                question_preview TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE INDEX IF NOT EXISTS idx_agent_events_agent
                 ON agent_events(agent_name, result, created_at);
             CREATE INDEX IF NOT EXISTS idx_agent_events_tags

@@ -5765,9 +5765,53 @@ document.addEventListener('DOMContentLoaded', function() {
     container.innerHTML = '<div class="empty-state">Loading system info...</div>';
     try {
       const data = await api('/workspace/system/info');
+      const pipelineData = await api('/admin/pipeline-metrics');
       const stats = data.stats || {};
       const agents = data.agents || [];
       const scheduler = data.scheduler || [];
+      const averages = pipelineData.averages || [];
+      const recent = pipelineData.recent || [];
+      const statsHtml = averages.length
+        ? averages.map((item) => `
+            <div class="sys-card">
+              <div class="sys-label">🤖 ${escapeHtml(item.model_used || '-')}</div>
+              <div class="sys-value">${Math.round(Number(item.avg_total || 0))}ms</div>
+              <div style="font-size:12px;color:#666;margin-top:6px">
+                Router: ${Math.round(Number(item.avg_router || 0))}ms |
+                Reason: ${Math.round(Number(item.avg_reasoner || 0))}ms |
+                Check: ${Math.round(Number(item.avg_checker || 0))}ms
+              </div>
+              <div style="font-size:11px;color:#888">${Number(item.count || 0).toLocaleString()} requests</div>
+            </div>
+          `).join('')
+        : '<div class="empty-state">ยังไม่มี pipeline metrics ใน 24 ชั่วโมงล่าสุด</div>';
+      const rows = recent.length
+        ? recent.map((item) => {
+            const totalMs = Number(item.total_ms || 0);
+            const totalColor = totalMs > 3000 ? '#ef4444' : totalMs > 1500 ? '#f59e0b' : '#22c55e';
+            const timeLabel = item.created_at ? escapeHtml(String(item.created_at).split(' ')[1] || String(item.created_at)) : '-';
+            return `<tr style="border-bottom:1px solid #222;font-size:13px">
+              <td style="padding:8px;color:#888">${timeLabel}</td>
+              <td style="padding:8px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                ${escapeHtml(item.question_preview || '-')}
+              </td>
+              <td style="padding:8px">
+                <span style="background:#2a2a2a;padding:2px 8px;border-radius:12px;font-size:11px">
+                  ${escapeHtml(item.model_used || '-')}
+                </span>
+              </td>
+              <td style="padding:8px;text-align:right;color:#888">${Number(item.router_ms || 0)}ms</td>
+              <td style="padding:8px;text-align:right">${Number(item.reasoner_ms || 0)}ms</td>
+              <td style="padding:8px;text-align:right;color:#888">${Number(item.checker_ms || 0)}ms</td>
+              <td style="padding:8px;text-align:right;font-weight:600;color:${totalColor}">
+                ${totalMs}ms
+              </td>
+              <td style="padding:8px;text-align:center">
+                ${item.was_fixed ? '🔧' : '✅'}
+              </td>
+            </tr>`;
+          }).join('')
+        : '<tr><td colspan="8" class="empty-state" style="padding:12px 8px;">ยังไม่มี recent requests</td></tr>';
       container.innerHTML = `
         <div class="sys-grid">
           <div class="sys-card">
@@ -5804,6 +5848,24 @@ document.addEventListener('DOMContentLoaded', function() {
             </div>
           `).join('')}
         </div>
+        <h3 style="margin:24px 0 12px">⚡ Pipeline Response Times (24h)</h3>
+        <div id="pipeline-stats">${statsHtml}</div>
+        <h3 style="margin:24px 0 12px">📋 Recent Requests</h3>
+        <table id="pipeline-table" style="width:100%;border-collapse:collapse">
+          <thead>
+            <tr style="font-size:11px;color:#888;text-transform:uppercase">
+              <th style="padding:8px;text-align:left">Time</th>
+              <th style="padding:8px;text-align:left">Question</th>
+              <th style="padding:8px;text-align:left">Model</th>
+              <th style="padding:8px;text-align:right">Router</th>
+              <th style="padding:8px;text-align:right">Reasoner</th>
+              <th style="padding:8px;text-align:right">Checker</th>
+              <th style="padding:8px;text-align:right">Total</th>
+              <th style="padding:8px;text-align:center">Fixed?</th>
+            </tr>
+          </thead>
+          <tbody id="pipeline-tbody">${rows}</tbody>
+        </table>
         <h3 style="margin:24px 0 12px">📦 Agents (${Number(data.agent_count || 0).toLocaleString()})</h3>
         <div class="agent-chips">
           ${agents.map((agent) => `<span class="agent-chip">${escapeHtml(agent || '')}</span>`).join('')}
@@ -6538,6 +6600,55 @@ async def admin_config_page(request: Request):
     await _verify_admin_session(request)
     configs = await get_all_config()
     return build_admin_config_html(configs)
+
+
+@app.get("/admin/pipeline-metrics")
+async def admin_pipeline_metrics(request: Request):
+    await _verify_admin_session(request)
+    async with get_db() as db:
+        cur = await db.execute(
+            """
+            SELECT complexity, domain, model_used,
+                   router_ms, reasoner_ms, checker_ms, total_ms,
+                   was_fixed, question_preview,
+                   datetime(created_at, '+7 hours') AS created_at
+            FROM pipeline_metrics
+            ORDER BY id DESC
+            LIMIT 50
+            """
+        )
+        rows = await cur.fetchall()
+        cur2 = await db.execute(
+            """
+            SELECT model_used,
+                   COUNT(*) AS count,
+                   AVG(total_ms) AS avg_total,
+                   AVG(router_ms) AS avg_router,
+                   AVG(reasoner_ms) AS avg_reasoner,
+                   AVG(checker_ms) AS avg_checker
+            FROM pipeline_metrics
+            WHERE created_at > datetime('now', '-24 hours')
+            GROUP BY model_used
+            """
+        )
+        avgs = await cur2.fetchall()
+        cur3 = await db.execute(
+            """
+            SELECT complexity, COUNT(*) AS count
+            FROM pipeline_metrics
+            WHERE created_at > datetime('now', '-24 hours')
+            GROUP BY complexity
+            """
+        )
+        dist = await cur3.fetchall()
+
+    return JSONResponse(
+        {
+            "recent": [dict(row) for row in rows],
+            "averages": [dict(row) for row in avgs],
+            "distribution": [dict(row) for row in dist],
+        }
+    )
 
 
 @app.get("/admin/otp")
