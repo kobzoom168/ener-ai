@@ -23,9 +23,11 @@ _MODEL_LABELS = {
     "opus": "Claude Opus 4.7",
     "gemini-pro": "Gemini 2.0 Pro",
     "llama4": "Llama 4 Scout (Groq)",
-    "grok": "Grok 3 Mini (xAI)",
-    "deepseek-direct": "DeepSeek V3",
+    "grok": "Grok 4.3 (xAI)",
+    "deepseek-direct": "DeepSeek V4 Flash",
     "kimi": "Kimi K2 (Moonshot)",
+    "gpt-4o-mini": "GPT-4o Mini (OpenAI)",
+    "gpt-4o": "GPT-4o (OpenAI)",
 }
 _OLLAMA_MODEL_MAP = {
     "qwen3b": "qwen2.5:3b",
@@ -35,6 +37,7 @@ _VALID_MODELS = {
     "haiku", "groq", "gemini", "qwen3b", "qwen7b",
     "sonnet", "opus", "gemini-pro", "llama4",
     "grok", "deepseek-direct", "kimi",
+    "gpt-4o-mini", "gpt-4o",
 }
 _FALLBACK_SEQUENCE = ["groq", "haiku", "qwen3b"]
 
@@ -164,6 +167,8 @@ def get_model_availability() -> dict[str, bool]:
         "grok": bool(settings.xai_api_key),
         "deepseek-direct": bool(settings.deepseek_api_key),
         "kimi": bool(settings.moonshot_api_key),
+        "gpt-4o-mini": bool(settings.openai_api_key),
+        "gpt-4o": bool(settings.openai_api_key),
     }
 
 
@@ -527,7 +532,7 @@ async def _call_grok(
                     "Authorization": f"Bearer {settings.xai_api_key}",
                     "Content-Type": "application/json",
                 },
-                json={"model": "grok-3-mini", "messages": msgs, "max_tokens": 2048},
+                json={"model": "grok-4.3", "messages": msgs, "max_tokens": 2048},
                 timeout=30.0,
             )
             resp.raise_for_status()
@@ -569,7 +574,7 @@ async def _call_deepseek_direct(
                     "Authorization": f"Bearer {settings.deepseek_api_key}",
                     "Content-Type": "application/json",
                 },
-                json={"model": "deepseek-chat", "messages": msgs, "max_tokens": 2048},
+                json={"model": "deepseek-v4-flash", "messages": msgs, "max_tokens": 2048},
                 timeout=30.0,
             )
             resp.raise_for_status()
@@ -611,7 +616,7 @@ async def _call_kimi(
                     "Authorization": f"Bearer {settings.moonshot_api_key}",
                     "Content-Type": "application/json",
                 },
-                json={"model": "moonshot-v1-8k", "messages": msgs, "max_tokens": 2048},
+                json={"model": "kimi-k2-5", "messages": msgs, "max_tokens": 2048},
                 timeout=30.0,
             )
             resp.raise_for_status()
@@ -625,6 +630,49 @@ async def _call_kimi(
     except Exception:
         await _log_ai_run(
             agent, "kimi", 0, 0,
+            int((time.perf_counter() - started_at) * 1000), False,
+        )
+        raise
+
+
+async def _call_openai(
+    prompt: str,
+    system: str,
+    messages: list[dict[str, str]] | None,
+    agent: str,
+    model: str = "gpt-4o-mini",
+) -> str:
+    """GPT-4o / GPT-4o Mini via OpenAI API."""
+    if not settings.openai_api_key:
+        raise RuntimeError("OpenAI API key not set")
+    started_at = time.perf_counter()
+    try:
+        msgs = [{"role": "system", "content": system or ""}]
+        if messages:
+            msgs += [{"role": m["role"], "content": m["content"]}
+                     for m in messages[-20:]]
+        msgs.append({"role": "user", "content": prompt})
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.openai_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={"model": model, "messages": msgs, "max_tokens": 2048},
+                timeout=30.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        text = data["choices"][0]["message"]["content"] or ""
+        await _log_ai_run(
+            agent, model, 0, 0,
+            int((time.perf_counter() - started_at) * 1000), True,
+        )
+        return text
+    except Exception:
+        await _log_ai_run(
+            agent, model, 0, 0,
             int((time.perf_counter() - started_at) * 1000), False,
         )
         raise
@@ -1057,6 +1105,10 @@ async def chat(
                 return await _call_deepseek_direct(prompt, system, messages, agent)
             if candidate == "kimi":
                 return await _call_kimi(prompt, system, messages, agent)
+            if candidate == "gpt-4o-mini":
+                return await _call_openai(prompt, system, messages, agent, "gpt-4o-mini")
+            if candidate == "gpt-4o":
+                return await _call_openai(prompt, system, messages, agent, "gpt-4o")
         except Exception:
             continue
 

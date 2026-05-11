@@ -32,6 +32,8 @@ if settings.deepseek_api_key:
     MODELS += ["deepseek-direct"]
 if settings.moonshot_api_key:
     MODELS += ["kimi"]
+if settings.openai_api_key:
+    MODELS += ["gpt-4o-mini"]
 
 SYSTEM = (
     "คุณเป็น Ener-AI ผู้ช่วยส่วนตัว ตอบเป็นภาษาไทย กระชับ\n"

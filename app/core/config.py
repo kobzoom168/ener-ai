@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     xai_api_key: str = ""
     deepseek_api_key: str = ""
     moonshot_api_key: str = ""
+    openai_api_key: str = ""
 
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "qwen2.5:7b"

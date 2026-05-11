@@ -324,6 +324,7 @@ async def init_db():
                 ("xai_api_key", "", "Grok xAI API Key (console.x.ai)", 1),
                 ("deepseek_api_key", "", "DeepSeek API Key (platform.deepseek.com)", 1),
                 ("moonshot_api_key", "", "Kimi Moonshot API Key (platform.moonshot.cn)", 1),
+                ("openai_api_key", "", "OpenAI API Key (platform.openai.com)", 1),
             ],
         )
         await db.commit()
