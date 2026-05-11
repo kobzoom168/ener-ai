@@ -217,6 +217,14 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS app_config (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL DEFAULT '',
+                description TEXT DEFAULT '',
+                is_secret INTEGER DEFAULT 1,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE INDEX IF NOT EXISTS idx_agent_events_agent
                 ON agent_events(agent_name, result, created_at);
             CREATE INDEX IF NOT EXISTS idx_agent_events_tags
@@ -272,6 +280,20 @@ async def init_db():
              '',
              5);
         """)
+        await db.executemany(
+            """
+            INSERT OR IGNORE INTO app_config (key, value, description, is_secret)
+            VALUES (?, ?, ?, ?)
+            """,
+            [
+                ("line_channel_access_token", "", "LINE Messaging API Channel Access Token", 1),
+                ("line_to", "", "LINE User/Group ID to send messages (U... or C...)", 0),
+                ("active_model", "auto", "AI model: auto, haiku, groq, gemini, qwen3b, qwen7b", 0),
+                ("standup_auto_send_line", "false", "Auto-send standup to LINE at 07:30", 0),
+                ("standup_mention", "@Noom", "LINE mention tag in standup report", 0),
+                ("telegram_chat_id", str(settings.telegram_chat_id or "").strip(), "Owner Telegram Chat ID", 0),
+            ],
+        )
         await db.commit()
 
 
@@ -303,3 +325,64 @@ async def get_system_stats() -> dict:
         except Exception:
             stats["open_tasks"] = 0
     return stats
+
+
+async def get_config(key: str, default: str = "") -> str:
+    async with get_db() as db:
+        cur = await db.execute(
+            "SELECT value FROM app_config WHERE key = ?",
+            (key,),
+        )
+        row = await cur.fetchone()
+
+        if key == "active_model":
+            memory_cur = await db.execute(
+                "SELECT value FROM memories WHERE key = ? LIMIT 1",
+                ("active_model",),
+            )
+            memory_row = await memory_cur.fetchone()
+            if memory_row and memory_row["value"]:
+                return str(memory_row["value"])
+
+    return str(row["value"]) if row and row["value"] else default
+
+
+async def set_config(key: str, value: str) -> None:
+    normalized_value = str(value or "")
+    async with get_db() as db:
+        await db.execute(
+            """
+            INSERT INTO app_config (key, value, updated_at)
+            VALUES (?, ?, datetime('now'))
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = excluded.updated_at
+            """,
+            (key, normalized_value),
+        )
+        if key == "active_model":
+            await db.execute(
+                """
+                INSERT INTO memories (key, value, tag)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    tag = excluded.tag,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                ("active_model", normalized_value, "system"),
+            )
+        await db.commit()
+
+
+async def get_all_config() -> list[dict]:
+    async with get_db() as db:
+        cur = await db.execute(
+            """
+            SELECT key, value, description, is_secret, updated_at
+            FROM app_config
+            ORDER BY key
+            """
+        )
+        rows = await cur.fetchall()
+    return [dict(row) for row in rows]

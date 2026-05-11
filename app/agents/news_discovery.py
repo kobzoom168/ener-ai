@@ -114,7 +114,7 @@ async def _save_pending_sources(sources: list[dict]) -> None:
 
 
 @log_agent_run("NewsDiscoveryAgent", triggered_by="scheduler")
-async def discover_new_sources() -> str:
+async def discover_new_sources(structured: bool = False) -> str | list[dict]:
     from app.core.ai import _gemini_grounded_search
 
     known_sources = await _existing_sources()
@@ -191,6 +191,18 @@ async def discover_new_sources() -> str:
 
     await _save_pending_sources(unique)
 
+    if structured:
+        return [
+            {
+                "domain": suggestion["domain"],
+                "rss": str(suggestion.get("rss_url") or "").strip(),
+                "description": str(suggestion.get("reason") or "").strip(),
+                "score": _safe_int(suggestion.get("quality_score"), 0),
+                "category": str(suggestion.get("category") or "general").strip() or "general",
+            }
+            for suggestion in unique
+        ]
+
     category_emoji = {
         "ai_tools": "🤖",
         "security": "🔐",
@@ -206,10 +218,9 @@ async def discover_new_sources() -> str:
             f"{index}. {emoji} {suggestion['domain']}\n"
             f"   {suggestion['reason']}\n"
             f"   คะแนน: {'⭐' * stars}\n"
-            f"   RSS: {suggestion.get('rss_url', 'ไม่มีข้อมูล')}\n"
-            f"   /approve_source {suggestion['domain']}"
+            f"   RSS: {suggestion.get('rss_url', 'ไม่มีข้อมูล')}"
         )
-    lines.append("\nพิมพ์ /approve_source <domain> เพื่อเพิ่มเข้าระบบ")
+    lines.append("\nพิมพ์ /pending_sources เพื่อ approve ผ่านปุ่มได้เลย")
 
     result_text = "\n".join(lines)
     try:
@@ -224,6 +235,39 @@ async def discover_new_sources() -> str:
     except Exception:
         pass
     return result_text
+
+
+async def get_pending_sources_data(limit: int = 10) -> list[dict]:
+    async with get_db() as db:
+        cursor = await db.execute(
+            """
+            SELECT key, value, updated_at
+            FROM memories
+            WHERE tag = 'pending_news_source'
+            ORDER BY updated_at DESC
+            """,
+        )
+        rows = await cursor.fetchall()
+
+    items: list[dict] = []
+    for row in rows[: max(1, int(limit))]:
+        try:
+            data = json.loads(row["value"])
+        except Exception:
+            continue
+        domain = _normalize_domain(data.get("domain"))
+        if not domain:
+            continue
+        items.append(
+            {
+                "domain": domain,
+                "rss": str(data.get("rss_url") or "").strip(),
+                "description": str(data.get("reason") or "-").strip() or "-",
+                "score": _safe_int(data.get("quality_score"), 0),
+                "category": str(data.get("category") or "general").strip() or "general",
+            }
+        )
+    return items
 
 
 @log_agent_run("NewsDiscoveryAgent")
@@ -290,35 +334,18 @@ async def approve_source(domain: str) -> str:
 
 @log_agent_run("NewsDiscoveryAgent")
 async def list_pending_sources() -> str:
-    async with get_db() as db:
-        cursor = await db.execute(
-            """
-            SELECT key, value, updated_at
-            FROM memories
-            WHERE tag = 'pending_news_source'
-            ORDER BY updated_at DESC
-            """
-        )
-        rows = await cursor.fetchall()
-
-    if not rows:
+    items = await get_pending_sources_data(limit=10)
+    if not items:
         return "📭 ไม่มีแหล่งข่าวที่รอ approve"
 
     lines = ["📭 Pending news sources", ""]
-    for index, row in enumerate(rows[:10], start=1):
-        try:
-            data = json.loads(row["value"])
-        except Exception:
-            continue
-        domain = _normalize_domain(data.get("domain"))
-        score = _safe_int(data.get("quality_score"), 0)
+    for index, item in enumerate(items, start=1):
         lines.append(
-            f"{index}. {domain}\n"
-            f"   หมวด: {data.get('category', 'general')}\n"
-            f"   เหตุผล: {data.get('reason', '-')}\n"
-            f"   คะแนน: {score}/10\n"
-            f"   RSS: {data.get('rss_url', '-')}\n"
-            f"   /approve_source {domain}"
+            f"{index}. {item['domain']}\n"
+            f"   หมวด: {item.get('category', 'general')}\n"
+            f"   เหตุผล: {item.get('description', '-')}\n"
+            f"   คะแนน: {item.get('score', 0)}/10\n"
+            f"   RSS: {item.get('rss', '-')}"
         )
     return "\n".join(lines)
 

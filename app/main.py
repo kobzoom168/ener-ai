@@ -25,7 +25,7 @@ from app.bot.router import build_application
 from app.core.ai import get_active_model, get_model_availability, get_model_label
 from app.core.agents import COMMAND_AGENT_MAP, SCHEDULER_AGENTS
 from app.core.config import settings
-from app.core.database import get_db, init_db
+from app.core.database import get_all_config, get_config, get_db, init_db, set_config
 from app.core.terminal import handle_terminal_ws
 from app.scheduler import build_scheduler
 
@@ -555,6 +555,14 @@ async def _require_admin(request: Request):
         raise HTTPException(status_code=401, detail="Session expired")
     await _validate_admin_basic_auth(request)
     raise HTTPException(status_code=307, detail="OTP Required", headers={"Location": "/admin/otp"})
+
+
+async def _verify_admin_session(request: Request):
+    if await _is_valid_session(request):
+        return
+    if request.method.upper() == "GET":
+        raise HTTPException(status_code=307, detail="Session expired", headers={"Location": "/admin"})
+    raise HTTPException(status_code=401, detail="Session expired")
 
 
 def _resolve_upload_dir(raw_path: str) -> Path:
@@ -2395,6 +2403,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       <a class="nav-link active" href="/admin">Overview</a>
       <a class="nav-link" href="/admin/metrics">Metrics</a>
       <a class="nav-link" href="/admin/logs">Logs</a>
+      <a class="nav-link" href="/admin/config">⚙️ Config</a>
       <a class="nav-link" href="/admin/terminal" target="_blank" rel="noopener noreferrer">💻 Terminal</a>
       <button class="edit-btn" type="button" onclick="fetch('/admin/logout',{{method:'POST'}}).then(() => location.reload())">🚪 Logout</button>
       <button id="edit-btn" class="edit-btn" type="button" onclick="enterEditMode()">✏️ Edit</button>
@@ -3169,6 +3178,126 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       sel.addEventListener('change', apply);
       apply();
     }})();
+  </script>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
+
+def build_admin_config_html(configs: list[dict]) -> HTMLResponse:
+    rows = ""
+    for config in configs:
+        key = str(config.get("key", ""))
+        value = str(config.get("value", ""))
+        description = str(config.get("description", ""))
+        is_secret = bool(config.get("is_secret"))
+        rows += f"""
+        <tr>
+          <td class="cfg-key">{escape(key)}</td>
+          <td class="cfg-desc">{escape(description)}</td>
+          <td>
+            <input
+              type="{'password' if is_secret else 'text'}"
+              class="cfg-input"
+              id="cfg-{escape(key, quote=True)}"
+              value="{escape(value, quote=True)}"
+              placeholder="{'(ไม่ได้ตั้งค่า)' if not value else ''}">
+          </td>
+          <td>
+            <button class="cfg-save-btn" onclick='saveConfig({json.dumps(key, ensure_ascii=False)})'>Save</button>
+          </td>
+        </tr>"""
+
+    html = f"""<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ener-AI Config</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    body {{ font-family: Inter, sans-serif; background: #0d0d0d; color: #e5e5e5; margin: 0; padding: 24px; }}
+    h1 {{ font-size: 22px; margin-bottom: 4px; }}
+    .subtitle {{ color: #888; font-size: 14px; margin-bottom: 24px; }}
+    .back-btn {{ display:inline-block; margin-bottom:20px; padding:8px 16px; background:#1a1a1a; color:#e5e5e5; border-radius:8px; text-decoration:none; font-size:14px; }}
+    table {{ width: 100%; border-collapse: collapse; background: #141414; border-radius: 12px; overflow: hidden; }}
+    th {{ background: #1a1a1a; padding: 12px 16px; text-align: left; font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: 0.05em; }}
+    td {{ padding: 12px 16px; border-bottom: 1px solid #222; vertical-align: middle; }}
+    .cfg-key {{ font-family: monospace; color: #7c3aed; font-size: 13px; min-width: 200px; }}
+    .cfg-desc {{ color: #888; font-size: 13px; max-width: 250px; }}
+    .cfg-input {{ background: #222; border: 1px solid #333; border-radius: 6px; padding: 8px 12px; color: #e5e5e5; font-size: 14px; width: 100%; box-sizing: border-box; font-family: inherit; }}
+    .cfg-save-btn {{ background: #7c3aed; color: white; border: none; border-radius: 6px; padding: 8px 16px; cursor: pointer; font-size: 13px; font-weight: 500; white-space: nowrap; }}
+    .cfg-save-btn:hover {{ background: #6d28d9; }}
+    .test-section {{ margin-top: 24px; background: #141414; border-radius: 12px; padding: 20px; }}
+    .test-btn {{ background: #059669; color: white; border: none; border-radius: 8px; padding: 10px 20px; cursor: pointer; font-size: 14px; font-weight: 500; margin-right: 8px; }}
+    #test-result {{ margin-top: 12px; padding: 10px; border-radius: 6px; font-size: 14px; display: none; }}
+    .toast {{ position:fixed; bottom:24px; right:24px; background:#333; color:white; padding:10px 20px; border-radius:8px; font-size:14px; display:none; z-index:999; }}
+  </style>
+</head>
+<body>
+  <a href="/admin" class="back-btn">← กลับ Admin</a>
+  <h1>⚙️ Config Manager</h1>
+  <p class="subtitle">แก้ไข API keys และ settings ทั้งหมดได้จากที่นี่</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Key</th>
+        <th>Description</th>
+        <th>Value</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>{rows}</tbody>
+  </table>
+
+  <div class="test-section">
+    <h3 style="margin:0 0 12px">🧪 Test Connections</h3>
+    <button class="test-btn" onclick="testLine()">📱 ทดสอบ LINE</button>
+    <div id="test-result"></div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    async function saveConfig(key) {{
+      const input = document.getElementById('cfg-' + key);
+      const value = input.value;
+      const resp = await fetch('/admin/config/update', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        credentials: 'same-origin',
+        body: JSON.stringify({{key, value}})
+      }});
+      const data = await resp.json();
+      showToast(data.ok ? '✅ บันทึกแล้ว: ' + key : '❌ บันทึกไม่ได้');
+    }}
+
+    async function testLine() {{
+      const result = document.getElementById('test-result');
+      result.style.display = 'block';
+      result.style.background = '#1a1a1a';
+      result.textContent = 'กำลังทดสอบ...';
+      const resp = await fetch('/admin/config/test-line', {{method: 'POST', credentials: 'same-origin'}});
+      const data = await resp.json();
+      result.style.background = data.ok ? '#052e16' : '#2d0000';
+      result.textContent = data.ok ? '✅ ' + data.message : '❌ ' + data.message;
+    }}
+
+    function showToast(msg) {{
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.style.display = 'block';
+      setTimeout(() => t.style.display = 'none', 3000);
+    }}
+
+    document.querySelectorAll('.cfg-input').forEach((input) => {{
+      input.addEventListener('keydown', (e) => {{
+        if (e.key === 'Enter') {{
+          saveConfig(input.id.replace('cfg-', ''));
+        }}
+      }});
+    }});
   </script>
 </body>
 </html>"""
@@ -6404,6 +6533,13 @@ async def admin_dashboard(request: Request):
     return build_admin_html(await _load_admin_overview())
 
 
+@app.get("/admin/config")
+async def admin_config_page(request: Request):
+    await _verify_admin_session(request)
+    configs = await get_all_config()
+    return build_admin_config_html(configs)
+
+
 @app.get("/admin/otp")
 async def otp_page(request: Request):
     if await _is_valid_session(request):
@@ -6820,6 +6956,46 @@ async def logout(request: Request):
     response = RedirectResponse("/admin", status_code=303)
     response.delete_cookie("admin_session")
     return response
+
+
+@app.post("/admin/config/update")
+async def admin_config_update(request: Request):
+    await _verify_admin_session(request)
+    body = await request.json()
+    key = str(body.get("key", "")).strip()
+    value = str(body.get("value", "")).strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="key required")
+    if key == "active_model":
+        if value not in {"auto", "haiku", "groq", "gemini", "qwen3b", "qwen7b"}:
+            raise HTTPException(status_code=400, detail="active_model ไม่ถูกต้อง")
+        if value == "haiku" and not settings.anthropic_api_key:
+            raise HTTPException(status_code=400, detail="Claude Haiku ยังไม่มี key")
+        if value == "groq" and not settings.groq_api_key:
+            raise HTTPException(status_code=400, detail="Groq ยังไม่มี key")
+        if value == "gemini" and not settings.gemini_api_key:
+            raise HTTPException(status_code=400, detail="Gemini ยังไม่มี key")
+    await set_config(key, value)
+    async with get_db() as db:
+        await db.execute(
+            "INSERT INTO audit_logs (action, details) VALUES (?, ?)",
+            ("admin_config_updated", f"{key} updated"),
+        )
+        await db.commit()
+    if key == "active_model" and value != "auto":
+        import asyncio as _asyncio
+
+        _asyncio.create_task(_generate_model_handoff(value))
+    return JSONResponse({"ok": True})
+
+
+@app.post("/admin/config/test-line")
+async def admin_test_line(request: Request):
+    await _verify_admin_session(request)
+    from app.agents.standup_agent import send_to_line
+
+    ok, msg = await send_to_line("🧪 ทดสอบการส่ง LINE จาก Ener-AI")
+    return JSONResponse({"ok": ok, "message": msg})
 
 
 @app.get("/admin/metrics")
@@ -7311,18 +7487,8 @@ async def admin_switch_model(request: Request):
     if model == "gemini" and not settings.gemini_api_key:
         raise HTTPException(status_code=400, detail="Gemini ยังไม่มี key")
 
+    await set_config("active_model", model)
     async with get_db() as db:
-        await db.execute(
-            """
-            INSERT INTO memories (key, value, tag)
-            VALUES (?, ?, ?)
-            ON CONFLICT(key) DO UPDATE SET
-                value = excluded.value,
-                tag = excluded.tag,
-                updated_at = CURRENT_TIMESTAMP
-            """,
-            ("active_model", model, "system"),
-        )
         await db.execute(
             "INSERT INTO audit_logs (action, details) VALUES (?, ?)",
             ("admin_model_switched", f"model={model}"),

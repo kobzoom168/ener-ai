@@ -9,7 +9,7 @@ from telegram import Bot
 from app.agents import briefing_agent, log_keeper, memory_curator, memory_keeper, monitor_agent, news, news_discovery, session_agent, standup_agent, summary
 from app.core.agents import log_agent_run
 from app.core.config import settings
-from app.core.database import get_db
+from app.core.database import get_config, get_db
 from app.core.event_log import prune_old_events
 
 _BANGKOK = ZoneInfo("Asia/Bangkok")
@@ -111,8 +111,17 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
         await _send_scheduled_message(bot, message, "scheduled_agent_health_sent")
 
     async def send_standup():
-        message = await standup_agent.generate_standup()
-        await _send_scheduled_message(bot, message, "scheduled_standup_sent")
+        report = await standup_agent.generate_standup()
+        telegram_chat_id = await get_config("telegram_chat_id", str(settings.telegram_chat_id or "").strip())
+        await bot.send_message(chat_id=telegram_chat_id, text=report, parse_mode=None)
+        await _log_audit("scheduled_standup_sent", f"chat_id={telegram_chat_id}")
+
+        auto_send = await get_config("standup_auto_send_line", "false")
+        if auto_send.lower() == "true":
+            ok, msg = await standup_agent.send_to_line(report)
+            status = f"📱 LINE: {'✅ ส่งแล้ว' if ok else '⚠️ ' + msg}"
+            await bot.send_message(chat_id=telegram_chat_id, text=status, parse_mode=None)
+            await _log_audit("scheduled_standup_line_sent", status)
 
     async def send_news_discovery():
         message = await news_discovery.discover_new_sources(_agent_triggered_by="scheduler")

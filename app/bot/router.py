@@ -15,8 +15,8 @@ from telegram.ext import (
 )
 from app.agents import github_agent, gmail_agent, log_keeper, memory_curator, memory_keeper
 from app.agents.monitor_agent import cmd_errors, cmd_logs, cmd_server, cmd_status
-from app.agents.news_discovery import approve_source, list_active_sources, list_pending_sources
-from app.agents.standup_agent import generate_standup, parse_and_update_from_chat
+from app.agents.news_discovery import approve_source, get_pending_sources_data, list_active_sources
+from app.agents.standup_agent import generate_standup, parse_and_update_from_chat, send_to_line
 from app.agents.tarot_agent import read_cards, read_with_image
 from app.agents.vision_agent import (
     analyze_image as vision_analyze,
@@ -615,11 +615,72 @@ async def handle_approve_source(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await _reply(update, result)
 
 
+async def send_discovery_results(update: Update, sources: list[dict]):
+    message = update.message
+    if not message:
+        return
+    for src in sources[:5]:
+        domain = str(src.get("domain", "")).strip()
+        desc = str(src.get("description", "")).strip() or "-"
+        rss = str(src.get("rss", "")).strip() or "-"
+        score = max(0, min(int(src.get("score", 0) or 0), 10))
+        stars = "⭐" * score if score else "-"
+
+        text = (
+            f"🌐 {domain}\n"
+            f"{desc}\n"
+            f"คะแนน: {stars}\n"
+            f"RSS: {rss}"
+        )
+
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Approve", callback_data=f"approve:{domain}"),
+            InlineKeyboardButton("❌ Skip", callback_data=f"skip:{domain}"),
+        ]])
+
+        await message.reply_text(
+            text,
+            reply_markup=keyboard,
+            parse_mode=None,
+        )
+
+
+async def handle_approve_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not query:
+        return
+    await query.answer()
+
+    data = str(query.data or "")
+    parts = data.split(":", 1)
+    action = parts[0] if parts else ""
+    domain = parts[1] if len(parts) > 1 else ""
+
+    if action == "approve":
+        result = await approve_source(domain, _agent_triggered_by="user")
+        await query.edit_message_reply_markup(reply_markup=None)
+        await query.edit_message_text(
+            f"{query.message.text}\n\n{result}",
+            parse_mode=None,
+        )
+        return
+
+    if action == "skip":
+        await query.edit_message_reply_markup(reply_markup=None)
+        await query.edit_message_text(
+            f"{query.message.text}\n\n❌ Skipped",
+            parse_mode=None,
+        )
+
+
 async def handle_pending_sources(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
-    result = await list_pending_sources(_agent_triggered_by="user")
-    await _reply(update, result)
+    sources = await get_pending_sources_data(limit=10)
+    if not sources:
+        await _reply(update, "📭 ไม่มีแหล่งข่าวที่รอ approve", enable_tts=False)
+        return
+    await send_discovery_results(update, sources)
 
 
 async def handle_list_sources(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -743,7 +804,8 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/task — สร้าง task (!! = high priority)\n"
         "/tasks — ดู task ทั้งหมด\n"
         "/done — ปิด task\n\n"
-        "/standup — สร้าง daily standup report\n\n"
+        "/standup — สร้าง daily standup report\n"
+        "/standup_line — ส่ง standup เข้า LINE group\n\n"
         "**🧠 คิด & วิเคราะห์**\n"
         "/think — ถกไอเดีย 3 รอบ\n"
         "/brainstorm — เหมือน /think\n"
@@ -812,8 +874,32 @@ async def cmd_week(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_standup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
+    message = update.message
+    if not message:
+        return
+    await message.reply_text("⏳ กำลัง generate standup...", parse_mode=None)
+    try:
+        report = await generate_standup()
+        if len(report) <= 4096:
+            await message.reply_text(report, parse_mode=None)
+            return
+        chunks = [report[i:i + 4000] for i in range(0, len(report), 4000)]
+        for chunk in chunks:
+            await message.reply_text(chunk, parse_mode=None)
+    except Exception as exc:
+        await message.reply_text(f"⚠️ เกิดข้อผิดพลาด: {exc}", parse_mode=None)
+
+
+async def cmd_standup_line(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+    await update.message.reply_text("กำลังส่ง standup ไป LINE...", parse_mode=None)
     report = await generate_standup()
-    await _reply(update, report, enable_tts=False)
+    ok, msg = await send_to_line(report)
+    if ok:
+        await update.message.reply_text("✅ ส่ง standup เข้า LINE group แล้วครับกบ", parse_mode=None)
+    else:
+        await update.message.reply_text(f"⚠️ ส่งไม่ได้: {msg}", parse_mode=None)
 
 
 async def msg_fallback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -870,10 +956,12 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("news", cmd_news))
     app.add_handler(CommandHandler("week", cmd_week))
     app.add_handler(CommandHandler("standup", cmd_standup))
+    app.add_handler(CommandHandler("standup_line", cmd_standup_line))
     app.add_handler(CommandHandler("cost", cmd_cost))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("h", cmd_help))
     app.add_handler(CommandHandler("start", cmd_help))
+    app.add_handler(CallbackQueryHandler(handle_approve_callback, pattern="^(approve|skip):"))
     app.add_handler(CallbackQueryHandler(handle_email_callback, pattern="^email_"))
     app.add_handler(CallbackQueryHandler(handle_tts_callback, pattern="^tts:"))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))

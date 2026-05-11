@@ -2,11 +2,11 @@ from datetime import datetime, timedelta
 import re
 from zoneinfo import ZoneInfo
 
-from app.core.database import get_db
+from app.core.database import get_config, get_db
 
 _BKK = ZoneInfo("Asia/Bangkok")
 
-STANDUP_TEMPLATE = """@Noom
+STANDUP_TEMPLATE = """{mention}
 List Today {date_range}
 ##################################
 {date_th}
@@ -50,6 +50,7 @@ def _format_project(p: dict, idx: int) -> str:
 
 
 async def generate_standup() -> str:
+    mention = await get_config("standup_mention", "@Noom")
     now = datetime.now(_BKK)
     weekday = now.weekday()
     monday = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=weekday)
@@ -85,6 +86,7 @@ async def generate_standup() -> str:
     today_section = "\n".join(today_section_items).strip() or "-"
 
     return STANDUP_TEMPLATE.format(
+        mention=mention or "@Noom",
         date_range=date_range,
         date_th=date_th,
         problems="-",
@@ -93,6 +95,36 @@ async def generate_standup() -> str:
         today_date=today_date,
         today_section=today_section,
     )
+
+
+async def send_to_line(message: str) -> tuple[bool, str]:
+    """Send to LINE group via Messaging API push endpoint."""
+    token = await get_config("line_channel_access_token")
+    line_to = await get_config("line_to")
+    if not token or not line_to:
+        return False, "ยังไม่ได้ตั้งค่า LINE token หรือ Group ID"
+
+    import httpx
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                "https://api.line.me/v2/bot/message/push",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "to": line_to,
+                    "messages": [{"type": "text", "text": str(message or "")}],
+                },
+                timeout=15.0,
+            )
+        if resp.status_code == 200:
+            return True, "ส่งสำเร็จ"
+        return False, f"LINE API error {resp.status_code}: {resp.text[:200]}"
+    except Exception as exc:
+        return False, str(exc)
 
 
 async def list_projects() -> list[dict]:
