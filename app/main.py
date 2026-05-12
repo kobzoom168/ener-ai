@@ -6705,8 +6705,8 @@ document.addEventListener('DOMContentLoaded', function() {
       const d = await res.json();
       _codeFolderData = d;
       const summary = d.files.map(f =>
-        `# ${f.path} (${f.lines} lines)\n${f.preview}\n${'─'.repeat(60)}`
-      ).join('\n\n');
+        '# ' + f.path + ' (' + f.lines + ' lines)\\n' + f.preview + '\\n' + '='.repeat(60)
+      ).join('\\n\\n');
       if (viewer) viewer.textContent = summary || '(no .py files found)';
       if (info) info.textContent = `📁 ${folderPath} · ${d.file_count} files · ${d.total_lines} lines total`;
       const msgs = document.getElementById('code-chat-messages');
