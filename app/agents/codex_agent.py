@@ -13,10 +13,7 @@ async def run_codex(task: str, directory: str = "/root/ener-ai") -> dict:
 
     try:
         proc = await asyncio.create_subprocess_exec(
-            "codex",
-            "--quiet",
-            "--approval-policy", "auto-edit",
-            task,
+            "codex", "exec", task,
             cwd=directory,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -28,9 +25,12 @@ async def run_codex(task: str, directory: str = "/root/ener-ai") -> dict:
         )
         output = stdout.decode("utf-8", errors="replace")
         error = stderr.decode("utf-8", errors="replace")
+        # Extract clean answer — last non-empty line or full output
+        lines = [l for l in output.splitlines() if l.strip()]
+        clean = "\n".join(lines) if lines else error
         return {
             "ok": proc.returncode == 0,
-            "output": output or error,
+            "output": clean,
             "returncode": proc.returncode,
         }
     except asyncio.TimeoutError:
