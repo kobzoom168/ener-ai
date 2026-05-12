@@ -8,7 +8,7 @@ import string
 import tempfile
 from pathlib import Path
 
-PROJECT_ROOT = Path("/app").resolve()
+PROJECT_ROOT = Path("/root/ener-ai").resolve()
 ALLOWED_WRITE_PATHS = ["app/", "tests/"]
 ALLOWED_TOP_FILES = {"Dockerfile", "docker-compose.yml", "requirements.txt"}
 DENIED_PARTS = {".git", ".env", "data", "backups", "__pycache__"}

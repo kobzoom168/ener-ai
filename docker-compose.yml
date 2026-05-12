@@ -7,6 +7,7 @@ services:
       - ./data:/app/data
       - ./backups:/app/backups
       - /root/.codex:/root/.codex
+      - /root/ener-ai:/root/ener-ai
     env_file:
       - .env
     restart: unless-stopped
