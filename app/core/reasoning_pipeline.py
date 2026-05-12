@@ -121,7 +121,7 @@ def route_fast(text: str, routing: dict[str, str] | None = None) -> dict:
         return {
             "complexity": "critical",
             "domain": "code_agent",
-            "model": "haiku",
+            "model": r.get("code_agent", "haiku"),
             "tools": ["read_code_file", "propose_code_change",
                       "approve_code_change", "deploy_code"],
             "needs_check": False,

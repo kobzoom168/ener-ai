@@ -378,6 +378,7 @@ async def init_db():
                 ("brainstorm",      "deepseek-direct", "Brainstorm / แผน / Strategy"),
                 ("critical",        "sonnet",          "ตัดสินใจสำคัญ"),
                 ("system",          "groq",            "ระบบ / Code introspection"),
+                ("code_agent",      "haiku",           "Code Agent / แก้ไฟล์จริง"),
             ],
         )
         await db.commit()
