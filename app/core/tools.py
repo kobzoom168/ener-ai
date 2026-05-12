@@ -239,25 +239,44 @@ TOOLS = [
     },
     {
         "name": "propose_code_change",
-        "description": "เสนอการแก้ไข code พร้อม diff ให้ user approve ก่อน apply จริง ใช้เมื่อต้องการเพิ่ม/แก้ feature",
+        "description": "เสนอการแก้ไข code ด้วย patch operations ให้ user approve ก่อน apply ใช้เมื่อต้องการเพิ่ม/แก้ code จริง",
         "input_schema": {
             "type": "object",
             "properties": {
-                "feature_request": {"type": "string", "description": "สิ่งที่จะทำ"},
-                "files": {
+                "feature_request": {
+                    "type": "string",
+                    "description": "สิ่งที่จะทำ อธิบายสั้นๆ",
+                },
+                "patches": {
                     "type": "array",
+                    "description": "รายการ patch operations",
                     "items": {
                         "type": "object",
                         "properties": {
-                            "path": {"type": "string"},
-                            "new_content": {"type": "string"},
-                            "description": {"type": "string"},
+                            "file_path": {"type": "string", "description": "path ของไฟล์ เช่น app/bot/router.py"},
+                            "operation": {
+                                "type": "string",
+                                "enum": ["insert_after", "replace", "insert_before", "append"],
+                                "description": "insert_after=แทรกหลังบรรทัด, replace=แทนที่โค้ดเก่า, insert_before=แทรกก่อน, append=ต่อท้ายไฟล์",
+                            },
+                            "search_text": {
+                                "type": "string",
+                                "description": "ข้อความที่ต้องการหา (สำหรับ insert_after/replace/insert_before)",
+                            },
+                            "new_code": {
+                                "type": "string",
+                                "description": "โค้ดใหม่ที่จะเพิ่ม/แทนที่",
+                            },
+                            "description": {
+                                "type": "string",
+                                "description": "อธิบายว่าแก้อะไร",
+                            },
                         },
-                        "required": ["path", "new_content"],
+                        "required": ["file_path", "operation", "new_code"],
                     },
                 },
             },
-            "required": ["feature_request", "files"],
+            "required": ["feature_request", "patches"],
         },
     },
     {
@@ -523,15 +542,15 @@ async def execute_tool(tool_name: str, tool_input: dict) -> str:
 
         req = await create_code_change_request(
             tool_input.get("feature_request", ""),
-            tool_input.get("files", []),
+            tool_input.get("patches", []),
         )
         return (
-            f"📋 Code Change Request สร้างแล้วครับ\n\n"
-            f"📁 ไฟล์ที่จะแก้ ({req['file_count']} ไฟล์):\n{req['plan_summary']}\n\n"
-            f"🔀 Base commit: {req['base_commit']}\n\n"
-            f"Diff preview:\n```diff\n{req['diff'][:2000]}\n```\n\n"
-            f"✅ ถ้าอนุมัติ พิมพ์: **approve {req['token']}**\n"
-            f"❌ ถ้าไม่อนุมัติ พิมพ์: reject"
+            f"📋 **Code Change Request สร้างแล้ว**\n\n"
+            f"**แผน:**\n{req['plan_summary']}\n\n"
+            f"**Base commit:** {req['base_commit']}\n\n"
+            f"**Diff preview:**\n```diff\n{req['diff_preview']}\n```\n\n"
+            f"✅ ถ้าอนุมัติ พิมพ์: `approve {req['token']}`\n"
+            f"❌ ถ้าไม่อนุมัติ พิมพ์: `reject`"
         )
 
     if tool_name == "approve_code_change":

@@ -120,10 +120,43 @@ async def _atomic_write_file(path: str, new_content: str) -> str:
     return diff
 
 
-async def create_code_change_request(feature_request: str, proposed_files: list[dict]) -> dict:
+def apply_patch_to_content(content: str, patch: dict) -> str:
+    """Apply a single patch operation to file content."""
+    operation = patch.get("operation", "append")
+    search_text = patch.get("search_text", "")
+    new_code = patch.get("new_code", "")
+
+    if operation == "append":
+        return content.rstrip() + "\n\n" + new_code + "\n"
+
+    if operation == "insert_after":
+        if search_text and search_text in content:
+            idx = content.index(search_text) + len(search_text)
+            newline_idx = content.find("\n", idx)
+            if newline_idx == -1:
+                return content + "\n" + new_code
+            return content[:newline_idx + 1] + new_code + "\n" + content[newline_idx + 1:]
+        # Fallback: append
+        return content.rstrip() + "\n\n" + new_code + "\n"
+
+    if operation == "insert_before":
+        if search_text and search_text in content:
+            idx = content.index(search_text)
+            return content[:idx] + new_code + "\n" + content[idx:]
+        return new_code + "\n" + content
+
+    if operation == "replace":
+        if search_text and search_text in content:
+            return content.replace(search_text, new_code, 1)
+        raise ValueError(f"search_text not found: {search_text[:80]!r}")
+
+    raise ValueError(f"Unknown operation: {operation}")
+
+
+async def create_code_change_request(feature_request: str, patches: list[dict]) -> dict:
     """
-    Create a pending code change request.
-    proposed_files: [{path, new_content, description}]
+    Create a pending code change request using patch operations.
+    patches: [{file_path, operation, search_text, new_code, description}]
     Returns request dict with approval_token.
     """
     import uuid
@@ -133,20 +166,25 @@ async def create_code_change_request(feature_request: str, proposed_files: list[
     token = generate_token()
     base_commit = await get_current_commit()
 
+    # Apply all patches per-file and build diff
     full_diff = ""
-    for f in proposed_files:
-        path = f["path"]
-        new_content = f["new_content"]
+    patch_files: dict[str, str] = {}  # path -> final content after all patches
+
+    for patch in patches:
+        path = patch["file_path"]
         target = PROJECT_ROOT / path
         old_content = target.read_text(encoding="utf-8") if target.exists() else ""
+        current = patch_files.get(path, old_content)
+        new_content = apply_patch_to_content(current, patch)
+        patch_files[path] = new_content
         full_diff += make_diff(path, old_content, new_content)
 
-    files_json = json.dumps(
-        [{"path": f["path"], "new_content": f["new_content"]} for f in proposed_files]
-    )
+    files_to_write = [{"path": k, "new_content": v} for k, v in patch_files.items()]
     plan_summary = "\n".join(
-        [f"- {f['path']}: {f.get('description', '')}" for f in proposed_files]
+        f"- {p['file_path']}: [{p['operation']}] {p.get('description', '')}"
+        for p in patches
     )
+    files_json = json.dumps(files_to_write)
 
     async with get_db() as db:
         await db.execute(
@@ -163,8 +201,8 @@ async def create_code_change_request(feature_request: str, proposed_files: list[
         "request_id": request_id,
         "token": token,
         "plan_summary": plan_summary,
-        "diff": full_diff,
-        "file_count": len(proposed_files),
+        "diff_preview": full_diff[:1500],
+        "file_count": len(patch_files),
         "base_commit": base_commit,
     }
 
