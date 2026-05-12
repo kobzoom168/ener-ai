@@ -2,6 +2,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import logging
 import random
 import re
 import secrets
@@ -45,6 +46,7 @@ _terminal_tokens: dict[str, float] = {}
 _admin_otp_lock = asyncio.Lock()
 _terminal_otp_lock = asyncio.Lock()
 _OTP_SEND_COOLDOWN = 10
+_admin_otp_log = logging.getLogger("ener-ai.admin_otp")
 _ADMIN_OTP_CODE_KEY = "admin_otp_code"
 _ADMIN_OTP_EXPIRE_KEY = "admin_otp_expire"
 _ADMIN_OTP_LAST_SENT_KEY = "admin_otp_last_sent"
@@ -8593,6 +8595,41 @@ async def admin_provider_status(request: Request):
     return JSONResponse({"providers": list(results), "checked_at": _time.strftime("%H:%M:%S")})
 
 
+async def _perform_admin_otp_send() -> dict:
+    """Send admin OTP via Telegram only when allowed (manual trigger)."""
+    async with _admin_otp_lock:
+        otp_state = await _get_admin_otp_state()
+        now = time.time()
+        otp_code = otp_state.get(_ADMIN_OTP_CODE_KEY, "")
+        try:
+            otp_expires_at = float(otp_state.get(_ADMIN_OTP_EXPIRE_KEY, "0") or 0)
+        except Exception:
+            otp_expires_at = 0.0
+        try:
+            last_sent = float(otp_state.get(_ADMIN_OTP_LAST_SENT_KEY, "0") or 0)
+        except Exception:
+            last_sent = 0.0
+
+        has_valid_otp = bool(otp_code) and otp_expires_at > now
+        if has_valid_otp:
+            return {
+                "ok": True,
+                "already_valid": True,
+                "expires_in": max(0, int(otp_expires_at - now)),
+            }
+
+        if last_sent > 0 and (now - last_sent) < OTP_EXPIRE:
+            remaining = int(OTP_EXPIRE - (now - last_sent))
+            return {"ok": False, "wait": max(1, remaining)}
+
+        otp = _generate_otp()
+        otp_expires_at = now + OTP_EXPIRE
+        await _store_admin_otp(otp, otp_expires_at, now)
+        await _send_otp_telegram(otp)
+        _admin_otp_log.info("ADMIN_OTP_SENT_MANUAL expires_in=%s", OTP_EXPIRE)
+        return {"ok": True, "expires_in": OTP_EXPIRE}
+
+
 @app.get("/admin/otp")
 async def otp_page(request: Request):
     if await _is_valid_session(request):
@@ -8607,25 +8644,22 @@ async def otp_page(request: Request):
             otp_expires_at = float(otp_state.get(_ADMIN_OTP_EXPIRE_KEY, "0") or 0)
         except Exception:
             otp_expires_at = 0.0
-        try:
-            last_sent = float(otp_state.get(_ADMIN_OTP_LAST_SENT_KEY, "0") or 0)
-        except Exception:
-            last_sent = 0.0
 
         has_valid_otp = bool(otp_code) and otp_expires_at > now
-        recently_sent = now - last_sent < _OTP_SEND_COOLDOWN
 
-        if not has_valid_otp and not recently_sent:
-            otp = _generate_otp()
-            otp_expires_at = now + OTP_EXPIRE
-            await _store_admin_otp(otp, otp_expires_at, now)
-            await _send_otp_telegram(otp)
-            just_sent = True
-        else:
-            just_sent = False
+    if has_valid_otp:
+        status_copy = "OTP ยังไม่หมดอายุ กรอกได้เลย"
+        intro_copy = "กรอกรหัส OTP จาก Telegram"
+        initial_seconds = max(1, min(OTP_EXPIRE, int(otp_expires_at - now)))
+        m, s = divmod(initial_seconds, 60)
+        timer_placeholder = f"หมดอายุใน {m}:{s:02d}"
+    else:
+        status_copy = "กดปุ่มเพื่อส่ง OTP ไป Telegram"
+        intro_copy = "ยังไม่มี OTP ที่ใช้ได้ — กดปุ่มด้านล่างเพื่อส่ง"
+        initial_seconds = 0
+        timer_placeholder = "กดปุ่มเพื่อส่ง OTP"
 
-    status_copy = "📱 ส่ง OTP ไป Telegram แล้ว" if just_sent else "📱 OTP ยังไม่หมดอายุ กรอกได้เลย"
-    initial_seconds = max(1, min(OTP_EXPIRE, int(otp_expires_at - now)))
+    _admin_otp_log.debug("ADMIN_OTP_PAGE_VIEW has_valid=%s (no auto-send)", has_valid_otp)
     otp_html = """<!DOCTYPE html>
 <html lang="th">
 <head>
@@ -8678,8 +8712,11 @@ async def otp_page(request: Request):
 <body>
   <div class="otp-box">
     <h2>🔐 Admin Access</h2>
-    <p>OTP ส่งไป Telegram แล้วครับ</p>
+    <p style="margin-bottom:8px">__INTRO_COPY__</p>
     <div class="sent-msg">__STATUS_COPY__</div>
+
+    <button type="button" class="submit-btn" style="margin-bottom:16px;background:#006644;color:#fff"
+            onclick="sendOtp()">📱 ส่ง OTP ไป Telegram</button>
 
     <form method="POST" action="/admin/otp/verify">
       <input type="text" name="otp" class="otp-input"
@@ -8689,8 +8726,8 @@ async def otp_page(request: Request):
       <button type="submit" class="submit-btn">✅ เข้าใช้งาน</button>
     </form>
 
-    <div class="timer" id="timer">หมดอายุใน 5:00</div>
-    <button class="resend-btn" onclick="resend()">ส่ง OTP ใหม่</button>
+    <div class="timer" id="timer">__TIMER_PLACEHOLDER__</div>
+    <button class="resend-btn" type="button" onclick="sendOtp()">ส่ง OTP ใหม่</button>
     <div style="margin-top:16px;">
       <a href="/admin/reset" style="color:#888; font-size:12px; text-decoration:underline;">
         ลืมรหัสผ่าน? รีเซ็ตผ่าน Telegram OTP
@@ -8701,45 +8738,76 @@ async def otp_page(request: Request):
 
   <script>
     let seconds = __INITIAL_SECONDS__;
-    const timer = setInterval(() => {
-      seconds--;
-      const m = Math.floor(seconds / 60);
-      const s = seconds % 60;
-      document.getElementById('timer').textContent =
-        `หมดอายุใน ${m}:${s.toString().padStart(2, '0')}`;
+    let timer = null;
+    function formatCountdown(sec) {
+      const m = Math.floor(sec / 60);
+      const s = sec % 60;
+      return `หมดอายุใน ${m}:${s.toString().padStart(2, '0')}`;
+    }
+    function startTimer() {
+      if (timer) clearInterval(timer);
       if (seconds <= 0) {
-        clearInterval(timer);
-        document.getElementById('timer').textContent = '⏰ OTP หมดอายุแล้ว';
-        document.getElementById('timer').style.color = '#ff4444';
-      }
-    }, 1000);
-
-    async function resend() {
-      const res = await fetch('/admin/otp/resend', { method: 'POST' });
-      if (!res.ok) {
-        document.getElementById('msg').textContent = '❌ ส่ง OTP ไม่สำเร็จ';
-        document.getElementById('msg').style.color = '#ff4444';
+        document.getElementById('timer').textContent = 'กดปุ่มเพื่อส่ง OTP';
+        document.getElementById('timer').style.color = '#888';
         return;
       }
+      document.getElementById('timer').style.color = '#ffaa00';
+      document.getElementById('timer').textContent = formatCountdown(seconds);
+      timer = setInterval(() => {
+        seconds--;
+        if (seconds <= 0) {
+          clearInterval(timer);
+          timer = null;
+          document.getElementById('timer').textContent = '⏰ OTP หมดอายุแล้ว — กดส่ง OTP ใหม่';
+          document.getElementById('timer').style.color = '#ff4444';
+          return;
+        }
+        document.getElementById('timer').textContent = formatCountdown(seconds);
+      }, 1000);
+    }
 
-      const data = await res.json();
+    async function sendOtp() {
+      const res = await fetch('/admin/otp/send', { method: 'POST', credentials: 'same-origin' });
+      const data = await res.json().catch(() => ({}));
+      const msg = document.getElementById('msg');
+      if (!res.ok) {
+        msg.textContent = '❌ ส่ง OTP ไม่สำเร็จ';
+        msg.style.color = '#ff4444';
+        return;
+      }
+      if (data.already_valid) {
+        msg.textContent = 'ℹ️ OTP เดิมยังใช้ได้ กรอกจาก Telegram ได้เลย';
+        msg.style.color = '#00ff88';
+        seconds = typeof data.expires_in === 'number' ? data.expires_in : seconds;
+        startTimer();
+        return;
+      }
+      if (typeof data.wait === 'number') {
+        msg.textContent = `กรุณารอ ${data.wait} วินาที ก่อนขอ OTP ใหม่`;
+        msg.style.color = '#ffaa00';
+        return;
+      }
       if (data.ok) {
-        document.getElementById('msg').textContent = '✅ ส่ง OTP ใหม่แล้ว';
-        document.getElementById('msg').style.color = '#00ff88';
-        seconds = 300;
-        document.getElementById('timer').style.color = '#ffaa00';
-      } else if (typeof data.wait === 'number') {
-        document.getElementById('msg').textContent = `กรุณารอ ${data.wait} วินาที`;
-        document.getElementById('msg').style.color = '#ffaa00';
+        msg.textContent = '✅ ส่ง OTP ไป Telegram แล้ว';
+        msg.style.color = '#00ff88';
+        seconds = typeof data.expires_in === 'number' ? data.expires_in : 300;
+        startTimer();
+      } else {
+        msg.textContent = '❌ ส่ง OTP ไม่สำเร็จ';
+        msg.style.color = '#ff4444';
       }
     }
+
+    startTimer();
   </script>
 </body>
 </html>"""
 
     return HTMLResponse(
         otp_html
+        .replace("__INTRO_COPY__", escape(intro_copy))
         .replace("__STATUS_COPY__", escape(status_copy))
+        .replace("__TIMER_PLACEHOLDER__", escape(timer_placeholder))
         .replace("__INITIAL_SECONDS__", str(initial_seconds))
     )
 
@@ -8782,23 +8850,16 @@ async def verify_otp(request: Request):
     return response
 
 
+@app.post("/admin/otp/send")
+async def admin_otp_send(request: Request):
+    await _validate_admin_basic_auth(request)
+    return JSONResponse(await _perform_admin_otp_send())
+
+
 @app.post("/admin/otp/resend")
 async def resend_otp(request: Request):
     await _validate_admin_basic_auth(request)
-    otp_state = await _get_admin_otp_state()
-    now = time.time()
-    try:
-        last_sent = float(otp_state.get(_ADMIN_OTP_LAST_SENT_KEY, "0") or 0)
-    except Exception:
-        last_sent = 0.0
-    if now - last_sent < 60:
-        remaining = int(60 - (now - last_sent))
-        return {"ok": False, "wait": remaining}
-
-    otp = _generate_otp()
-    await _store_admin_otp(otp, now + OTP_EXPIRE, now)
-    await _send_otp_telegram(otp)
-    return {"ok": True}
+    return JSONResponse(await _perform_admin_otp_send())
 
 
 @app.get("/admin/reset")
