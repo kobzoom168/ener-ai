@@ -24,7 +24,9 @@ async def run_codex(task: str, directory: str = "/app") -> dict:
         env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
         proc = await asyncio.create_subprocess_exec(
-            codex_bin, "exec", task,
+            codex_bin, "exec",
+            "--dangerously-bypass-approvals-and-sandbox",
+            task,
             cwd=directory,
             env=env,
             stdout=asyncio.subprocess.PIPE,
