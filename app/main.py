@@ -5675,6 +5675,7 @@ def build_workspace_html() -> HTMLResponse:
               <button onclick="askCodeAI('อธิบาย file นี้')" style="font-size:11px;padding:4px 10px;background:#2a2a2a;border:1px solid #444;border-radius:6px;color:#aaa;cursor:pointer">📖 อธิบาย</button>
               <button onclick="askCodeAI('หา bug ใน code นี้')" style="font-size:11px;padding:4px 10px;background:#2a2a2a;border:1px solid #444;border-radius:6px;color:#aaa;cursor:pointer">🐛 หา Bug</button>
               <button onclick="askCodeAI('สร้าง Cursor prompt เพื่อปรับปรุง code นี้')" style="font-size:11px;padding:4px 10px;background:#2a2a2a;border:1px solid #444;border-radius:6px;color:#aaa;cursor:pointer">⚡ Cursor Prompt</button>
+              <button onclick="askCodexAI()" style="font-size:11px;padding:4px 10px;background:#1a3a1a;border:1px solid #22c55e;border-radius:6px;color:#22c55e;cursor:pointer;font-weight:600">⚡ Codex (GPT-5.5)</button>
             </div>
             <div style="display:flex;gap:8px">
               <input id="code-question-input" type="text" placeholder="ถามเกี่ยวกับ code..."
@@ -6801,11 +6802,52 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
+  async function askCodexAI() {
+    const input = document.getElementById('code-question-input');
+    const task = input ? input.value.trim() : '';
+    const defaultTask = _codeCurrentFile
+      ? 'อธิบาย ' + _codeCurrentFile + ' และหาจุดที่ปรับปรุงได้'
+      : 'อธิบาย codebase นี้';
+    const finalTask = task || defaultTask;
+    if (input) input.value = '';
+    const msgs = document.getElementById('code-chat-messages');
+    if (!msgs) return;
+    msgs.innerHTML += `
+      <div style="align-self:flex-end;background:#1a3a1a;padding:8px 12px;border-radius:12px;font-size:14px;max-width:85%;border:1px solid #22c55e">
+        ⚡ ${finalTask}
+      </div>`;
+    const thinkId = 'codex-' + Date.now();
+    msgs.innerHTML += `<div id="${thinkId}" style="color:#22c55e;font-size:13px;padding:4px">⚡ Codex กำลังวิเคราะห์ (GPT-5.5)...</div>`;
+    msgs.scrollTop = msgs.scrollHeight;
+    try {
+      const res = await fetch('/workspace/code/codex', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ task: finalTask, file_path: _codeCurrentFile })
+      });
+      const d = await res.json();
+      const el = document.getElementById(thinkId);
+      if (el) el.remove();
+      const answerId = 'codex-ans-' + Date.now();
+      msgs.innerHTML += `
+        <div id="${answerId}" style="align-self:flex-start;background:#0d1f0d;padding:12px;border-radius:12px;font-size:14px;max-width:90%;border-left:3px solid #22c55e">
+          <div style="font-size:11px;color:#22c55e;margin-bottom:6px">⚡ Codex CLI · GPT-5.5 · ChatGPT Plus</div>
+          <div style="line-height:1.7;white-space:pre-wrap">${d.output || 'No output'}</div>
+          <button onclick="saveCodeMemory('${answerId}')" style="margin-top:8px;font-size:11px;padding:3px 10px;background:#1a3a1a;border:1px solid #22c55e;border-radius:6px;color:#22c55e;cursor:pointer">💾 บันทึกใน Memory</button>
+        </div>`;
+      msgs.scrollTop = msgs.scrollHeight;
+    } catch(e) {
+      const el = document.getElementById(thinkId);
+      if (el) el.outerHTML = `<div style="color:#ef4444;font-size:13px">Error: ${e.message}</div>`;
+    }
+  }
+
   window.loadCodePanel = loadCodePanel;
   window.loadCodeFile = loadCodeFile;
   window.loadFolder = loadFolder;
   window.loadGitLog = loadGitLog;
   window.askCodeAI = askCodeAI;
+  window.askCodexAI = askCodexAI;
   window.saveCodeMemory = saveCodeMemory;
 
   window.showPanel = showPanel;
@@ -7717,6 +7759,23 @@ async def workspace_code_folder(request: Request, path: str = "app"):
         "total_lines": total_lines,
         "files": files_content,
     })
+
+
+@app.post("/workspace/code/codex")
+async def workspace_code_codex(request: Request):
+    """Run Codex CLI task with ChatGPT Plus billing."""
+    await _require_admin(request)
+    body = await request.json()
+    task = body.get("task", "").strip()
+    file_path = body.get("file_path", "")
+    if not task:
+        raise HTTPException(400, "task required")
+    from app.agents.codex_agent import run_codex_on_file, run_codex
+    if file_path:
+        result = await run_codex_on_file(task, file_path)
+    else:
+        result = await run_codex(task)
+    return JSONResponse(result)
 
 
 @app.post("/workspace/files/upload")
