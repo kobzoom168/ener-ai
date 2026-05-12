@@ -7,9 +7,6 @@ services:
       - ./data:/app/data
       - ./backups:/app/backups
       - /root/.codex:/root/.codex
-      - /usr/local/lib/node_modules:/usr/local/lib/node_modules
-      - /usr/local/bin/codex:/usr/local/bin/codex
-      - /usr/bin/node:/usr/bin/node
     env_file:
       - .env
     restart: unless-stopped
