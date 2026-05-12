@@ -12,8 +12,11 @@ async def run_codex(task: str, directory: str = "/root/ener-ai") -> dict:
         directory = "/root/ener-ai"
 
     try:
+        codex_bin = "/usr/bin/codex"
+        if not os.path.isfile(codex_bin):
+            codex_bin = "codex"
         proc = await asyncio.create_subprocess_exec(
-            "codex", "exec", task,
+            codex_bin, "exec", task,
             cwd=directory,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
