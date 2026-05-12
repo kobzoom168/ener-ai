@@ -125,7 +125,8 @@ def route_fast(text: str, routing: dict[str, str] | None = None) -> dict:
             "model": r.get("code", "groq"),
             "tools": ["read_github_file", "list_github_repos",
                       "list_github_prs", "read_code_file",
-                      "generate_cursor_prompt"],
+                      "generate_cursor_prompt",
+                      "propose_code_change", "approve_code_change", "deploy_code"],
             "needs_check": False,
             "reason": "code/technical",
         }
@@ -197,7 +198,8 @@ def route_fast(text: str, routing: dict[str, str] | None = None) -> dict:
             "domain": "code",
             "model": r.get("system", "groq"),
             "tools": ["get_system_info", "read_code_file",
-                      "generate_cursor_prompt"],
+                      "generate_cursor_prompt",
+                      "propose_code_change", "approve_code_change", "deploy_code"],
             "needs_check": False,
             "reason": "system introspection",
         }
