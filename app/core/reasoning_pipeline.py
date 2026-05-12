@@ -113,6 +113,21 @@ def route_fast(text: str, routing: dict[str, str] | None = None) -> dict:
             "reason": "ener scan / amulet / content",
         }
 
+    # Code Agent (propose/apply/deploy) → Haiku (best tool calling)
+    if any(k in t for k in [
+        "propose_code_change", "approve_code_change", "deploy_code",
+        "แก้ไฟล์จริง", "apply change", "approval token",
+    ]):
+        return {
+            "complexity": "critical",
+            "domain": "code_agent",
+            "model": "haiku",
+            "tools": ["read_code_file", "propose_code_change",
+                      "approve_code_change", "deploy_code"],
+            "needs_check": False,
+            "reason": "autonomous code agent",
+        }
+
     # Code / GitHub → Groq (free + fast enough)
     if any(k in t for k in [
         "code", "github", "bug", "error", "โปรแกรม", "function",
