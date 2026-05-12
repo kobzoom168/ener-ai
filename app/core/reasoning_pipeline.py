@@ -272,7 +272,20 @@ async def reason(
 
     grounded = await build_context(text, route)
     enhanced_system = system_prompt + grounded
-    if complexity in ("complex", "critical"):
+    domain = route.get("domain", "")
+    if domain == "code_agent":
+        enhanced_system += """
+
+=== Code Agent Mode ===
+IMPORTANT: You MUST call propose_code_change tool immediately.
+Do NOT explain what you will do. Do NOT respond with text first.
+Steps:
+1. Call read_code_file to read the relevant file
+2. Analyze what needs to change
+3. Call propose_code_change with patches — the user will get an approval token
+You are an autonomous coding agent. Act immediately, not just describe."""
+
+    elif complexity in ("complex", "critical"):
         enhanced_system += """
 
 === Reasoning Mode ===
