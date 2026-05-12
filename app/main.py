@@ -27,6 +27,7 @@ from app.core.ai import get_active_model, get_model_availability, get_model_labe
 from app.core.agents import COMMAND_AGENT_MAP, SCHEDULER_AGENTS
 from app.core.config import settings
 from app.core.database import get_all_config, get_config, get_db, init_db, set_config
+from app.core.diagnostics import log_otp_event
 from app.core.terminal import handle_terminal_ws
 from app.scheduler import build_scheduler
 
@@ -554,8 +555,20 @@ async def _require_admin(request: Request):
     if await _is_valid_session(request):
         return
     if request.url.path.startswith("/admin/api/"):
+        await log_otp_event(
+            "ADMIN_API_SESSION_EXPIRED_401",
+            request=request,
+            reason="no_valid_session",
+            metadata={"path": str(request.url.path)},
+        )
         raise HTTPException(status_code=401, detail="Session expired")
     await _validate_admin_basic_auth(request)
+    await log_otp_event(
+        "ADMIN_REDIRECT_TO_OTP",
+        request=request,
+        reason="otp_required",
+        metadata={"from_path": str(request.url.path)},
+    )
     raise HTTPException(status_code=307, detail="OTP Required", headers={"Location": "/admin/otp"})
 
 
@@ -564,6 +577,7 @@ async def _verify_admin_session(request: Request):
         return
     if request.method.upper() == "GET":
         raise HTTPException(status_code=307, detail="Session expired", headers={"Location": "/admin"})
+    await log_otp_event("ADMIN_SESSION_EXPIRED", request=request, reason="invalid_or_expired_session")
     raise HTTPException(status_code=401, detail="Session expired")
 
 
@@ -8659,7 +8673,12 @@ async def otp_page(request: Request):
         initial_seconds = 0
         timer_placeholder = "กดปุ่มเพื่อส่ง OTP"
 
-    _admin_otp_log.debug("ADMIN_OTP_PAGE_VIEW has_valid=%s (no auto-send)", has_valid_otp)
+    await log_otp_event(
+        "ADMIN_OTP_PAGE_VIEW",
+        request=request,
+        reason="page_render_no_auto_send",
+        metadata={"has_valid_otp": has_valid_otp},
+    )
     otp_html = """<!DOCTYPE html>
 <html lang="th">
 <head>
@@ -8826,6 +8845,7 @@ async def verify_otp(request: Request):
         otp_expires_at = 0.0
 
     if not stored_otp or otp != stored_otp or now > otp_expires_at:
+        await log_otp_event("ADMIN_OTP_VERIFY_FAILED", request=request, reason="bad_or_expired")
         return HTMLResponse(
             """
         <script>
@@ -8835,6 +8855,7 @@ async def verify_otp(request: Request):
         """
         )
 
+    await log_otp_event("ADMIN_OTP_VERIFY_SUCCESS", request=request)
     await _clear_admin_otp()
     token = _generate_session_token()
     await _store_admin_session(token, now + SESSION_EXPIRE)
@@ -8850,16 +8871,41 @@ async def verify_otp(request: Request):
     return response
 
 
+async def _admin_otp_send_response(request: Request, via: str = "send") -> JSONResponse:
+    await log_otp_event("ADMIN_OTP_SEND_REQUEST", request=request, metadata={"via": via})
+    result = await _perform_admin_otp_send()
+    if result.get("already_valid"):
+        await log_otp_event(
+            "ADMIN_OTP_NOT_SENT_VALID_EXISTING",
+            request=request,
+            metadata={"expires_in": result.get("expires_in"), "via": via},
+        )
+    elif result.get("wait") is not None:
+        await log_otp_event(
+            "ADMIN_OTP_NOT_SENT_COOLDOWN",
+            request=request,
+            metadata={"wait_sec": result.get("wait"), "via": via},
+        )
+    elif result.get("ok"):
+        await log_otp_event(
+            "ADMIN_OTP_SENT",
+            request=request,
+            reason="telegram_dispatch",
+            metadata={"via": via},
+        )
+    return JSONResponse(result)
+
+
 @app.post("/admin/otp/send")
 async def admin_otp_send(request: Request):
     await _validate_admin_basic_auth(request)
-    return JSONResponse(await _perform_admin_otp_send())
+    return await _admin_otp_send_response(request, via="send")
 
 
 @app.post("/admin/otp/resend")
 async def resend_otp(request: Request):
     await _validate_admin_basic_auth(request)
-    return JSONResponse(await _perform_admin_otp_send())
+    return await _admin_otp_send_response(request, via="resend")
 
 
 @app.get("/admin/reset")

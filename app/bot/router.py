@@ -959,6 +959,50 @@ async def _handle_code_approval(update: Update, text: str) -> bool:
     return False
 
 
+async def cmd_diag(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+    parts = (update.message.text or "").split(maxsplit=1)
+    sub = parts[1].strip().lower() if len(parts) > 1 else ""
+    from app.core import diagnostics as diag
+
+    if not sub:
+        o, a, b = await asyncio.gather(
+            diag.diagnose_otp_loop(),
+            diag.diagnose_agent_health(),
+            diag.diagnose_bot_unresponsive(),
+        )
+        txt = diag.format_system_diagnosis_thai(o, a, b)
+    elif sub in ("otp", "otp_loop", "otp-loop"):
+        d = await diag.diagnose_otp_loop()
+        txt = diag.format_otp_diagnosis_thai(d)
+    elif sub in ("memory", "agent", "agents"):
+        d = await diag.diagnose_agent_health()
+        txt = diag.format_agent_diagnosis_thai(d)
+    elif sub in ("bot", "telegram", "webhook"):
+        d = await diag.diagnose_bot_unresponsive()
+        txt = diag.format_bot_diagnosis_thai(d)
+    else:
+        txt = "ใช้: `/diag` หรือ `/diag otp` · `/diag memory` · `/diag bot`"
+
+    for chunk in diag.split_telegram_chunks(txt):
+        await _reply_smart(update, chunk)
+
+
+async def cmd_otp_debug(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+    from app.core import diagnostics as diag
+    d = await diag.diagnose_otp_loop()
+    txt = diag.format_otp_diagnosis_thai(d)
+    for chunk in diag.split_telegram_chunks(txt):
+        await _reply_smart(update, chunk)
+
+
+async def cmd_sys_debug(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await cmd_diag(update, ctx)
+
+
 async def msg_fallback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
@@ -968,6 +1012,13 @@ async def msg_fallback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     # Check code approval flow first
     if await _handle_code_approval(update, text):
+        return
+
+    from app.core import diagnostics as diag
+    if diag.classify_diagnostic_intent(text):
+        report = await diag.diagnose_user_message(text, str(update.effective_chat.id))
+        for chunk in diag.split_telegram_chunks(report):
+            await _reply_smart(update, chunk)
         return
 
     lowered = text.lower()
@@ -1006,6 +1057,9 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("ener", cmd_ener))
     app.add_handler(CommandHandler("content", cmd_content))
     app.add_handler(CommandHandler("health", cmd_health))
+    app.add_handler(CommandHandler("diag", cmd_diag))
+    app.add_handler(CommandHandler("otp_debug", cmd_otp_debug))
+    app.add_handler(CommandHandler("sys_debug", cmd_sys_debug))
     app.add_handler(CommandHandler("logs", handle_logs))
     app.add_handler(CommandHandler("errors", handle_errors))
     app.add_handler(CommandHandler("server", handle_server))

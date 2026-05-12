@@ -285,6 +285,22 @@ async def init_db():
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS otp_audit_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                event_type TEXT NOT NULL,
+                path TEXT,
+                method TEXT,
+                client_ip TEXT,
+                user_agent TEXT,
+                referer TEXT,
+                session_present INTEGER DEFAULT 0,
+                session_valid INTEGER DEFAULT 0,
+                auth_header_present INTEGER DEFAULT 0,
+                reason TEXT,
+                metadata_json TEXT
+            );
+
             CREATE TABLE IF NOT EXISTS platform_projects (
                 id TEXT PRIMARY KEY,
                 name TEXT UNIQUE NOT NULL,
