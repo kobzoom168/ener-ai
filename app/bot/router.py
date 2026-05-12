@@ -1045,6 +1045,36 @@ async def cmd_sys_debug(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await cmd_diag(update, ctx)
 
 
+async def _run_nl_intent_section(intent: str, text: str, chat_id: str) -> tuple[str, str]:
+    """Build one markdown section for multi-intent NL routing (real tools / diagnostics)."""
+    from app.core import diagnostics as diag
+
+    if intent == "communication":
+        return "### 💬 การติดตามลูกค้า / ทีม", diag.communication_followup_reply_thai(text)
+    if intent == "system_status":
+        body = await cmd_status(_agent_triggered_by="user")
+        return "### ระบบ", body
+    if intent == "system_errors":
+        body = await cmd_errors(_agent_triggered_by="user")
+        return "### Errors", body
+    if intent == "system_logs":
+        body = await cmd_logs(50, _agent_triggered_by="user")
+        return "### Logs", body
+    if intent == "system_server":
+        stats = get_server_stats()
+        return "### เครื่อง / ทรัพยากร", format_nl_resource_report(stats)
+    if intent == "diag_otp":
+        d = await diag.diagnose_otp_loop()
+        return "### OTP", diag.format_otp_diagnosis_thai(d)
+    if intent == "diag_bot":
+        d = await diag.diagnose_bot_unresponsive()
+        return "### Bot / Telegram", diag.format_bot_diagnosis_thai(d)
+    if intent == "diag_agent":
+        d = await diag.diagnose_agent_health()
+        return "### Agent / Memory", diag.format_agent_diagnosis_thai(d)
+    return "### อื่น ๆ", "ไม่รองรับ intent นี้"
+
+
 async def msg_fallback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
@@ -1057,35 +1087,17 @@ async def msg_fallback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     from app.core import diagnostics as diag
-    if diag.is_communication_followup_intent(text):
-        reply = diag.communication_followup_reply_thai(text)
-        await _reply_smart(update, reply)
-        return
+    from app.core.tool_router import classify_message_intents
 
-    from app.core.tool_router import classify_system_tool_intent
-
-    st_tool = classify_system_tool_intent(text)
-    if st_tool == "server":
-        stats = get_server_stats()
-        result = format_nl_resource_report(stats)
-        await _reply_smart(update, result)
-        return
-    if st_tool == "status":
-        result = await cmd_status(_agent_triggered_by="user")
-        await _reply_smart(update, result)
-        return
-    if st_tool == "logs":
-        result = await cmd_logs(50, _agent_triggered_by="user")
-        await _reply_smart(update, result)
-        return
-    if st_tool == "errors":
-        result = await cmd_errors(_agent_triggered_by="user")
-        await _reply_smart(update, result)
-        return
-
-    if diag.classify_diagnostic_intent(text):
-        report = await diag.diagnose_user_message(text, str(update.effective_chat.id))
-        for chunk in diag.split_telegram_chunks(report):
+    intents = classify_message_intents(text)
+    if intents:
+        parts: list[str] = []
+        chat_id = str(update.effective_chat.id)
+        for intent in intents:
+            heading, body = await _run_nl_intent_section(intent, text, chat_id)
+            parts.append(f"{heading}\n{body}")
+        out = "\n\n".join(parts)
+        for chunk in diag.split_telegram_chunks(out):
             await _reply_smart(update, chunk)
         return
 

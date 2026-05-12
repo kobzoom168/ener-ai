@@ -588,6 +588,11 @@ def matches_stakeholder_no_response_phrase(text: str) -> bool:
     return False
 
 
+def list_stakeholder_no_response_phrases() -> tuple[str, ...]:
+    """Phrases for multi-intent communication detection (substring match)."""
+    return _STAKEHOLDER_NO_RESPONSE_PHRASES
+
+
 def is_communication_followup_intent(text: str) -> bool:
     """Human/vendor/team silence — not Telegram bot / Ener-AI stack (unless user mixes tech terms)."""
     return matches_stakeholder_no_response_phrase(text) and not has_diagnostic_tech_context_strict(text)
