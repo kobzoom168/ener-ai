@@ -910,12 +910,66 @@ async def cmd_standup_line(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"⚠️ ส่งไม่ได้: {msg}", parse_mode=None)
 
 
+async def _handle_code_approval(update: Update, text: str) -> bool:
+    """
+    Intercept 'approve ENER-XXXX' and 'deploy' messages.
+    Returns True if handled, False to continue normal routing.
+    """
+    upper = text.strip().upper()
+
+    # approve ENER-XXXX  or  just ENER-XXXX
+    if upper.startswith("APPROVE ") or upper.startswith("ENER-"):
+        token = upper.replace("APPROVE ", "").strip()
+        if not token.startswith("ENER-"):
+            return False
+        from app.core.database import get_pending_code_request, update_code_request_status
+        from app.core.code_agent import apply_code_change
+
+        req = await get_pending_code_request(token)
+        if not req:
+            await update.message.reply_text("❌ ไม่พบ token นี้ หรือหมดอายุแล้ว")
+            return True
+        await update.message.reply_text("⚡ กำลัง apply code...")
+        await update_code_request_status(req["id"], "approved")
+        result = await apply_code_change(req["id"])
+        if result["ok"]:
+            files_str = ", ".join(result.get("files_written", []))
+            await update.message.reply_text(
+                f"✅ Apply สำเร็จ!\n"
+                f"ไฟล์: {files_str}\n"
+                f"🌿 Branch: {result.get('branch')}\n"
+                f"พิมพ์ 'deploy' เพื่อ rebuild Docker"
+            )
+        else:
+            await update.message.reply_text(
+                f"❌ ล้มเหลว (rolled back)\n{result.get('error', '')[:200]}"
+            )
+        return True
+
+    if upper == "DEPLOY":
+        from app.core.code_agent import deploy_after_apply
+
+        await update.message.reply_text("🔨 กำลัง deploy...")
+        r = await deploy_after_apply()
+        await update.message.reply_text(
+            "🚀 Deploy สำเร็จ!" if r["ok"] else f"❌ Deploy ล้มเหลว\n{r['output'][:300]}"
+        )
+        return True
+
+    return False
+
+
 async def msg_fallback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
     text = update.message.text or ""
     if not text.strip():
         return
+
+    # Check code approval flow first
+    if await _handle_code_approval(update, text):
+        return
+
     lowered = text.lower()
     if any(keyword in lowered for keyword in ["อัปเดต", "update", "%", "เปอร์เซ็น", "เสร็จแล้ว", "complete"]):
         result = await parse_and_update_from_chat(text)

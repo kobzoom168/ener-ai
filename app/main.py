@@ -7706,6 +7706,35 @@ async def workspace_code_remember(request: Request):
     return JSONResponse({"ok": True})
 
 
+@app.get("/workspace/code/pending")
+async def workspace_code_pending(request: Request):
+    """List recent code change requests."""
+    await _require_admin(request)
+    async with get_db() as db:
+        cur = await db.execute(
+            """SELECT id, feature_request, status, plan_summary,
+                      approval_token, created_at, base_commit
+               FROM code_change_requests ORDER BY created_at DESC LIMIT 10"""
+        )
+        rows = [dict(r) for r in await cur.fetchall()]
+    return JSONResponse({"requests": rows})
+
+
+@app.post("/workspace/code/approve/{token}")
+async def workspace_code_approve(token: str, request: Request):
+    """Approve and apply a pending code change via token."""
+    await _require_admin(request)
+    from app.core.database import get_pending_code_request, update_code_request_status
+    from app.core.code_agent import apply_code_change
+
+    req = await get_pending_code_request(token.upper())
+    if not req:
+        raise HTTPException(404, "Token not found or already processed")
+    await update_code_request_status(req["id"], "approved")
+    result = await apply_code_change(req["id"])
+    return JSONResponse(result)
+
+
 @app.get("/workspace/code/git-log")
 async def workspace_code_git_log(request: Request):
     await _require_admin(request)

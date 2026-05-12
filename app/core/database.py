@@ -259,6 +259,32 @@ async def init_db():
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS code_change_requests (
+                id TEXT PRIMARY KEY,
+                feature_request TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'planning',
+                plan_summary TEXT,
+                proposed_diff TEXT,
+                proposed_files_json TEXT,
+                approval_token TEXT,
+                base_commit TEXT,
+                work_branch TEXT,
+                attempt_count INTEGER DEFAULT 0,
+                max_attempts INTEGER DEFAULT 3,
+                last_error TEXT,
+                approved_at DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS code_change_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                message TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE INDEX IF NOT EXISTS idx_agent_events_agent
                 ON agent_events(agent_name, result, created_at);
             CREATE INDEX IF NOT EXISTS idx_agent_events_tags
@@ -446,3 +472,28 @@ async def get_all_config() -> list[dict]:
         )
         rows = await cur.fetchall()
     return [dict(row) for row in rows]
+
+
+async def get_pending_code_request(token: str) -> dict | None:
+    async with get_db() as db:
+        cur = await db.execute(
+            "SELECT * FROM code_change_requests WHERE approval_token=? AND status='pending_approval'",
+            (token,),
+        )
+        row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def update_code_request_status(request_id: str, status: str, **kwargs) -> None:
+    fields = ["status=?", "updated_at=datetime('now')"]
+    values: list = [status]
+    for k, v in kwargs.items():
+        fields.append(f"{k}=?")
+        values.append(v)
+    values.append(request_id)
+    async with get_db() as db:
+        await db.execute(
+            f"UPDATE code_change_requests SET {', '.join(fields)} WHERE id=?",
+            values,
+        )
+        await db.commit()

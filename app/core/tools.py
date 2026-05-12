@@ -238,6 +238,45 @@ TOOLS = [
         },
     },
     {
+        "name": "propose_code_change",
+        "description": "เสนอการแก้ไข code พร้อม diff ให้ user approve ก่อน apply จริง ใช้เมื่อต้องการเพิ่ม/แก้ feature",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "feature_request": {"type": "string", "description": "สิ่งที่จะทำ"},
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string"},
+                            "new_content": {"type": "string"},
+                            "description": {"type": "string"},
+                        },
+                        "required": ["path", "new_content"],
+                    },
+                },
+            },
+            "required": ["feature_request", "files"],
+        },
+    },
+    {
+        "name": "approve_code_change",
+        "description": "อนุมัติการแก้ไข code โดยใช้ token เช่น ENER-7KQ2 แล้ว apply จริง",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "token": {"type": "string", "description": "Approval token เช่น ENER-7KQ2"},
+            },
+            "required": ["token"],
+        },
+    },
+    {
+        "name": "deploy_code",
+        "description": "รัน docker compose up --build หลัง apply code สำเร็จ",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "generate_cursor_prompt",
         "description": "สร้าง Cursor prompt พร้อมใช้งาน เมื่อกบต้องการเพิ่ม/แก้ feature ในระบบ",
         "input_schema": {
@@ -478,6 +517,57 @@ async def execute_tool(tool_name: str, tool_input: dict) -> str:
             return f"❌ ไม่พบไฟล์ {filepath}"
         except Exception as exc:
             return f"❌ อ่านไม่ได้: {exc}"
+
+    if tool_name == "propose_code_change":
+        from app.core.code_agent import create_code_change_request
+
+        req = await create_code_change_request(
+            tool_input.get("feature_request", ""),
+            tool_input.get("files", []),
+        )
+        return (
+            f"📋 Code Change Request สร้างแล้วครับ\n\n"
+            f"📁 ไฟล์ที่จะแก้ ({req['file_count']} ไฟล์):\n{req['plan_summary']}\n\n"
+            f"🔀 Base commit: {req['base_commit']}\n\n"
+            f"Diff preview:\n```diff\n{req['diff'][:2000]}\n```\n\n"
+            f"✅ ถ้าอนุมัติ พิมพ์: **approve {req['token']}**\n"
+            f"❌ ถ้าไม่อนุมัติ พิมพ์: reject"
+        )
+
+    if tool_name == "approve_code_change":
+        from app.core.database import get_pending_code_request, update_code_request_status
+        from app.core.code_agent import apply_code_change
+
+        token = str(tool_input.get("token", "")).strip().upper()
+        req = await get_pending_code_request(token)
+        if not req:
+            return "❌ ไม่พบ token นี้ หรือหมดอายุแล้ว"
+        await update_code_request_status(req["id"], "approved")
+        result = await apply_code_change(req["id"])
+        if result["ok"]:
+            files_str = ", ".join(result.get("files_written", []))
+            return (
+                f"✅ Apply สำเร็จ!\n"
+                f"📁 ไฟล์ที่แก้: {files_str}\n"
+                f"🌿 Branch: {result.get('branch')}\n"
+                f"📤 Push ขึ้น main แล้ว\n\n"
+                f"พิมพ์ **deploy** เพื่อ rebuild Docker ครับ"
+            )
+        else:
+            return (
+                f"❌ Apply ล้มเหลว (rolled back แล้ว)\n"
+                f"Error: {result.get('error', '')}\n"
+                f"โค้ดถูก rollback กลับ commit {req.get('base_commit', '')} แล้วครับ"
+            )
+
+    if tool_name == "deploy_code":
+        from app.core.code_agent import deploy_after_apply
+
+        result = await deploy_after_apply()
+        if result["ok"]:
+            return "🚀 Deploy สำเร็จ! Container รัน build ใหม่แล้วครับ"
+        else:
+            return f"❌ Deploy ล้มเหลว:\n{result['output'][:500]}"
 
     if tool_name == "generate_cursor_prompt":
         feature_request = str(payload.get("feature_request", "")).strip()
