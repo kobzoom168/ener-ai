@@ -1134,33 +1134,43 @@ async def chat(
     return await _call_ollama(prompt, system, messages, agent, default_candidate)
 
 
-async def chat_with_tools(
+def _convert_tools_for_anthropic(tools: list[dict]) -> list[dict]:
+    """Normalise tool list to Anthropic's expected format."""
+    return [
+        {
+            "name": t["name"],
+            "description": t.get("description", ""),
+            "input_schema": t.get("input_schema", {"type": "object", "properties": {}}),
+        }
+        for t in tools
+    ]
+
+
+async def _single_turn_with_tools(
     prompt: str,
     system: str,
-    messages: list[dict[str, str]] | None,
+    messages: list[dict] | None,
     tools: list[dict],
-    agent: str = "chat",
-    preferred_model: str | None = None,
+    agent: str,
+    model_key: str,
+    strict_model: bool,
 ) -> dict:
     """
-    เรียก AI พร้อม tool definitions
-    Return: {"text": str, "tool_calls": list}
+    Original single-turn tool-calling path (unchanged logic).
+    Used by Groq, Gemini, DeepSeek, and any non-Claude model.
     """
-    availability = get_model_availability()
-    if preferred_model == "deepseek":
-        text = await chat(
-            prompt,
-            system=system,
-            agent=agent,
-            messages=messages,
-            preferred_model="deepseek",
-        )
+    availability = await get_model_availability_async()
+
+    if model_key == "deepseek":
+        text = await chat(prompt, system=system, agent=agent, messages=messages,
+                          preferred_model="deepseek")
         return {"text": text, "tool_calls": []}
 
     active = (await get_active_model()) or _default_model(availability)
-    if preferred_model == "haiku" and availability.get("haiku"):
+
+    if model_key == "haiku" and availability.get("haiku"):
         return await _call_anthropic_with_tools(prompt, system, messages, tools, agent)
-    if preferred_model == "groq" and availability.get("groq"):
+    if model_key == "groq" and availability.get("groq"):
         return await _call_groq_with_tools(prompt, system, messages, tools, agent)
 
     if active == "haiku" and availability.get("haiku"):
@@ -1168,14 +1178,135 @@ async def chat_with_tools(
     if active == "groq" and availability.get("groq"):
         return await _call_groq_with_tools(prompt, system, messages, tools, agent)
 
-    text = await chat(
-        prompt,
-        system=system,
-        agent=agent,
-        messages=messages,
-        preferred_model=preferred_model,
-    )
+    text = await chat(prompt, system=system, agent=agent, messages=messages,
+                      preferred_model=model_key)
     return {"text": text, "tool_calls": []}
+
+
+async def chat_with_tools(
+    prompt: str,
+    system: str,
+    messages: list[dict[str, str]] | None,
+    tools: list[dict],
+    agent: str = "chat",
+    preferred_model: str | None = None,
+    strict_model: bool = False,
+    max_turns: int = 5,
+) -> dict:
+    """
+    Multi-turn agentic tool-calling loop (up to max_turns).
+    Claude (haiku/sonnet/opus): full agentic loop — read file → propose → get token.
+    All other models: single-turn fallback via _single_turn_with_tools().
+    """
+    availability = await get_model_availability_async()
+    active = (await get_active_model()) or _default_model(availability)
+    model_key = preferred_model if preferred_model in _VALID_MODELS else active
+
+    # Only Claude supports the proper agentic multi-turn loop
+    if model_key not in {"haiku", "sonnet", "opus"}:
+        return await _single_turn_with_tools(
+            prompt, system, messages, tools, agent, model_key or "groq", strict_model
+        )
+
+    api_key = settings.anthropic_api_key
+    if not api_key:
+        return await _single_turn_with_tools(
+            prompt, system, messages, tools, agent, "groq", False
+        )
+
+    model_id = {
+        "haiku":  _PRIMARY_MODEL,
+        "sonnet": "claude-sonnet-4-6",
+        "opus":   "claude-opus-4-7",
+    }.get(model_key, _PRIMARY_MODEL)
+
+    client = anthropic.AsyncAnthropic(api_key=api_key)
+
+    # Build initial message history
+    current_messages: list[dict] = []
+    for m in (messages or [])[-20:]:
+        role = m.get("role", "user")
+        if role in {"user", "assistant"}:
+            current_messages.append({"role": role, "content": m.get("content", "")})
+    current_messages.append({"role": "user", "content": prompt})
+
+    anthropic_tools = _convert_tools_for_anthropic(tools) if tools else []
+    all_tool_summaries: list[str] = []
+    final_text = ""
+    total_input = 0
+    total_output = 0
+    elapsed_ms = 0
+
+    for _turn in range(max_turns):
+        t0 = time.perf_counter()
+        try:
+            response = await client.messages.create(
+                model=model_id,
+                max_tokens=4096,
+                system=system or BASE_SYSTEM_PROMPT,
+                messages=current_messages,
+                tools=anthropic_tools,
+            )
+        except Exception as exc:
+            elapsed_ms = int((time.perf_counter() - t0) * 1000)
+            await _log_ai_run(agent, model_key, 0, 0, elapsed_ms, False)
+            raise
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
+        total_input += response.usage.input_tokens
+        total_output += response.usage.output_tokens
+
+        # Separate text blocks from tool-use blocks
+        text_parts: list[str] = []
+        tool_uses = []
+        for block in response.content:
+            if hasattr(block, "text"):
+                text_parts.append(block.text)
+            elif getattr(block, "type", "") == "tool_use":
+                tool_uses.append(block)
+
+        final_text = " ".join(text_parts).strip()
+
+        # No more tool calls → we are done
+        if not tool_uses or response.stop_reason == "end_turn":
+            break
+
+        # Append assistant turn (raw content blocks) to history
+        current_messages.append({"role": "assistant", "content": response.content})
+
+        # Execute every tool call and collect results
+        tool_result_content: list[dict] = []
+        for tu in tool_uses:
+            t_name = tu.name
+            t_input = tu.input or {}
+            try:
+                from app.core.tools import execute_tool
+                result = await execute_tool(t_name, t_input)
+                all_tool_summaries.append(f"✅ {t_name}: {str(result)[:200]}")
+                tool_result_content.append({
+                    "type": "tool_result",
+                    "tool_use_id": tu.id,
+                    "content": str(result)[:4000],
+                })
+            except Exception as exc:
+                err = f"Error: {exc}"
+                all_tool_summaries.append(f"⚠️ {t_name}: {err}")
+                tool_result_content.append({
+                    "type": "tool_result",
+                    "tool_use_id": tu.id,
+                    "content": err,
+                    "is_error": True,
+                })
+
+        # Feed results back as user message for next turn
+        current_messages.append({"role": "user", "content": tool_result_content})
+
+    await _log_ai_run(agent, model_key, total_input, total_output, elapsed_ms, True)
+
+    return {
+        "text": final_text or (all_tool_summaries[0] if all_tool_summaries else ""),
+        "tool_calls": [],  # already executed inside the loop
+        "model": model_key,
+    }
 
 
 async def chat_json(
