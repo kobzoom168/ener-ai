@@ -1050,6 +1050,10 @@ async def msg_fallback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     from app.core import diagnostics as diag
+    if diag.is_communication_followup_intent(text):
+        reply = diag.communication_followup_reply_thai(text)
+        await _reply_smart(update, reply)
+        return
     if diag.classify_diagnostic_intent(text):
         report = await diag.diagnose_user_message(text, str(update.effective_chat.id))
         for chunk in diag.split_telegram_chunks(report):

@@ -4562,7 +4562,7 @@ async def _workspace_generate_reply(
         {"role": row["role"], "content": row["content"]}
         for row in await _workspace_history_rows(project_id=project_id, limit=40)
     ]
-    system_prompt = await _build_system_prompt()
+    system_prompt = await _build_system_prompt(text)
     availability = get_model_availability()
     selected_model = str(preferred_model or "").strip().lower() or None
     response: dict[str, object]
@@ -7209,7 +7209,7 @@ async def workspace_chat_stream(request: Request):
         )
         await db.commit()
 
-    system_prompt = await _build_system_prompt()
+    system_prompt = await _build_system_prompt(message)
     full_reply: list[str] = []
 
     async def generate():

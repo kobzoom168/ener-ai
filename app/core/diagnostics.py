@@ -534,7 +534,84 @@ async def diagnose_bot_unresponsive() -> dict[str, Any]:
     return out
 
 
+_STAKEHOLDER_NO_RESPONSE_PHRASES = (
+    "ลูกค้าไม่ตอบ",
+    "vendor ไม่ตอบ",
+    "ผู้ขายไม่ตอบ",
+    "ทีมไม่ตอบ",
+    "user ไม่ตอบ",
+    "คนไข้ไม่ตอบ",
+    "เขาไม่ตอบ",
+)
+
+_DIAG_TECH_STRICT_RE = re.compile(
+    r"\b(bot|system|server|webhook|telegram|api|error|log|otp)\b",
+    re.I,
+)
+
+
+def has_diagnostic_tech_context_strict(text: str) -> bool:
+    """True if user explicitly mentions stack/diagnostic topics (guard for stakeholder routing)."""
+    raw = text or ""
+    t = raw.lower()
+    if _DIAG_TECH_STRICT_RE.search(t):
+        return True
+    if "บอท" in raw or "ระบบ" in raw:
+        return True
+    return False
+
+
+_ENGINEERING_TOPIC_RE = re.compile(
+    r"\b(ssh|server|webhooks?|telegram|bots?|system|apis?|errors?|logs?|otp|debug|diagnostics?|"
+    r"repos?|repositories|github|gitlab|docker|deploy|sourcecode|source\s*code)\b",
+    re.I,
+)
+
+
+def user_message_touches_engineering_topics(text: str) -> bool:
+    """Broad detector for when the user is asking about stack / infra / code (Main Chat scope guard)."""
+    raw = text or ""
+    t = raw.lower()
+    if _ENGINEERING_TOPIC_RE.search(t):
+        return True
+    if "บอท" in raw or "ระบบ" in raw or "โค้ด" in raw:
+        return True
+    return False
+
+
+def matches_stakeholder_no_response_phrase(text: str) -> bool:
+    th = text or ""
+    t = th.lower()
+    for p in _STAKEHOLDER_NO_RESPONSE_PHRASES:
+        if p.lower() in t or p in th:
+            return True
+    return False
+
+
+def is_communication_followup_intent(text: str) -> bool:
+    """Human/vendor/team silence — not Telegram bot / Ener-AI stack (unless user mixes tech terms)."""
+    return matches_stakeholder_no_response_phrase(text) and not has_diagnostic_tech_context_strict(text)
+
+
+def communication_followup_reply_thai(text: str) -> str:
+    """Deterministic coaching reply; must stay free of DevOps/diagnostic vocabulary."""
+    _ = text
+    return (
+        "รับทราบครับ น่าจะเป็นเรื่อง **การติดตามคน** มากกว่าเรื่องฝั่งโปรแกรม\n\n"
+        "**แนวทางสั้น ๆ**\n"
+        "• ส่งข้อความตามแบบสุภาพ ไม่กดดัน ระบุชื่อเรื่องกับสิ่งที่ต้องการชัด ๆ\n"
+        "• เว้นระยะประมาณ 1 วันค่อยตามใหม่ (งานเร่งให้ใส่กำหนดเวลาชัด ๆ)\n"
+        "• ครั้งถัดไปถามว่า “สะดวกอัปเดตช่วงไหน” เพื่อให้ตอบง่ายขึ้น\n\n"
+        "**ตัวอย่างข้อความตาม (ปรับชื่อเรื่องได้)**\n"
+        "สวัสดีครับ ขออนุญาตตามเรื่อง ___ อีกครั้งนะครับ\n"
+        "ถ้าสะดวกช่วยตอบกลับเมื่อไหร่ก็ได้ครับ ขอบคุณมากครับ\n\n"
+        "ถ้าบอกได้ว่าเป็นงานประเภทไหน (งบ / สัญญา / ส่งมอบ) จะช่วยปรับถ้อยคำให้เข้ากับบริบทได้ครับ"
+    )
+
+
 def classify_diagnostic_intent(text: str) -> str | None:
+    if is_communication_followup_intent(text):
+        return None
     t = (text or "").lower()
     th = text or ""
     otp_kw = [

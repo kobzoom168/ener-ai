@@ -1,5 +1,6 @@
 from app.core.agents import log_agent_run
 from app.core.database import get_db
+from app.core.diagnostics import user_message_touches_engineering_topics
 from app.core.event_log import get_agent_context, log_event
 from app.core.memory import (
     extract_and_store_long_term_memories,
@@ -111,7 +112,7 @@ async def _build_self_context() -> str:
 """.strip()
 
 
-async def _build_system_prompt() -> str:
+async def _build_system_prompt(current_user_message: str = "") -> str:
     agent_memory = await get_agent_context("MainChatAgent", ["chat", "conversation", "tools"])
     time_context = get_time_context()
     long_term = await get_long_term_context()
@@ -119,6 +120,18 @@ async def _build_system_prompt() -> str:
     handoff = await _get_model_handoff()
     self_context = await _build_self_context()
     handoff_section = f"\n\n=== Handoff จาก Model ก่อนหน้า ===\n{handoff}" if handoff else ""
+    scope_guard = ""
+    if (current_user_message or "").strip() and not user_message_touches_engineering_topics(
+        current_user_message
+    ):
+        scope_guard = """
+
+=== ขอบเขตบริบท (สำคัญ) ===
+- ถ้าข้อความ **ล่าสุด** ของกบไม่ได้ถามเรื่องฝั่งโปรแกรม/เซิร์ฟเวอร์/SSH/โค้ด/OTP/webhook/repo หรือการดีบักระบบ — **ห้าม** นำบริบทเทคนิคจากรอบก่อนหน้า (เช่น การตรวจสอบแชทบอทหรือรหัส OTP) มาตอบโดยไม่จำเป็น
+- คำว่า "ไม่ตอบ" **ไม่ได้** แปลว่าแชทบอทหรือเครื่องรันครับ — ถ้ากบพูดถึงลูกค้า/ทีม/vendor ให้ตีความเป็น **การสื่อสารกับคน**
+- ตอบตามคำถามปัจจุบันเป็นหลัก ใช้ summary/handoff เฉพาะส่วนที่เกี่ยวกับคำถามนี้โดยตรง
+"""
+
     return build_system_prompt(f"""
 
 {time_context}
@@ -130,6 +143,7 @@ async def _build_system_prompt() -> str:
 {handoff_section}
 
 {self_context}
+{scope_guard}
 
 หมายเหตุ: ข้อมูลเหล่านี้คือสิ่งที่กบบอกไว้ก่อนหน้า จำและใช้ตอบได้เลย
 
@@ -165,7 +179,7 @@ async def _save_messages(chat_id: str, text: str, reply: str) -> None:
 @log_agent_run("MainChatAgent")
 async def run_chat(chat_id: str, text: str) -> str:
     history = await _get_history(chat_id)
-    system_prompt = await _build_system_prompt()
+    system_prompt = await _build_system_prompt(text)
     try:
         reply, pipeline_meta = await run_pipeline(text, history, system_prompt)
     except Exception as exc:
