@@ -2424,6 +2424,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       <a class="nav-link" href="/admin/config">⚙️ Config</a>
       <a class="nav-link" href="/admin/routing">🔀 Routing</a>
       <a class="nav-link" href="/admin/api-status">📡 API Status</a>
+      <a class="nav-link" href="/platform">🚀 Platform</a>
       <a class="nav-link" href="/admin/terminal" target="_blank" rel="noopener noreferrer">💻 Terminal</a>
       <button class="edit-btn" type="button" onclick="fetch('/admin/logout',{{method:'POST'}}).then(() => location.reload())">🚪 Logout</button>
       <button id="edit-btn" class="edit-btn" type="button" onclick="enterEditMode()">✏️ Edit</button>
@@ -8148,6 +8149,271 @@ loadRouting();
 </body>
 </html>"""
     return HTMLResponse(html)
+
+
+def build_platform_html() -> str:
+    return """<!DOCTYPE html>
+<html>
+<head>
+  <title>Ener Platform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root{--bg:#0d0d0d;--card:#1a1a1a;--accent:#7c3aed;--text:#e5e5e5;--subtext:#888;--border:#2a2a2a}
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:Inter,sans-serif;background:var(--bg);color:var(--text);font-size:15px}
+    .header{display:flex;align-items:center;gap:16px;padding:16px 24px;border-bottom:1px solid var(--border);background:#111}
+    .header h1{font-size:18px;font-weight:700}
+    .back-btn{padding:6px 14px;background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);text-decoration:none;font-size:13px}
+    .container{padding:24px;max-width:1200px;margin:0 auto}
+    .server-bar{background:var(--card);border-radius:10px;padding:16px 20px;margin-bottom:20px;display:flex;gap:32px;align-items:center;flex-wrap:wrap}
+    .server-stat label{font-size:11px;color:var(--subtext);text-transform:uppercase;letter-spacing:.05em}
+    .server-stat .val{font-size:18px;font-weight:700;margin-top:2px}
+    .progress-bar{height:6px;background:#333;border-radius:3px;margin-top:4px;min-width:120px}
+    .progress-fill{height:100%;border-radius:3px;background:var(--accent);transition:width .3s}
+    .progress-fill.warn{background:#f59e0b}
+    .progress-fill.danger{background:#ef4444}
+    .section-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+    .section-title{font-size:16px;font-weight:600}
+    .btn{padding:8px 16px;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:500;font-family:inherit}
+    .btn-primary{background:var(--accent);color:white}
+    .btn-sm{padding:5px 12px;font-size:12px;border-radius:6px}
+    .btn-ghost{background:var(--card);color:var(--text);border:1px solid var(--border)}
+    .btn-danger{background:#2d0000;color:#ef4444;border:1px solid #ef4444}
+    .project-card{background:var(--card);border-radius:10px;padding:16px 20px;margin-bottom:12px;border:1px solid var(--border)}
+    .project-card.running{border-left:3px solid #22c55e}
+    .project-card.stopped{border-left:3px solid #555}
+    .project-card.deploying{border-left:3px solid #f59e0b}
+    .project-card.failed{border-left:3px solid #ef4444}
+    .project-header{display:flex;justify-content:space-between;align-items:center}
+    .project-name{font-size:16px;font-weight:600}
+    .project-meta{font-size:12px;color:var(--subtext);margin-top:4px}
+    .badge{padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600}
+    .badge-running{background:#052e16;color:#22c55e}
+    .badge-stopped{background:#1a1a1a;color:#888}
+    .badge-deploying{background:#451a03;color:#f59e0b}
+    .badge-failed{background:#2d0000;color:#ef4444}
+    .project-actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+    .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;z-index:100}
+    .modal-overlay.open{display:flex}
+    .modal{background:#141414;border-radius:12px;width:90%;max-width:800px;max-height:80vh;display:flex;flex-direction:column;border:1px solid var(--border)}
+    .modal-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+    .modal-body{flex:1;overflow:auto;padding:16px;font-family:monospace;font-size:13px;white-space:pre-wrap;color:#aaa;line-height:1.6}
+    .close-btn{background:none;border:none;color:var(--subtext);cursor:pointer;font-size:20px}
+    .form-group{margin-bottom:16px}
+    .form-group label{display:block;font-size:13px;color:var(--subtext);margin-bottom:6px}
+    .form-group input,.form-group select{width:100%;padding:9px 12px;background:#222;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;font-family:inherit}
+    .toast{position:fixed;bottom:24px;right:24px;padding:10px 20px;background:#333;color:white;border-radius:8px;font-size:14px;display:none;z-index:999}
+  </style>
+</head>
+<body>
+<div class="header">
+  <a href="/admin" class="back-btn">← Admin</a>
+  <h1>🚀 Ener Platform</h1>
+  <div id="server-status" style="margin-left:auto;font-size:13px;color:var(--subtext)">Loading...</div>
+</div>
+<div class="container">
+  <div class="server-bar" id="server-bar">
+    <div class="server-stat">
+      <label>CPU</label>
+      <div class="val" id="srv-cpu">-</div>
+      <div class="progress-bar"><div class="progress-fill" id="srv-cpu-bar" style="width:0%"></div></div>
+    </div>
+    <div class="server-stat">
+      <label>RAM</label>
+      <div class="val" id="srv-ram">-</div>
+      <div class="progress-bar"><div class="progress-fill" id="srv-ram-bar" style="width:0%"></div></div>
+    </div>
+    <div class="server-stat">
+      <label>Disk</label>
+      <div class="val" id="srv-disk">-</div>
+      <div class="progress-bar"><div class="progress-fill" id="srv-disk-bar" style="width:0%"></div></div>
+    </div>
+    <div style="margin-left:auto;font-size:12px;color:var(--subtext)">CPX32 · 4CPU 8GB · 204.168.246.103</div>
+  </div>
+  <div class="section-header">
+    <div class="section-title">Projects</div>
+    <button class="btn btn-primary" onclick="showCreateModal()">+ New Project</button>
+  </div>
+  <div id="projects-list">Loading...</div>
+</div>
+
+<!-- Logs Modal -->
+<div class="modal-overlay" id="logs-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <span id="logs-title">Logs</span>
+      <button class="close-btn" onclick="closeLogsModal()">×</button>
+    </div>
+    <div class="modal-body" id="logs-content">Loading...</div>
+  </div>
+</div>
+
+<!-- Create Modal -->
+<div class="modal-overlay" id="create-modal">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-header">
+      <span>New Project</span>
+      <button class="close-btn" onclick="closeCreateModal()">×</button>
+    </div>
+    <div class="modal-body" style="padding:20px;font-family:inherit">
+      <div class="form-group"><label>Project Name</label><input id="new-name" type="text" placeholder="ener-scan"></div>
+      <div class="form-group"><label>Type</label>
+        <select id="new-type">
+          <option value="nodejs">Node.js</option>
+          <option value="python">Python/FastAPI</option>
+          <option value="typescript">TypeScript</option>
+          <option value="static">Static HTML</option>
+        </select>
+      </div>
+      <div class="form-group"><label>Domain (optional)</label><input id="new-domain" type="text" placeholder="scan.my-ener.uk"></div>
+      <div class="form-group"><label>Memory Limit</label>
+        <select id="new-memory">
+          <option value="512m">512 MB</option>
+          <option value="768m" selected>768 MB</option>
+          <option value="1024m">1 GB</option>
+          <option value="2048m">2 GB</option>
+        </select>
+      </div>
+      <button class="btn btn-primary" style="width:100%" onclick="createProject()">Create Project</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<script>
+const BADGE={running:'<span class="badge badge-running">&#9679; Running</span>',stopped:'<span class="badge badge-stopped">&#9675; Stopped</span>',deploying:'<span class="badge badge-deploying">&#8635; Deploying</span>',failed:'<span class="badge badge-failed">&#10005; Failed</span>'};
+async function api(url,opts={}){const r=await fetch(url,{headers:{'Content-Type':'application/json'},credentials:'same-origin',...opts});return r.json()}
+function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.style.display='block';setTimeout(()=>t.style.display='none',3000)}
+function setBarColor(el,pct){el.style.width=pct+'%';el.className='progress-fill'+(pct>85?' danger':pct>70?' warn':'')}
+async function loadServerMetrics(){
+  try{
+    const d=await api('/platform/api/server/metrics');
+    document.getElementById('srv-cpu').textContent=d.cpu_percent.toFixed(1)+'%';
+    document.getElementById('srv-ram').textContent=Math.round(d.ram_used_mb/1024*10)/10+'/'+ Math.round(d.ram_total_mb/1024)+' GB';
+    document.getElementById('srv-disk').textContent=d.disk_used_gb+'/'+d.disk_total_gb+' GB';
+    setBarColor(document.getElementById('srv-cpu-bar'),d.cpu_percent);
+    setBarColor(document.getElementById('srv-ram-bar'),d.ram_percent);
+    setBarColor(document.getElementById('srv-disk-bar'),d.disk_percent);
+    document.getElementById('server-status').textContent='Updated '+new Date().toLocaleTimeString('th-TH');
+  }catch(e){document.getElementById('server-status').textContent='Error loading metrics'}
+}
+async function loadProjects(){
+  const d=await api('/platform/api/projects');
+  const list=document.getElementById('projects-list');
+  if(!d.projects||!d.projects.length){list.innerHTML='<div style="color:var(--subtext);padding:32px;text-align:center">No projects yet — create one!</div>';return}
+  list.innerHTML=d.projects.map(p=>`
+    <div class="project-card ${p.status}">
+      <div class="project-header">
+        <div>
+          <div class="project-name">${p.name}</div>
+          <div class="project-meta">${p.domain||'-'} &nbsp;&#183;&nbsp; :${p.port||'-'} &nbsp;&#183;&nbsp; ${p.type}</div>
+        </div>
+        ${BADGE[p.status]||BADGE.stopped}
+      </div>
+      <div class="project-actions">
+        <button class="btn btn-sm btn-primary" onclick="deployProject('${p.slug}')">&#128640; Deploy</button>
+        <button class="btn btn-sm btn-ghost" onclick="restartProject('${p.slug}')">&#8635; Restart</button>
+        <button class="btn btn-sm btn-ghost" onclick="showLogs('${p.slug}')">&#128203; Logs</button>
+        <button class="btn btn-sm btn-danger" onclick="stopProject('${p.slug}')">&#9632; Stop</button>
+      </div>
+    </div>`).join('');
+}
+async function deployProject(slug){showToast('Deploying '+slug+'...');const r=await api('/platform/api/projects/'+slug+'/deploy',{method:'POST'});showToast(r.ok?'Deploy success!':'Deploy failed: '+(r.output||'').slice(0,80));loadProjects()}
+async function stopProject(slug){const r=await api('/platform/api/projects/'+slug+'/stop',{method:'POST'});showToast(r.ok?'Stopped':'Error: '+(r.output||'').slice(0,80));loadProjects()}
+async function restartProject(slug){const r=await api('/platform/api/projects/'+slug+'/restart',{method:'POST'});showToast(r.ok?'Restarted':'Error: '+(r.output||'').slice(0,80));loadProjects()}
+async function showLogs(slug){document.getElementById('logs-title').textContent=slug+' — Logs';document.getElementById('logs-content').textContent='Loading...';document.getElementById('logs-modal').classList.add('open');const r=await api('/platform/api/projects/'+slug+'/logs?lines=100');document.getElementById('logs-content').textContent=r.logs||'No logs'}
+function closeLogsModal(){document.getElementById('logs-modal').classList.remove('open')}
+function showCreateModal(){document.getElementById('create-modal').classList.add('open')}
+function closeCreateModal(){document.getElementById('create-modal').classList.remove('open')}
+async function createProject(){
+  const name=document.getElementById('new-name').value.trim();
+  if(!name){showToast('กรุณาใส่ชื่อ project');return}
+  const r=await api('/platform/api/projects/create',{method:'POST',body:JSON.stringify({name,type:document.getElementById('new-type').value,domain:document.getElementById('new-domain').value.trim()||null,memory_limit:document.getElementById('new-memory').value})});
+  if(r.ok){showToast('Created: '+name);closeCreateModal();loadProjects()}else{showToast('Error: '+(r.error||'Failed'))}
+}
+loadServerMetrics();loadProjects();
+setInterval(loadServerMetrics,10000);setInterval(loadProjects,15000);
+</script>
+</body></html>"""
+
+
+# ── Platform API routes ───────────────────────────────────────────────────────
+
+@app.get("/platform")
+async def platform_page(request: Request):
+    await _require_admin(request)
+    return HTMLResponse(build_platform_html())
+
+
+@app.get("/platform/api/projects")
+async def platform_projects_list(request: Request):
+    await _require_admin(request)
+    from app.core.platform_agent import get_all_projects
+    projects = await get_all_projects()
+    return JSONResponse({"projects": projects})
+
+
+@app.post("/platform/api/projects/create")
+async def platform_create_project(request: Request):
+    await _require_admin(request)
+    body = await request.json()
+    from app.core.platform_agent import create_project
+    result = await create_project(
+        name=body.get("name", ""),
+        project_type=body.get("type", "nodejs"),
+        port=body.get("port"),
+        domain=body.get("domain"),
+        memory_limit=body.get("memory_limit", "768m"),
+    )
+    return JSONResponse(result)
+
+
+@app.post("/platform/api/projects/{slug}/deploy")
+async def platform_deploy_project(slug: str, request: Request):
+    await _require_admin(request)
+    from app.core.platform_agent import deploy_project
+    result = await deploy_project(slug)
+    return JSONResponse(result)
+
+
+@app.post("/platform/api/projects/{slug}/stop")
+async def platform_stop_project(slug: str, request: Request):
+    await _require_admin(request)
+    from app.core.platform_agent import stop_project
+    result = await stop_project(slug)
+    return JSONResponse(result)
+
+
+@app.post("/platform/api/projects/{slug}/restart")
+async def platform_restart_project(slug: str, request: Request):
+    await _require_admin(request)
+    from app.core.platform_agent import restart_project
+    result = await restart_project(slug)
+    return JSONResponse(result)
+
+
+@app.get("/platform/api/projects/{slug}/logs")
+async def platform_project_logs(slug: str, request: Request, lines: int = 50):
+    await _require_admin(request)
+    from app.core.platform_agent import get_project_logs
+    logs = await get_project_logs(slug, lines)
+    return JSONResponse({"logs": logs})
+
+
+@app.get("/platform/api/projects/{slug}/metrics")
+async def platform_project_metrics(slug: str, request: Request):
+    await _require_admin(request)
+    from app.core.platform_agent import get_project_metrics
+    metrics = await get_project_metrics(slug)
+    return JSONResponse(metrics)
+
+
+@app.get("/platform/api/server/metrics")
+async def platform_server_metrics(request: Request):
+    await _require_admin(request)
+    from app.core.platform_agent import get_server_metrics
+    metrics = await get_server_metrics()
+    return JSONResponse(metrics)
 
 
 @app.get("/admin/routing")

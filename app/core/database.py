@@ -285,6 +285,56 @@ async def init_db():
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS platform_projects (
+                id TEXT PRIMARY KEY,
+                name TEXT UNIQUE NOT NULL,
+                slug TEXT UNIQUE NOT NULL,
+                display_name TEXT,
+                type TEXT DEFAULT 'nodejs',
+                status TEXT DEFAULT 'stopped',
+                port INTEGER,
+                domain TEXT,
+                repo_path TEXT,
+                compose_path TEXT,
+                server_id TEXT DEFAULT 'local',
+                memory_limit TEXT DEFAULT '768m',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                last_deploy DATETIME
+            );
+
+            CREATE TABLE IF NOT EXISTS platform_servers (
+                id TEXT PRIMARY KEY,
+                provider TEXT DEFAULT 'hetzner',
+                name TEXT NOT NULL,
+                public_ip TEXT,
+                status TEXT DEFAULT 'active',
+                cpu_cores INTEGER,
+                ram_mb INTEGER,
+                disk_gb INTEGER,
+                monthly_cost_eur REAL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS platform_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                cpu_percent REAL,
+                memory_mb INTEGER,
+                memory_limit_mb INTEGER,
+                status TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS platform_deploys (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                commit TEXT,
+                log TEXT,
+                deployed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE INDEX IF NOT EXISTS idx_agent_events_agent
                 ON agent_events(agent_name, result, created_at);
             CREATE INDEX IF NOT EXISTS idx_agent_events_tags
@@ -380,6 +430,13 @@ async def init_db():
                 ("system",          "groq",            "ระบบ / Code introspection"),
                 ("code_agent",      "haiku",           "Code Agent / แก้ไฟล์จริง"),
             ],
+        )
+        await db.execute(
+            """INSERT OR IGNORE INTO platform_servers
+               (id, provider, name, public_ip, status, cpu_cores, ram_mb, disk_gb, monthly_cost_eur)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            ("local", "hetzner", "CPX32-main", "204.168.246.103",
+             "active", 4, 8192, 80, 16.49),
         )
         await db.commit()
 
