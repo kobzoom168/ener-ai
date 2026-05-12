@@ -267,13 +267,17 @@ async def apply_code_change(request_id: str) -> dict:
             # 6. Push
             await run_git(["push", "origin", "main"])
 
+            # 7. Auto deploy
+            deploy_result = await deploy_after_apply()
+            deploy_msg = "🚀 Deploy สำเร็จ!" if deploy_result["ok"] else "⚠️ Deploy ล้มเหลว รัน deploy เองได้"
+
             await update_code_request_status(request_id, "success", work_branch=branch)
 
             return {
                 "ok": True,
                 "files_written": written,
                 "branch": branch,
-                "message": "Changes applied and pushed to main ✅",
+                "message": f"Changes applied and pushed ✅\n{deploy_msg}",
             }
 
         except Exception as exc:
