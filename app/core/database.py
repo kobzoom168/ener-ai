@@ -330,7 +330,7 @@ async def init_db():
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,
                 status TEXT DEFAULT 'pending',
-                commit TEXT,
+                git_commit TEXT,
                 log TEXT,
                 deployed_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
