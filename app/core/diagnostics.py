@@ -6,8 +6,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import re
 import subprocess
 import time
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -27,6 +30,51 @@ _K_TERM_OTP_LAST_SENT = "terminal_otp_last_sent"
 _LOG_DIR = Path("/var/log/ener-ai")
 _REPO_ROOT = Path("/app")
 _TELEGRAM_API = "https://api.telegram.org"
+
+_log = logging.getLogger("ener-ai.diagnostics")
+
+
+def sanitize_diagnostic_text(text: str | None) -> str:
+    """Redact secrets and identifiers before logs/diagnostic output."""
+    if text is None:
+        return ""
+    s = str(text)
+    # Telegram bot token (numeric:id or bot<id>:secret)
+    s = re.sub(r"\bbot\d{5,}:[A-Za-z0-9_-]{20,}\b", "bot[REDACTED]", s, flags=re.I)
+    s = re.sub(r"\b\d{8,12}:[A-Za-z0-9_-]{25,}\b", "[BOT_TOKEN]", s)
+    # Bearer / Basic
+    s = re.sub(r"(?i)(Bearer\s+)[A-Za-z0-9._\-\+/=]{8,}", r"\1[REDACTED]", s)
+    s = re.sub(r"(?i)(Basic\s+)[A-Za-z0-9+/=]{8,}", r"\1[REDACTED]", s)
+    # Authorization header or assignment
+    s = re.sub(r"(?i)(Authorization\s*[:=]\s*)([^\s\n\r;]{6,})", r"\1[REDACTED]", s)
+    # api_key / password / secret / token style key=value
+    s = re.sub(
+        r'(?i)(["\']?(?:api[_-]?key|password|client_secret|secret|token)["\']?\s*[:=]\s*)'
+        r'(["\']?)([^\s"\'\],}\]]{4,})\2',
+        r"\1\2[REDACTED]\2",
+        s,
+    )
+    s = re.sub(
+        r"(?i)\b(api[_-]?key|password|secret|token)\s*=\s*([^\s&\]\}\"]{4,})",
+        r"\1=[REDACTED]",
+        s,
+    )
+    # 6-digit OTP near OTP / รหัส
+    s = re.sub(
+        r"((?:\b(?:otp)\b|OTP|รหัส(?:\s*OTP)?)[^\d]{0,30}?)(\d{6})\b",
+        r"\1******",
+        s,
+        flags=re.I,
+    )
+    s = re.sub(
+        r"(\d{6})([^\d]{0,20}?(?:\b(?:otp)\b|OTP|รหัส))",
+        r"******\2",
+        s,
+        flags=re.I,
+    )
+    # Long numeric ids (e.g. Telegram chat_id)
+    s = re.sub(r"\b-?\d{12,}\b", "[CHAT_ID]", s)
+    return s
 
 
 def _mask_ip(ip: str) -> str:
@@ -64,7 +112,8 @@ async def log_otp_event(
     """Persist OTP-related forensic event (never stores OTP code)."""
     path = method = referer = user_agent = ""
     client_ip = ""
-    session_present = session_valid = auth_present = 0
+    session_present = auth_present = 0
+    session_valid: int | None = None
     if request is not None:
         try:
             path = str(getattr(request.url, "path", "") or "")
@@ -90,8 +139,7 @@ async def log_otp_event(
             auth_present = 1 if auth.startswith("Basic ") else 0
         except Exception:
             auth_present = 0
-        # session_valid requires async session check — omitted intentionally (no false positives)
-        session_valid = 0
+        # session_valid requires async session check — unknown => NULL (not 0 = "invalid")
 
     meta_json = json.dumps(metadata or {}, ensure_ascii=False)[:4000]
     try:
@@ -116,8 +164,13 @@ async def log_otp_event(
                 ),
             )
             await db.commit()
-    except Exception:
-        pass
+    except Exception as exc:
+        _log.warning(
+            "OTP_AUDIT_LOG_FAILED event_type=%s err=%s",
+            event_type,
+            exc,
+            exc_info=False,
+        )
 
 
 async def collect_otp_state() -> dict[str, Any]:
@@ -189,9 +242,43 @@ async def collect_otp_audit_events(hours: int = 6) -> list[dict[str, Any]]:
                 (rel,),
             )
             rows = await cur.fetchall()
-        return [dict(r) for r in rows]
+        out = [dict(r) for r in rows]
+        for d in out:
+            for k in ("user_agent", "referer", "reason", "metadata_json", "path", "method", "client_ip"):
+                if d.get(k) is not None:
+                    d[k] = sanitize_diagnostic_text(str(d[k]))
+        return out
     except Exception:
         return []
+
+
+async def log_diagnostic_audit(action: str, details: str = "") -> None:
+    det = sanitize_diagnostic_text(str(details))[:2000]
+    try:
+        async with get_db() as db:
+            await db.execute(
+                "INSERT INTO audit_logs (action, details) VALUES (?, ?)",
+                (action, det),
+            )
+            await db.commit()
+    except Exception as exc:
+        _log.warning("DIAG_AUDIT_LOG_FAILED action=%s err=%s", action, exc)
+
+
+async def prune_otp_audit_logs(days: int = 90) -> int:
+    d = max(7, min(int(days), 3650))
+    try:
+        async with get_db() as db:
+            cur = await db.execute(
+                "DELETE FROM otp_audit_logs WHERE datetime(created_at) < datetime('now', ?)",
+                (f"-{d} days",),
+            )
+            await db.commit()
+            n = cur.rowcount
+            return int(n) if n is not None and n >= 0 else 0
+    except Exception as exc:
+        _log.warning("PRUNE_OTP_AUDIT_LOGS_FAILED err=%s", exc)
+        return 0
 
 
 async def collect_recent_app_logs(keywords: list[str], limit: int = 100) -> dict[str, Any]:
@@ -215,7 +302,7 @@ async def collect_recent_app_logs(keywords: list[str], limit: int = 100) -> dict
             for line in reversed(text[-5000:]):
                 low = line.lower()
                 if any(k in low for k in kw_lower):
-                    matched.append(line[:500])
+                    matched.append(sanitize_diagnostic_text(line[:500]))
                 if len(matched) >= limit:
                     break
             if len(matched) >= limit:
@@ -247,11 +334,62 @@ async def collect_recent_git_context() -> dict[str, Any]:
         )
         return {
             "status": "ok",
-            "log_oneline": (log_r.stdout or log_r.stderr or "")[:2000],
-            "head_stat": (show_r.stdout or show_r.stderr or "")[:2000],
+            "log_oneline": sanitize_diagnostic_text((log_r.stdout or log_r.stderr or "")[:2000]),
+            "head_stat": sanitize_diagnostic_text((show_r.stdout or show_r.stderr or "")[:2000]),
         }
     except Exception as exc:
-        return {"status": "no_git_access", "detail": str(exc)[:200]}
+        return {"status": "no_git_access", "detail": sanitize_diagnostic_text(str(exc)[:200])}
+
+
+def _session_valid_label(v: Any) -> str:
+    if v == 1:
+        return "valid"
+    return "unknown"
+
+
+def _best_precursor_event(events: list[dict[str, Any]], sent_idx: int) -> dict[str, Any] | None:
+    """Within 60s before SENT, pick prior event with closest IP/UA/path match."""
+    sent = events[sent_idx]
+    t_sent = _parse_ts(str(sent.get("created_at") or ""))
+    if not t_sent:
+        if sent_idx > 0:
+            return events[sent_idx - 1]
+        return None
+    best: tuple[float, float, dict[str, Any]] | None = None
+    for j in range(sent_idx):
+        e = events[j]
+        t = _parse_ts(str(e.get("created_at") or ""))
+        if not t:
+            continue
+        delta = (t_sent - t).total_seconds()
+        if delta < 0 or delta > 60:
+            continue
+        score = 0.0
+        pe, ps = (e.get("path") or ""), (sent.get("path") or "")
+        if pe and ps and pe == ps:
+            score += 3.0
+        elif pe and ps and (pe in ps or ps in pe):
+            score += 1.0
+        ua_e = (e.get("user_agent") or "")[:80]
+        ua_s = (sent.get("user_agent") or "")[:80]
+        if ua_e and ua_s:
+            if ua_e == ua_s:
+                score += 2.0
+            elif ua_e[:32] == ua_s[:32]:
+                score += 1.0
+        if (e.get("client_ip") or "") and (e.get("client_ip") or "") == (sent.get("client_ip") or ""):
+            score += 2.0
+        cand = (score, -delta, e)
+        if best is None or cand[0] > best[0] or (cand[0] == best[0] and cand[1] > best[1]):
+            best = cand
+    if best is not None and best[0] > 0:
+        return best[2]
+    if sent_idx > 0:
+        prev = events[sent_idx - 1]
+        t_prev = _parse_ts(str(prev.get("created_at") or ""))
+        if t_prev and 0 < (t_sent - t_prev).total_seconds() <= 60:
+            return prev
+    return None
 
 
 def analyze_otp_events(events: list[dict[str, Any]]) -> dict[str, Any]:
@@ -278,12 +416,12 @@ def analyze_otp_events(events: list[dict[str, Any]]) -> dict[str, Any]:
             path_counts[p] = path_counts.get(p, 0) + 1
     top_ua = sorted(ua_counts.items(), key=lambda x: -x[1])[:3]
     top_paths = sorted(path_counts.items(), key=lambda x: -x[1])[:5]
-    pre_sent = []
+    pre_sent: list[str | None] = []
     for i, e in enumerate(events):
-        if e.get("event_type") in sent_types and i > 0:
-            pre_sent.append(events[i - 1].get("event_type"))
-    from collections import Counter
-    pre_counter = Counter(pre_sent)
+        if e.get("event_type") in sent_types:
+            pre = _best_precursor_event(events, i)
+            pre_sent.append(pre.get("event_type") if pre else None)
+    pre_counter = Counter([x for x in pre_sent if x])
     return {
         "admin_otp_sent_count": len(sent_rows),
         "intervals_sec": intervals[:20],
@@ -300,22 +438,22 @@ async def diagnose_otp_loop() -> dict[str, Any]:
     try:
         out["evidence"]["otp_state"] = await collect_otp_state()
     except Exception as exc:
-        out["errors"].append(f"otp_state:{exc}")
+        out["errors"].append(sanitize_diagnostic_text(f"otp_state:{exc}")[:300])
     try:
         out["evidence"]["otp_events"] = await collect_otp_audit_events(6)
     except Exception as exc:
-        out["errors"].append(f"otp_events:{exc}")
+        out["errors"].append(sanitize_diagnostic_text(f"otp_events:{exc}")[:300])
     try:
         out["evidence"]["app_logs"] = await collect_recent_app_logs(
             ["OTP", "ADMIN_OTP", "/admin/otp", "Session expired", "Redirect", "error"],
             80,
         )
     except Exception as exc:
-        out["errors"].append(f"app_logs:{exc}")
+        out["errors"].append(sanitize_diagnostic_text(f"app_logs:{exc}")[:300])
     try:
         out["evidence"]["git"] = await collect_recent_git_context()
     except Exception as exc:
-        out["errors"].append(f"git:{exc}")
+        out["errors"].append(sanitize_diagnostic_text(f"git:{exc}")[:300])
     out["evidence"]["analysis"] = analyze_otp_events(out["evidence"].get("otp_events") or [])
     return out
 
@@ -332,7 +470,13 @@ async def diagnose_agent_health() -> dict[str, Any]:
                 ORDER BY datetime(created_at) DESC LIMIT 25
                 """
             )
-            out["evidence"]["memory_agent_events"] = [dict(r) for r in await cur.fetchall()]
+            out["evidence"]["memory_agent_events"] = []
+            for r in await cur.fetchall():
+                d = dict(r)
+                for k in ("summary", "ctx", "agent_name", "result"):
+                    if d.get(k) is not None:
+                        d[k] = sanitize_diagnostic_text(str(d[k]))
+                out["evidence"]["memory_agent_events"].append(d)
             cur = await db.execute(
                 """
                 SELECT agent, model, success, created_at
@@ -344,9 +488,17 @@ async def diagnose_agent_health() -> dict[str, Any]:
             cur = await db.execute(
                 "SELECT action, details, created_at FROM audit_logs ORDER BY datetime(created_at) DESC LIMIT 20"
             )
-            out["evidence"]["audit_tail"] = [dict(r) for r in await cur.fetchall()]
+            audit_rows = []
+            for r in await cur.fetchall():
+                d = dict(r)
+                if d.get("details"):
+                    d["details"] = sanitize_diagnostic_text(str(d["details"]))
+                if d.get("action"):
+                    d["action"] = sanitize_diagnostic_text(str(d["action"]))
+                audit_rows.append(d)
+            out["evidence"]["audit_tail"] = audit_rows
     except Exception as exc:
-        out["errors"].append(str(exc))
+        out["errors"].append(sanitize_diagnostic_text(str(exc))[:400])
     return out
 
 
@@ -364,21 +516,21 @@ async def diagnose_bot_unresponsive() -> dict[str, Any]:
                 data = r.json()
                 out["evidence"]["webhook_result"] = data.get("result") or {}
             else:
-                out["evidence"]["webhook_body"] = r.text[:500]
+                out["evidence"]["webhook_body"] = sanitize_diagnostic_text(r.text[:500])
     except Exception as exc:
-        out["errors"].append(f"webhook:{exc}")
+        out["errors"].append(sanitize_diagnostic_text(f"webhook:{exc}")[:300])
     try:
         from app.core.ai import get_model_availability_async
         out["evidence"]["models"] = await get_model_availability_async()
     except Exception as exc:
-        out["errors"].append(f"models:{exc}")
+        out["errors"].append(sanitize_diagnostic_text(f"models:{exc}")[:300])
     try:
         async with get_db() as db:
             cur = await db.execute("SELECT COUNT(*) as c FROM messages")
             row = await cur.fetchone()
             out["evidence"]["messages_count"] = row["c"] if row else None
     except Exception as exc:
-        out["errors"].append(f"db:{exc}")
+        out["errors"].append(sanitize_diagnostic_text(f"db:{exc}")[:300])
     return out
 
 
@@ -393,7 +545,12 @@ def classify_diagnostic_intent(text: str) -> str | None:
     if any(k in t for k in otp_kw) or ("otp" in t and any(x in t for x in ["ส่ง", "วน", "ทำไม", "เช็ค", "ซ้ำ", "loop", "รัว", "ตลอด", "รหัส"])):
         return "otp"
     bot_kw = [
-        "bot ไม่ตอบ", "บอทไม่ตอบ", "ไม่ตอบ", "webhook", "telegram ไม่ทำงาน",
+        "bot ไม่ตอบ",
+        "บอทไม่ตอบ",
+        "telegram ไม่ตอบ",
+        "webhook",
+        "ระบบไม่ตอบ",
+        "ener ไม่ตอบ",
     ]
     if any(k in t for k in bot_kw):
         return "bot"
@@ -453,9 +610,11 @@ def format_otp_diagnosis_thai(data: dict[str, Any]) -> str:
     if events:
         lines.append("**หลักฐาน (audit ล่าสุด — ไม่เก็บ OTP code):**")
         for e in events[-8:]:
+            sv = _session_valid_label(e.get("session_valid"))
             lines.append(
                 f"- {e.get('created_at')} **{e.get('event_type')}** path=`{e.get('path')}` "
-                f"method={e.get('method')} ua={(e.get('user_agent') or '')[:60]}… ip={e.get('client_ip')}"
+                f"method={e.get('method')} session={sv} ua={(e.get('user_agent') or '')[:60]}… "
+                f"ip={e.get('client_ip')}"
             )
         lines.append("")
         tp = an.get("top_paths") or []
@@ -466,7 +625,10 @@ def format_otp_diagnosis_thai(data: dict[str, Any]) -> str:
             lines.append("user-agent ที่พบบ่อย: " + "; ".join(f"{ua[:48]} ×{c}" for ua, c in tua[:3]))
         ps = an.get("events_before_sent") or {}
         if ps:
-            lines.append("**event ก่อนหน้า SENT (สรุป):** " + json.dumps(ps, ensure_ascii=False))
+            lines.append(
+                "**event ก่อนหน้า SENT (สรุป):** "
+                + sanitize_diagnostic_text(json.dumps(ps, ensure_ascii=False))
+            )
         lines.append("")
 
     lines.append("**สาเหตุที่เป็นไปได้:**")
@@ -501,11 +663,14 @@ def format_otp_diagnosis_thai(data: dict[str, Any]) -> str:
 
     if errs:
         lines.append("")
-        lines.append("**ข้อจำกัดการเข้าถึง:** " + "; ".join(errs[:4]))
+        lines.append(
+            "**ข้อจำกัดการเข้าถึง:** "
+            + "; ".join(sanitize_diagnostic_text(str(x)) for x in errs[:4])
+        )
         lines.append(
             "ผมยังเข้าถึงบางแหล่งไม่ได้ครบ — **จะไม่อ้างว่า “รันแล้ว” โดยไม่มีผลลัพธ์จริง**"
         )
-    return "\n".join(lines)[:3900]
+    return sanitize_diagnostic_text("\n".join(lines)[:3900])
 
 
 def format_agent_diagnosis_thai(data: dict[str, Any]) -> str:
@@ -515,8 +680,9 @@ def format_agent_diagnosis_thai(data: dict[str, Any]) -> str:
     if rows:
         lines.append("**agent_events (memory ล่าสุด):**")
         for r in rows[:8]:
+            sm = sanitize_diagnostic_text((r.get("summary") or "")[:120])
             lines.append(
-                f"- {r.get('created_at')} `{r.get('agent_name')}` result={r.get('result')} — {(r.get('summary') or '')[:120]}"
+                f"- {r.get('created_at')} `{r.get('agent_name')}` result={r.get('result')} — {sm}"
             )
     else:
         lines.append("ไม่พบ agent_events ที่ match memory ในช่วงล่าสุด")
@@ -528,26 +694,36 @@ def format_agent_diagnosis_thai(data: dict[str, Any]) -> str:
             lines.append(f"- {r.get('created_at')} agent={r.get('agent')} model={r.get('model')}")
     lines.append("")
     if data.get("errors"):
-        lines.append("**ข้อจำกัด:** " + "; ".join(data["errors"][:3]))
+        lines.append(
+            "**ข้อจำกัด:** "
+            + "; ".join(sanitize_diagnostic_text(str(x)) for x in data["errors"][:3])
+        )
     else:
         lines.append("**ความมั่นใจ:** กลาง — อิงจากตาราง DB เท่านั้น ไม่เดา")
-    return "\n".join(lines)[:3900]
+    return sanitize_diagnostic_text("\n".join(lines)[:3900])
 
 
 def format_bot_diagnosis_thai(data: dict[str, Any]) -> str:
     ev = data.get("evidence") or {}
     lines = ["🔎 **ตรวจสอบ Bot / Webhook**", ""]
     wh = ev.get("webhook_result") or {}
-    lines.append(f"**getWebhookInfo:** `{json.dumps(wh, ensure_ascii=False)[:800]}`")
+    wh_raw = sanitize_diagnostic_text(json.dumps(wh, ensure_ascii=False)[:800])
+    lines.append(f"**getWebhookInfo:** `{wh_raw}`")
     lines.append(f"**HTTP:** {ev.get('webhook_http_status')}")
     if ev.get("models"):
-        lines.append(f"**model availability:** {ev.get('models')}")
+        lines.append(
+            "**model availability:** "
+            + sanitize_diagnostic_text(str(ev.get("models")))[:1200]
+        )
     lines.append(f"**messages row count:** {ev.get('messages_count')}")
     lines.append("")
     if data.get("errors"):
-        lines.append("**ข้อจำกัด:** " + "; ".join(data["errors"]))
+        lines.append(
+            "**ข้อจำกัด:** "
+            + "; ".join(sanitize_diagnostic_text(str(x)) for x in data["errors"])
+        )
         lines.append("ถ้าไม่มีสิทธิ์หรือ token ไม่ครบ จะไม่อ้างว่าเช็คครบแล้ว")
-    return "\n".join(lines)[:3900]
+    return sanitize_diagnostic_text("\n".join(lines)[:3900])
 
 
 def format_system_diagnosis_thai(otp_d: dict, agent_d: dict, bot_d: dict) -> str:
@@ -563,35 +739,44 @@ def format_system_diagnosis_thai(otp_d: dict, agent_d: dict, bot_d: dict) -> str
         "### Bot",
         format_bot_diagnosis_thai(bot_d)[:1200],
     ]
-    return "\n".join(parts)[:3900]
+    return sanitize_diagnostic_text("\n".join(parts)[:3900])
 
 
 async def diagnose_user_message(message_text: str, chat_id: str) -> str:
-    _ = chat_id
     intent = classify_diagnostic_intent(message_text)
+    cid = sanitize_diagnostic_text(str(chat_id))
+    preview = sanitize_diagnostic_text((message_text or "")[:120])
     if not intent:
         return (
             "ผมยังจัดประเภทข้อความนี้เป็น diagnostic ไม่ได้ — "
             "ลองพิมพ์คำถามให้ชัด เช่น “ทำไม OTP ส่งตลอด” หรือใช้ `/otp_debug`"
         )
+    await log_diagnostic_audit("DIAG_REQUEST", f"natural intent={intent} chat_id={cid} preview={preview}")
     try:
         if intent == "otp":
             d = await diagnose_otp_loop()
-            return format_otp_diagnosis_thai(d)
-        if intent == "bot":
+            out = format_otp_diagnosis_thai(d)
+        elif intent == "bot":
             d = await diagnose_bot_unresponsive()
-            return format_bot_diagnosis_thai(d)
-        if intent == "agent":
+            out = format_bot_diagnosis_thai(d)
+        elif intent == "agent":
             d = await diagnose_agent_health()
-            return format_agent_diagnosis_thai(d)
-        # system
-        o, a, b = await asyncio.gather(
-            diagnose_otp_loop(),
-            diagnose_agent_health(),
-            diagnose_bot_unresponsive(),
-        )
-        return format_system_diagnosis_thai(o, a, b)
+            out = format_agent_diagnosis_thai(d)
+        else:
+            o, a, b = await asyncio.gather(
+                diagnose_otp_loop(),
+                diagnose_agent_health(),
+                diagnose_bot_unresponsive(),
+            )
+            out = format_system_diagnosis_thai(o, a, b)
+        await log_diagnostic_audit("DIAG_SUCCESS", f"natural intent={intent} chat_id={cid}")
+        return out
     except Exception as exc:
+        await log_diagnostic_audit(
+            "DIAG_FAILED",
+            f"natural intent={intent} chat_id={cid} err={type(exc).__name__}:{exc!s}"[:1900],
+        )
+        _log.warning("DIAGNOSE_USER_MESSAGE_FAILED intent=%s err=%s", intent, exc)
         return (
             "ผมยังเข้าถึง log/server ไม่ได้หรือเกิดข้อผิดพลาดขณะรวบรวมหลักฐาน จึงวิเคราะห์จากข้อมูลที่มีเท่านั้น\n"
             f"รายละเอียดทางเทคนิค: `{type(exc).__name__}`"

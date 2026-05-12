@@ -166,6 +166,13 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
         deleted = await prune_old_events(30)
         await _log_audit("agent_events_pruned", f"deleted={deleted}")
 
+    @log_agent_run("OtpAuditPruneAgent", triggered_by="scheduler")
+    async def prune_otp_audit_job():
+        from app.core import diagnostics as diag
+
+        deleted = await diag.prune_otp_audit_logs(90)
+        await _log_audit("otp_audit_logs_pruned", f"deleted_rows={deleted}")
+
     @log_agent_run("BackupAgent", triggered_by="scheduler")
     async def run_daily_backup():
         db_file = _database_file()
@@ -322,6 +329,12 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
         prune_agent_events,
         CronTrigger(day_of_week="sun", hour=3, minute=15, timezone=_BANGKOK),
         id="agent_events_prune",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        prune_otp_audit_job,
+        CronTrigger(day_of_week="sun", hour=3, minute=40, timezone=_BANGKOK),
+        id="otp_audit_logs_prune",
         replace_existing=True,
     )
     scheduler.add_job(

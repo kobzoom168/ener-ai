@@ -295,11 +295,15 @@ async def init_db():
                 user_agent TEXT,
                 referer TEXT,
                 session_present INTEGER DEFAULT 0,
-                session_valid INTEGER DEFAULT 0,
+                session_valid INTEGER,
                 auth_header_present INTEGER DEFAULT 0,
                 reason TEXT,
                 metadata_json TEXT
             );
+
+            CREATE INDEX IF NOT EXISTS idx_otp_audit_created ON otp_audit_logs(created_at);
+            CREATE INDEX IF NOT EXISTS idx_otp_audit_event_created ON otp_audit_logs(event_type, created_at);
+            CREATE INDEX IF NOT EXISTS idx_otp_audit_path_created ON otp_audit_logs(path, created_at);
 
             CREATE TABLE IF NOT EXISTS platform_projects (
                 id TEXT PRIMARY KEY,

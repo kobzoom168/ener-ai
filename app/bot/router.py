@@ -966,37 +966,72 @@ async def cmd_diag(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     sub = parts[1].strip().lower() if len(parts) > 1 else ""
     from app.core import diagnostics as diag
 
-    if not sub:
-        o, a, b = await asyncio.gather(
-            diag.diagnose_otp_loop(),
-            diag.diagnose_agent_health(),
-            diag.diagnose_bot_unresponsive(),
-        )
-        txt = diag.format_system_diagnosis_thai(o, a, b)
-    elif sub in ("otp", "otp_loop", "otp-loop"):
-        d = await diag.diagnose_otp_loop()
-        txt = diag.format_otp_diagnosis_thai(d)
-    elif sub in ("memory", "agent", "agents"):
-        d = await diag.diagnose_agent_health()
-        txt = diag.format_agent_diagnosis_thai(d)
-    elif sub in ("bot", "telegram", "webhook"):
-        d = await diag.diagnose_bot_unresponsive()
-        txt = diag.format_bot_diagnosis_thai(d)
-    else:
-        txt = "ใช้: `/diag` หรือ `/diag otp` · `/diag memory` · `/diag bot`"
+    chat_id = str(update.effective_chat.id) if update.effective_chat else ""
+    await diag.log_diagnostic_audit(
+        "DIAG_REQUEST",
+        f"cmd=diag sub={sub or 'full'} chat_id={chat_id}",
+    )
+    try:
+        if not sub:
+            o, a, b = await asyncio.gather(
+                diag.diagnose_otp_loop(),
+                diag.diagnose_agent_health(),
+                diag.diagnose_bot_unresponsive(),
+            )
+            txt = diag.format_system_diagnosis_thai(o, a, b)
+        elif sub in ("otp", "otp_loop", "otp-loop"):
+            d = await diag.diagnose_otp_loop()
+            txt = diag.format_otp_diagnosis_thai(d)
+        elif sub in ("memory", "agent", "agents"):
+            d = await diag.diagnose_agent_health()
+            txt = diag.format_agent_diagnosis_thai(d)
+        elif sub in ("bot", "telegram", "webhook"):
+            d = await diag.diagnose_bot_unresponsive()
+            txt = diag.format_bot_diagnosis_thai(d)
+        else:
+            txt = "ใช้: `/diag` หรือ `/diag otp` · `/diag memory` · `/diag bot`"
 
-    for chunk in diag.split_telegram_chunks(txt):
-        await _reply_smart(update, chunk)
+        for chunk in diag.split_telegram_chunks(txt):
+            await _reply_smart(update, chunk)
+        await diag.log_diagnostic_audit(
+            "DIAG_SUCCESS",
+            f"cmd=diag sub={sub or 'full'} chat_id={chat_id}",
+        )
+    except Exception as exc:
+        await diag.log_diagnostic_audit(
+            "DIAG_FAILED",
+            f"cmd=diag sub={sub or 'full'} chat_id={chat_id} err={type(exc).__name__}:{exc!s}"[:1900],
+        )
+        logger.warning("cmd_diag failed: %s", exc, exc_info=True)
+        await _reply_smart(
+            update,
+            f"รวบรวม diagnostic ไม่สำเร็จ ({type(exc).__name__}) — ตรวจ audit_logs DIAG_FAILED",
+        )
 
 
 async def cmd_otp_debug(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
     from app.core import diagnostics as diag
-    d = await diag.diagnose_otp_loop()
-    txt = diag.format_otp_diagnosis_thai(d)
-    for chunk in diag.split_telegram_chunks(txt):
-        await _reply_smart(update, chunk)
+
+    chat_id = str(update.effective_chat.id) if update.effective_chat else ""
+    await diag.log_diagnostic_audit("DIAG_REQUEST", f"cmd=otp_debug chat_id={chat_id}")
+    try:
+        d = await diag.diagnose_otp_loop()
+        txt = diag.format_otp_diagnosis_thai(d)
+        for chunk in diag.split_telegram_chunks(txt):
+            await _reply_smart(update, chunk)
+        await diag.log_diagnostic_audit("DIAG_SUCCESS", f"cmd=otp_debug chat_id={chat_id}")
+    except Exception as exc:
+        await diag.log_diagnostic_audit(
+            "DIAG_FAILED",
+            f"cmd=otp_debug chat_id={chat_id} err={type(exc).__name__}:{exc!s}"[:1900],
+        )
+        logger.warning("cmd_otp_debug failed: %s", exc, exc_info=True)
+        await _reply_smart(
+            update,
+            f"รวบรวม OTP diagnostic ไม่สำเร็จ ({type(exc).__name__})",
+        )
 
 
 async def cmd_sys_debug(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
