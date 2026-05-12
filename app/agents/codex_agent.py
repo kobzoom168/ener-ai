@@ -35,7 +35,7 @@ async def run_codex(task: str, directory: str = "/app") -> dict:
         )
         stdout, stderr = await asyncio.wait_for(
             proc.communicate(input=b"1\n"),
-            timeout=120.0,
+            timeout=300.0,
         )
         out = stdout.decode("utf-8", errors="replace")
         err = stderr.decode("utf-8", errors="replace")
