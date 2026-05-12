@@ -5637,6 +5637,7 @@ def build_workspace_html() -> HTMLResponse:
             <option value="">-- หรือเลือก file --</option>
           </select>
           <select id="code-model-select" style="background:#2a2a2a;border:1px solid #7c3aed;border-radius:6px;padding:6px 12px;color:#e5e5e5;font-size:13px;font-weight:500">
+            <option value="codex">⚡ Codex GPT-5.5 — ChatGPT Plus (ฟรี)</option>
             <option value="sonnet">🔴 Claude Sonnet — เก่งสุด (code)</option>
             <option value="haiku" selected>🟠 Claude Haiku — เร็ว ดี</option>
             <option value="deepseek-direct">💛 DeepSeek — reasoning ดี</option>
@@ -6753,6 +6754,8 @@ document.addEventListener('DOMContentLoaded', function() {
     if (!msgs) return;
     msgs.innerHTML += `<div style="align-self:flex-end;background:#2f2f2f;padding:8px 12px;border-radius:12px;font-size:14px;max-width:85%">${question}</div>`;
     const thinkId = 'think-' + Date.now();
+    // Route to Codex CLI if selected
+    if (selectedModel === 'codex') { askCodexAI(question); return; }
     msgs.innerHTML += `<div id="${thinkId}" style="color:#888;font-size:13px;padding:4px">💭 กำลังวิเคราะห์ด้วย ${selectedModel}...</div>`;
     msgs.scrollTop = msgs.scrollHeight;
     try {
