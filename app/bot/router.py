@@ -14,7 +14,14 @@ from telegram.ext import (
     ContextTypes,
 )
 from app.agents import github_agent, gmail_agent, log_keeper, memory_curator, memory_keeper
-from app.agents.monitor_agent import cmd_errors, cmd_logs, cmd_server, cmd_status
+from app.agents.monitor_agent import (
+    cmd_errors,
+    cmd_logs,
+    cmd_server,
+    cmd_status,
+    format_nl_resource_report,
+    get_server_stats,
+)
 from app.agents.news_discovery import approve_source, get_pending_sources_data, list_active_sources
 from app.agents.standup_agent import generate_standup, parse_and_update_from_chat, send_to_line
 from app.agents.tarot_agent import read_cards, read_with_image
@@ -1054,6 +1061,28 @@ async def msg_fallback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         reply = diag.communication_followup_reply_thai(text)
         await _reply_smart(update, reply)
         return
+
+    from app.core.tool_router import classify_system_tool_intent
+
+    st_tool = classify_system_tool_intent(text)
+    if st_tool == "server":
+        stats = get_server_stats()
+        result = format_nl_resource_report(stats)
+        await _reply_smart(update, result)
+        return
+    if st_tool == "status":
+        result = await cmd_status(_agent_triggered_by="user")
+        await _reply_smart(update, result)
+        return
+    if st_tool == "logs":
+        result = await cmd_logs(50, _agent_triggered_by="user")
+        await _reply_smart(update, result)
+        return
+    if st_tool == "errors":
+        result = await cmd_errors(_agent_triggered_by="user")
+        await _reply_smart(update, result)
+        return
+
     if diag.classify_diagnostic_intent(text):
         report = await diag.diagnose_user_message(text, str(update.effective_chat.id))
         for chunk in diag.split_telegram_chunks(report):

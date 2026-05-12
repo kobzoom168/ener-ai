@@ -157,6 +157,25 @@ def get_server_stats() -> dict:
     }
 
 
+def format_nl_resource_report(stats: dict) -> str:
+    """Snapshot for natural-language CPU/RAM/disk questions (real psutil, no shell hints)."""
+    top = stats.get("top_processes") or []
+    top_lines = "\n".join(f"- {p}" for p in top[:3]) if top else "- (อ่าน process ไม่ได้)"
+    ok = stats["cpu_percent"] < 85 and stats["ram_percent"] < 90 and stats["disk_percent"] < 90
+    status_line = "สถานะ: ปกติ" if ok else "สถานะ: ควรจับตา (ทรัพยากรใช้งานสูง)"
+    return (
+        "🖥️ **Ener-AI Resource**\n\n"
+        f"CPU: **{stats['cpu_percent']:.1f}%**\n"
+        f"RAM: **{stats['ram_percent']:.1f}%** "
+        f"({stats['ram_used_gb']:.1f}/{stats['ram_total_gb']:.1f} GB)\n"
+        f"Disk: **{stats['disk_percent']:.1f}%** "
+        f"({stats['disk_used_gb']:.1f}/{stats['disk_total_gb']:.1f} GB)\n\n"
+        f"{status_line}\n"
+        "โปรเซสที่ใช้ทรัพยากรสูง:\n"
+        f"{top_lines}\n"
+    )
+
+
 def format_server_stats(stats: dict) -> str:
     """format สำหรับ Telegram"""
     ram_bar = "█" * int(stats["ram_percent"] / 10) + "░" * (10 - int(stats["ram_percent"] / 10))
@@ -349,31 +368,41 @@ async def cmd_server() -> str:
 
 @log_agent_run("MonitorAgent")
 async def cmd_status() -> str:
-    """สรุปสถานะทั้งหมด"""
+    """สรุปสถานะทั้งหมด — ไม่เรียก LLM ถ้า metrics + logs ปกติ"""
     stats = get_server_stats()
     errors = get_docker_logs(lines=50, filter_errors=True)
+    err_stripped = (errors or "").strip()
 
-    prompt = f"""
-สรุปสถานะ Ener-AI server:
-
-Server Stats:
-- CPU: {stats['cpu_percent']}%
-- RAM: {stats['ram_percent']}% ({stats['ram_used_gb']:.1f}GB)
-- Disk: {stats['disk_percent']}%
-
-Recent Errors:
-{errors[:1000]}
-
-ประเมินว่าระบบปกติดีไหม มีอะไรน่ากังวลไหม
-"""
-    summary = await _analyze_with_groq(prompt)
-    if not summary:
-        if "ไม่พบ error" in errors and stats["cpu_percent"] < 80 and stats["ram_percent"] < 85 and stats["disk_percent"] < 80:
-            summary = "ระบบปกติดี ยังไม่เห็นสัญญาณน่ากังวล"
-        else:
-            summary = _basic_error_analysis(errors)
-
+    no_log_errors = (
+        "ไม่พบ error" in err_stripped
+        or "ไม่มี logs" in err_stripped
+        or err_stripped == ""
+    )
+    cpu_ok = stats["cpu_percent"] < 80
+    ram_ok = stats["ram_percent"] < 85
+    disk_ok = stats["disk_percent"] < 80
     stats_text = format_server_stats(stats)
+
+    if no_log_errors and cpu_ok and ram_ok and disk_ok:
+        return f"{stats_text}\n\n📌 สรุป: ระบบปกติดี ไม่พบ error สำคัญ"
+
+    summary = ""
+    if not (no_log_errors and cpu_ok and ram_ok and disk_ok):
+        prompt = (
+            "คุณได้รับเฉพาะหลักฐานด้านล่างนี้เท่านั้น — **ห้าม** อ้าง API version, service ภายนอก, "
+            "หรือข้อมูลที่ไม่ได้ปรากฏใน evidence\n\n"
+            "=== Evidence ===\n"
+            f"CPU: {stats['cpu_percent']:.1f}%\n"
+            f"RAM: {stats['ram_percent']:.1f}% ({stats['ram_used_gb']:.1f}/{stats['ram_total_gb']:.1f} GB)\n"
+            f"Disk: {stats['disk_percent']:.1f}%\n\n"
+            "=== Recent error log excerpt ===\n"
+            f"{errors[:1200]}\n\n"
+            "สรุปสั้น ๆ เป็นภาษาไทย: สภาพทรัพยากร + มีความเสี่ยงจาก logs หรือไม่ (อ้างอิงเฉพาะข้อความใน excerpt)"
+        )
+        summary = await _analyze_with_groq(prompt)
+    if not summary:
+        summary = _basic_error_analysis(errors)
+
     return f"{stats_text}\n\n🤖 AI Analysis:\n{summary}"
 
 
@@ -430,7 +459,7 @@ async def check_and_alert(bot) -> str | None:
         await log_event(
             agent_name="MonitorAgent",
             event_type="warning",
-            summary=f"Alert: {', '.join(issues)}",
+            summary=f"Alert: {issue_summary[:200]}",
             tags=["monitor", "alert"],
             result="success",
         )

@@ -632,13 +632,14 @@ def classify_diagnostic_intent(text: str) -> str | None:
     if any(k in t for k in bot_kw):
         return "bot"
     agent_kw = [
-        "memorykeeper", "memory curator", "memorycurator", "agent ล้ม",
-        "เช็ค error", "ดู log", "เช็คระบบ", "ระบบล่ม",
+        "memorykeeper",
+        "memory curator",
+        "memorycurator",
+        "agent ล้ม",
+        "ระบบล่ม",
     ]
     if any(k in t for k in agent_kw):
         return "agent"
-    if "เช็คระบบ" in th or "check system" in t:
-        return "system"
     return None
 
 
@@ -840,12 +841,10 @@ async def diagnose_user_message(message_text: str, chat_id: str) -> str:
             d = await diagnose_agent_health()
             out = format_agent_diagnosis_thai(d)
         else:
-            o, a, b = await asyncio.gather(
-                diagnose_otp_loop(),
-                diagnose_agent_health(),
-                diagnose_bot_unresponsive(),
+            return (
+                "ผมยังจัดประเภทข้อความนี้เป็น diagnostic ไม่ได้ — "
+                "ลองพิมพ์คำถามให้ชัด เช่น “ทำไม OTP ส่งตลอด” หรือใช้ `/otp_debug`"
             )
-            out = format_system_diagnosis_thai(o, a, b)
         await log_diagnostic_audit("DIAG_SUCCESS", f"natural intent={intent} chat_id={cid}")
         return out
     except Exception as exc:
