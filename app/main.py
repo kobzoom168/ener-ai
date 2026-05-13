@@ -8731,6 +8731,14 @@ async def hw_other_delete(ot_id: int, request: Request):
     return JSONResponse({"ok": True})
 
 
+@app.get("/admin/api/hospital-work/sync-status")
+async def hw_hospital_sync_status(request: Request):
+    await _require_admin(request)
+    from app.core import hospital_work as hw
+
+    return JSONResponse(hw.hospital_admin_sync_info())
+
+
 @app.get("/admin/api/hospital-work/daily-report-preview")
 async def hw_daily_report_preview(request: Request):
     await _require_admin(request)

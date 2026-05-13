@@ -1,9 +1,11 @@
+import logging
 import aiosqlite
 from contextlib import asynccontextmanager
 from pathlib import Path
 from app.core.config import settings
 
 DB_PATH = Path(settings.database_path)
+logger = logging.getLogger(__name__)
 
 
 async def _hospital_column_names(db: aiosqlite.Connection, table: str) -> set[str]:
@@ -15,11 +17,34 @@ async def _hospital_add_column_if_missing(
     db: aiosqlite.Connection, table: str, column: str, sql_type_default: str
 ) -> None:
     cols = await _hospital_column_names(db, table)
-    if column not in cols:
-        await db.execute(f'ALTER TABLE "{table}" ADD COLUMN "{column}" {sql_type_default}')
+    if column in cols:
+        return
+    sql = f'ALTER TABLE "{table}" ADD COLUMN "{column}" {sql_type_default}'
+    try:
+        await db.execute(sql)
+    except Exception as exc:
+        logger.warning(
+            "hospital migration ALTER failed (table=%s column=%s): %s",
+            table,
+            column,
+            exc,
+            exc_info=True,
+        )
 
 
 async def _migrate_hospital_schema(db: aiosqlite.Connection) -> None:
+    """Apply additive hospital_* schema for existing DBs.
+
+    Manual QA checklist (Hospital Work):
+    - init_db on DB that already had pre-57d2c5c hospital_* tables: migration runs,
+      ALTER/INDEX failures are logged (warning) and do not stop startup.
+    - Empty hospital_projects + legacy codes (his_core/lab_lis/pacs_ris): seed
+      real projects (Cloud PBX, Backup Solution, …, Migration DB to AWS).
+    - Soft-delete task/issue/other: list_* hides is_active=0; daily report uses
+      active rows only.
+    - Daily report text: mention from standup_mention; contains Cloud PBX /
+      Backup Solution / Migration DB to AWS when seed applied.
+    """
     cur = await db.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='hospital_projects' LIMIT 1"
     )
@@ -63,10 +88,7 @@ async def _migrate_hospital_schema(db: aiosqlite.Connection) -> None:
         ("hospital_other_tasks", "is_active", "INTEGER DEFAULT 1"),
     ]
     for table, column, ddl in migrations:
-        try:
-            await _hospital_add_column_if_missing(db, table, column, ddl)
-        except Exception:
-            pass
+        await _hospital_add_column_if_missing(db, table, column, ddl)
 
     index_stmts = [
         "CREATE INDEX IF NOT EXISTS idx_hospital_projects_active_sort ON hospital_projects(is_active, sort_order)",
@@ -77,8 +99,13 @@ async def _migrate_hospital_schema(db: aiosqlite.Connection) -> None:
     for stmt in index_stmts:
         try:
             await db.execute(stmt)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "hospital migration CREATE INDEX failed: %s — %s",
+                stmt,
+                exc,
+                exc_info=True,
+            )
 
 
 async def _seed_hospital_work_phase1(db: aiosqlite.Connection) -> None:

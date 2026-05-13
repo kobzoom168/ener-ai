@@ -1,4 +1,13 @@
-"""Hospital Work Dashboard — Phase 1: DB access, daily report preview, CRUD helpers."""
+"""Hospital Work Dashboard — Phase 1: DB access, daily report preview, CRUD helpers.
+
+Manual QA checklist (mirror of database._migrate_hospital_schema docstring):
+- init_db on an old DB: additive columns + indexes; failures log at WARNING, app starts.
+- Legacy-only seed codes → replaced with real projects (Cloud PBX, Backup, …,
+  Migration DB to AWS).
+- Soft delete: task/issue/other rows with is_active=0 disappear from lists and report.
+- Daily report: standup_mention (e.g. @Noom); body mentions Cloud / PBX / Backup /
+  Migration DB when seeded data present.
+"""
 
 from __future__ import annotations
 
@@ -113,6 +122,27 @@ def _issue_open_for_report(status: str | None) -> bool:
     )
 
 
+_EN_MONTH_ABBR = (
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+)
+
+
+def format_report_date_bkk(now: datetime) -> str:
+    """e.g. 13-May-2026 (ICT+7 caller should pass now in BKK)."""
+    return f"{now.day}-{_EN_MONTH_ABBR[now.month - 1]}-{now.year}"
+
+
 def _week_range_label_bkk(now: datetime) -> str:
     wd = now.weekday()
     mon = (now - timedelta(days=wd)).replace(
@@ -131,6 +161,9 @@ def _is_due_today(
     d = (due_date or "").strip()
     if not d:
         return False
+    today_fmt = format_report_date_bkk(now)
+    if today_fmt.lower() in d.lower():
+        return True
     if now.strftime("%Y-%m-%d") in d:
         return True
     if now.strftime("%d/%m/%Y") in d or now.strftime("%d-%m-%Y") in d:
@@ -146,7 +179,7 @@ def _build_list_today_report_text(
     issues_open: list[dict[str, Any]],
     other_tasks: list[dict[str, Any]],
 ) -> str:
-    date_line = now.strftime("%d/%m/%Y")
+    date_line = format_report_date_bkk(now)
     week_rng = _week_range_label_bkk(now)
     lines: list[str] = [
         mention,
@@ -738,6 +771,15 @@ async def _count_active(
         return int(r["c"]) if r else 0
 
 
+def hospital_admin_sync_info() -> dict[str, str]:
+    """Lightweight server clock + report date label for admin clients."""
+    now = datetime.now(_TZ_BKK)
+    return {
+        "report_date_label": format_report_date_bkk(now),
+        "server_time_ict7": now.isoformat(),
+    }
+
+
 async def build_daily_report_preview() -> dict[str, Any]:
     now = datetime.now(_TZ_BKK)
     generated_at = now.isoformat()
@@ -855,7 +897,7 @@ async def build_daily_report_preview() -> dict[str, Any]:
 
     return {
         "generated_at": generated_at,
-        "date_label": now.strftime("%Y-%m-%d"),
+        "date_label": format_report_date_bkk(now),
         "projects": projects_out,
         "issues": issues_out,
         "other_tasks": other_out,
@@ -910,6 +952,7 @@ def build_hospital_work_html() -> str:
 <header class="header">
   <a class="back-btn" href="/admin">← Admin</a>
   <h1>Hospital Work Dashboard <span class="muted">(Phase 1)</span></h1>
+  <span id="sync-status" class="muted" style="font-size:0.8rem;margin-left:auto;min-width:12rem;text-align:right" aria-live="polite"></span>
   <button type="button" class="btn btn-primary" id="btn-refresh">รีเฟรช</button>
 </header>
 <div class="container">
@@ -927,6 +970,7 @@ def build_hospital_work_html() -> str:
         <div><label>Implementation date</label><input id="np-impl" placeholder="กรกฎาคม 2569"></div>
       </div>
       <div style="margin-bottom:10px"><label>Next step</label><input id="np-next" placeholder="ขั้นตอนถัดไป"></div>
+      <div style="margin-bottom:10px"><label>description</label><textarea id="np-desc" placeholder="รายละเอียดโครงการ"></textarea></div>
       <button type="button" class="btn btn-primary" id="btn-add-project">เพิ่มโครงการ</button>
       <div class="err" id="err-projects"></div>
       <div style="overflow-x:auto;margin-top:12px">
@@ -967,9 +1011,14 @@ def build_hospital_work_html() -> str:
           <div><label>due_hint</label><input id="nt-due" placeholder="วันนี้ / สัปดาห์นี้"></div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
-          <div><label>due_date</label><input id="nt-due_date" placeholder="YYYY-MM-DD"></div>
+          <div><label>due_date</label><input id="nt-due_date" placeholder="13-May-2026 หรือ YYYY-MM-DD"></div>
           <div><label>details</label><input id="nt-details"></div>
         </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+          <div><label>start_date</label><input id="nt-sd"></div>
+          <div><label>end_date</label><input id="nt-ed"></div>
+        </div>
+        <div style="margin-bottom:8px"><label>notes</label><textarea id="nt-notes" placeholder="notes"></textarea></div>
         <button type="button" class="btn btn-primary" id="btn-add-task">เพิ่มงาน</button>
         <div class="err" id="err-tasks"></div>
         <div style="overflow-x:auto;margin-top:12px">
@@ -993,8 +1042,18 @@ def build_hospital_work_html() -> str:
         <div><label>priority</label><select id="ni-priority"><option>High</option><option selected>Medium</option><option>Low</option></select></div>
         <div><label>system_name</label><input id="ni-sys"></div>
       </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+        <div><label>impact</label><input id="ni-impact"></div>
+        <div><label>what_done</label><input id="ni-what"></div>
+      </div>
       <div style="margin-bottom:8px"><label>next_step</label><input id="ni-next"></div>
-      <div style="margin-bottom:8px"><label>รายละเอียด</label><textarea id="ni-details"></textarea></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px">
+        <div><label>start_date</label><input id="ni-sd"></div>
+        <div><label>end_date</label><input id="ni-ed"></div>
+        <div><label>due_date</label><input id="ni-dd"></div>
+      </div>
+      <div style="margin-bottom:8px"><label>รายละเอียด (details)</label><textarea id="ni-details"></textarea></div>
+      <div style="margin-bottom:8px"><label>notes</label><textarea id="ni-notes"></textarea></div>
       <div style="margin-bottom:8px"><label>โครงการ (optional)</label>
         <select id="ni-project"><option value="">—</option></select>
       </div>
@@ -1051,6 +1110,13 @@ async function api(path, opt) {
 
 function esc(s){ const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
 function attr(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;'); }
+
+function setSyncStatus(d) {
+  const el = sel('sync-status');
+  if (!el) return;
+  const t = (d instanceof Date) ? d : new Date();
+  el.textContent = 'โหลดล่าสุด: ' + t.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
 
 function fillProjectSelects(projects) {
   const ni = sel('ni-project');
@@ -1134,33 +1200,42 @@ async function loadAll() {
     await api('/admin/api/hospital-work/projects/'+b.dataset.id, {method:'PUT', body: JSON.stringify({
       percent_complete: pct, status: st, current_status: cs
     })});
-    loadAll();
+    await loadAll();
   }));
   document.querySelectorAll('.extra-proj').forEach(b => b.addEventListener('click', () => {
     openProjectExtra(parseInt(b.dataset.id,10));
   }));
-  document.querySelectorAll('.select-proj').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.select-proj').forEach(b => b.addEventListener('click', async () => {
     selectedProjectId = parseInt(b.dataset.id,10);
     sel('task-project-label').textContent = '(#'+selectedProjectId+')';
     sel('task-hint').style.display='none';
     sel('task-editor').style.display='block';
-    loadTasks();
+    await loadTasks();
   }));
   document.querySelectorAll('.del-proj').forEach(b => b.addEventListener('click', async () => {
     if (!confirm('ปิดโครงการนี้ (soft delete)?')) return;
     await api('/admin/api/hospital-work/projects/'+b.dataset.id, {method:'DELETE'});
     if (selectedProjectId === parseInt(b.dataset.id,10)) { selectedProjectId=null; sel('task-editor').style.display='none'; sel('task-hint').style.display='block'; }
     if (extraProjectId === parseInt(b.dataset.id,10)) { extraProjectId=null; sel('project-extra').style.display='none'; }
-    loadAll();
+    await loadAll();
   }));
   document.querySelectorAll('.del-issue').forEach(b => b.addEventListener('click', async () => {
     await api('/admin/api/hospital-work/issues/'+b.dataset.id, {method:'DELETE'});
-    loadAll();
+    await loadAll();
   }));
   document.querySelectorAll('.del-other').forEach(b => b.addEventListener('click', async () => {
     await api('/admin/api/hospital-work/other-tasks/'+b.dataset.id, {method:'DELETE'});
-    loadAll();
+    await loadAll();
   }));
+
+  setSyncStatus(new Date());
+  if (extraProjectId) openProjectExtra(extraProjectId);
+  if (selectedProjectId) {
+    sel('task-editor').style.display = 'block';
+    sel('task-hint').style.display = 'none';
+    sel('task-project-label').textContent = '(#' + selectedProjectId + ')';
+    await loadTasks();
+  }
 }
 
 sel('btn-save-project-extra').addEventListener('click', async () => {
@@ -1179,7 +1254,7 @@ sel('btn-save-project-extra').addEventListener('click', async () => {
       notes: sel('pe-notes').value,
       priority: sel('pe-priority').value
     })});
-    loadAll();
+    await loadAll();
   } catch(e) { sel('err-pe').textContent = e.message; }
 });
 
@@ -1194,10 +1269,11 @@ async function loadTasks() {
     </tr>`).join('');
   document.querySelectorAll('.task-st').forEach(el => el.addEventListener('change', async () => {
     await api('/admin/api/hospital-work/tasks/'+el.dataset.id, {method:'PUT', body: JSON.stringify({status: el.value})});
+    await loadAll();
   }));
   document.querySelectorAll('.del-task').forEach(b => b.addEventListener('click', async () => {
     await api('/admin/api/hospital-work/tasks/'+b.dataset.id, {method:'DELETE'});
-    loadTasks();
+    await loadAll();
   }));
 }
 
@@ -1210,10 +1286,11 @@ sel('btn-add-project').addEventListener('click', async () => {
       code: sel('np-code').value || null,
       priority: sel('np-priority').value,
       implementation_date: sel('np-impl').value,
-      next_step: sel('np-next').value
+      next_step: sel('np-next').value,
+      description: sel('np-desc').value
     })});
-    sel('np-name').value=''; sel('np-code').value=''; sel('np-impl').value=''; sel('np-next').value='';
-    loadAll();
+    sel('np-name').value=''; sel('np-code').value=''; sel('np-impl').value=''; sel('np-next').value=''; sel('np-desc').value='';
+    await loadAll();
   } catch(e) { sel('err-projects').textContent = e.message; }
 });
 sel('btn-add-task').addEventListener('click', async () => {
@@ -1225,10 +1302,13 @@ sel('btn-add-task').addEventListener('click', async () => {
       status: sel('nt-status').value,
       due_hint: sel('nt-due').value,
       due_date: sel('nt-due_date').value,
-      details: sel('nt-details').value
+      details: sel('nt-details').value,
+      notes: sel('nt-notes').value,
+      start_date: sel('nt-sd').value,
+      end_date: sel('nt-ed').value
     })});
-    sel('nt-title').value=''; sel('nt-due_date').value=''; sel('nt-details').value='';
-    loadTasks();
+    sel('nt-title').value=''; sel('nt-due_date').value=''; sel('nt-details').value=''; sel('nt-notes').value=''; sel('nt-sd').value=''; sel('nt-ed').value='';
+    await loadAll();
   } catch(e) { sel('err-tasks').textContent = e.message; }
 });
 sel('btn-add-issue').addEventListener('click', async () => {
@@ -1240,12 +1320,20 @@ sel('btn-add-issue').addEventListener('click', async () => {
       severity: sel('ni-sev').value,
       priority: sel('ni-priority').value,
       system_name: sel('ni-sys').value,
+      impact: sel('ni-impact').value,
+      what_done: sel('ni-what').value,
       next_step: sel('ni-next').value,
       details: sel('ni-details').value,
+      notes: sel('ni-notes').value,
+      start_date: sel('ni-sd').value,
+      end_date: sel('ni-ed').value,
+      due_date: sel('ni-dd').value,
       project_id: pid ? parseInt(pid,10) : null
     })});
-    sel('ni-title').value=''; sel('ni-details').value=''; sel('ni-next').value=''; sel('ni-sys').value='';
-    loadAll();
+    sel('ni-title').value=''; sel('ni-details').value=''; sel('ni-notes').value='';
+    sel('ni-next').value=''; sel('ni-sys').value=''; sel('ni-impact').value=''; sel('ni-what').value='';
+    sel('ni-sd').value=''; sel('ni-ed').value=''; sel('ni-dd').value='';
+    await loadAll();
   } catch(e) { sel('err-issues').textContent = e.message; }
 });
 sel('btn-add-other').addEventListener('click', async () => {
@@ -1261,7 +1349,7 @@ sel('btn-add-other').addEventListener('click', async () => {
       related_project_id: rel ? parseInt(rel,10) : null
     })});
     sel('no-title').value=''; sel('no-details').value=''; sel('no-notes').value=''; sel('no-req').value='';
-    loadAll();
+    await loadAll();
   } catch(e) { sel('err-other').textContent = e.message; }
 });
 sel('btn-copy-report').addEventListener('click', () => {
