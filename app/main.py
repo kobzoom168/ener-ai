@@ -8608,6 +8608,17 @@ async def hw_projects_delete(project_id: int, request: Request):
     return JSONResponse({"ok": True})
 
 
+@app.put("/admin/api/hospital-work/projects/{project_id}/restore")
+async def hw_projects_restore(project_id: int, request: Request):
+    await _require_admin(request)
+    from app.core import hospital_work as hw
+
+    row = await hw.restore_project(project_id)
+    if not row:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse(row)
+
+
 @app.get("/admin/api/hospital-work/projects/{project_id}/tasks")
 async def hw_tasks_list(project_id: int, request: Request):
     await _require_admin(request)
@@ -8635,7 +8646,10 @@ async def hw_tasks_update(task_id: int, request: Request):
     body = await request.json()
     from app.core import hospital_work as hw
 
-    row = await hw.update_task(task_id, body or {})
+    try:
+        row = await hw.update_task(task_id, body or {})
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
     if not row:
         return JSONResponse({"error": "not found"}, status_code=404)
     return JSONResponse(row)

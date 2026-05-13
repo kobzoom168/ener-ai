@@ -4,14 +4,14 @@ Manual QA checklist (mirror of database._migrate_hospital_schema docstring):
 - init_db on an old DB: additive columns + indexes; failures log at WARNING, app starts.
 - Legacy-only seed codes → replaced with real projects (Cloud PBX, Backup, …,
   Migration DB to AWS).
-- Soft delete: task/issue/other rows with is_active=0 disappear from lists and report.
+- Soft delete: task/issue/other rows with is_active=0 disappear from lists and report;
+  projects: ปิดโครงการ (is_active=0) hidden from active list & report; restore via API/UI.
 - Daily report: standup_mention (e.g. @Noom); body mentions Cloud / PBX / Backup /
   Migration DB when seeded data present.
 - Date fields (incl. implementation_date): UI uses input type=date; DB stores YYYY-MM-DD;
   report shows 13-May-2026; legacy 13-May-2026 loads via toDateInputValue (Thai month text
   in DB leaves picker empty until user picks a calendar day).
-- Manual UX: tasks live under each project row; add/edit/delete there; Daily Report
-  preview refreshes after loadAll.
+- Manual QA: ปิดโครงการ → หายจาก active list + report; ติ๊ก archived → เห็น + กู้คืน → กลับ active.
 """
 
 from __future__ import annotations
@@ -365,7 +365,7 @@ async def list_projects(*, include_inactive: bool = False) -> list[dict[str, Any
             cur = await db.execute(
                 """
                 SELECT * FROM hospital_projects
-                ORDER BY sort_order ASC, id ASC
+                ORDER BY is_active DESC, sort_order ASC, id ASC
                 """
             )
         else:
@@ -477,6 +477,14 @@ async def delete_project_soft(project_id: int) -> bool:
     return r is not None
 
 
+async def restore_project(project_id: int) -> dict[str, Any] | None:
+    """Set hospital_projects.is_active = 1 (undo soft close)."""
+    existing = await get_project(project_id)
+    if not existing:
+        return None
+    return await update_project(project_id, {"is_active": 1})
+
+
 async def list_tasks(project_id: int) -> list[dict[str, Any]]:
     async with get_db() as db:
         cur = await db.execute(
@@ -493,6 +501,9 @@ async def list_tasks(project_id: int) -> list[dict[str, Any]]:
 
 async def create_task(project_id: int, body: dict[str, Any]) -> dict[str, Any]:
     b = body or {}
+    parent = await get_project(project_id)
+    if not parent or int(parent.get("is_active") or 0) != 1:
+        raise ValueError("โครงการถูกปิดหรือไม่พบ ไม่สามารถเพิ่มงานได้")
     t = str(b.get("title") or "").strip()
     if not t:
         raise ValueError("title required")
@@ -536,6 +547,18 @@ async def create_task(project_id: int, body: dict[str, Any]) -> dict[str, Any]:
 
 
 async def update_task(task_id: int, fields: dict[str, Any]) -> dict[str, Any] | None:
+    async with get_db() as db:
+        cur = await db.execute(
+            "SELECT project_id FROM hospital_project_tasks WHERE id = ?",
+            (task_id,),
+        )
+        tr = await cur.fetchone()
+    if not tr:
+        return None
+    parent = await get_project(int(tr["project_id"]))
+    if not parent or int(parent.get("is_active") or 0) != 1:
+        raise ValueError("โครงการถูกปิดแล้ว กู้คืนโครงการก่อนแก้ไขงาน")
+
     sets: list[str] = []
     vals: list[Any] = []
     for k, v in (fields or {}).items():
@@ -908,8 +931,9 @@ async def build_daily_report_preview() -> dict[str, Any]:
             """
             SELECT i.*, p.name AS project_name
             FROM hospital_issues i
-            LEFT JOIN hospital_projects p ON p.id = i.project_id
+            LEFT JOIN hospital_projects p ON p.id = i.project_id AND p.is_active = 1
             WHERE i.is_active = 1
+              AND (i.project_id IS NULL OR p.id IS NOT NULL)
             ORDER BY
                 CASE i.severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
                 i.id DESC
@@ -919,9 +943,12 @@ async def build_daily_report_preview() -> dict[str, Any]:
 
         ot_cur = await db.execute(
             """
-            SELECT * FROM hospital_other_tasks
-            WHERE is_active = 1
-            ORDER BY sort_order ASC, id ASC
+            SELECT o.*
+            FROM hospital_other_tasks o
+            LEFT JOIN hospital_projects p ON p.id = o.related_project_id AND p.is_active = 1
+            WHERE o.is_active = 1
+              AND (o.related_project_id IS NULL OR p.id IS NOT NULL)
+            ORDER BY o.sort_order ASC, o.id ASC
             """
         )
         other_raw = [dict(r) for r in await ot_cur.fetchall()]
@@ -1059,6 +1086,7 @@ def build_hospital_work_html() -> str:
   tr:hover td{background:#151515}
   .muted{color:#6b7280;font-size:0.8rem}
   .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:0.72rem;background:#1e293b;color:#cbd5e1}
+  .pill-archived{background:#3f3f46;color:#e4e4e7;border:1px solid #52525b}
   .ai-box{border:1px dashed #444;background:#0d0d0d;padding:12px;border-radius:8px;color:#a3a3a3;font-size:0.85rem}
   .row-actions{display:flex;gap:6px;flex-wrap:wrap}
   .err{color:#f87171;font-size:0.85rem;margin-top:8px}
@@ -1076,7 +1104,8 @@ def build_hospital_work_html() -> str:
   .proj-table .col-cs{min-width:140px;vertical-align:top}
   .proj-table .col-actions{width:1%;white-space:nowrap;vertical-align:top}
   .proj-table input[type=text],.proj-table input[type=number]{min-width:0;max-width:100%}
-  tr.proj-tasks-row td{border-bottom:1px solid #262626;background:#0c0c0c;padding:0 10px 14px!important;vertical-align:top}
+  tr.proj-main.proj-archived td{background:#12121a}
+  tr.proj-tasks-archived .proj-task-wrap{opacity:0.95}
   .proj-task-wrap{padding:12px 12px 4px}
   .proj-task-scroll{max-height:min(360px,50vh);overflow-y:auto;overflow-x:auto;margin-bottom:8px;padding-right:4px}
   .task-card-edit{border:1px solid #262626;border-radius:8px;padding:10px;margin-bottom:10px;background:#111}
@@ -1110,7 +1139,7 @@ def build_hospital_work_html() -> str:
   </nav>
 
   <div id="sec-overview">
-    <p class="muted" style="margin-bottom:12px">CRUD จาก DB — ลบงาน/Issue/Other = soft delete (is_active=0)</p>
+    <p class="muted" style="margin-bottom:12px">CRUD จาก DB — ลบงาน/Issue/Other = soft delete (is_active=0) • ปิดโครงการ = soft delete โครงการ (กู้คืนได้ ไม่มี hard delete ใน Phase นี้)</p>
     <p class="muted" style="margin-bottom:8px;font-size:0.8rem">งานในโครงการแสดงใต้แต่ละโครงการในตารางด้านล่าง • ทุกช่องวันที่รวม Implementation date ใช้ตัวเลือกปฏิทิน — ระบบเก็บเป็น YYYY-MM-DD และแสดงใน Daily Report เป็นรูปแบบ 13-May-2026 • ถ้าข้อมูลเก่าเป็นข้อความเดือน/ปี (เช่น กรกฎาคม 2569) ช่องวันที่จะว่างจนกว่าจะเลือกวันใหม่</p>
   </div>
 
@@ -1128,6 +1157,13 @@ def build_hospital_work_html() -> str:
       <div style="margin-bottom:10px"><label>description</label><textarea id="np-desc" placeholder="รายละเอียดโครงการ"></textarea></div>
       <button type="button" class="btn btn-primary" id="btn-add-project">เพิ่มโครงการ</button>
       <div class="err" id="err-projects"></div>
+      <div style="display:flex;align-items:center;gap:12px;margin:14px 0 10px;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.85rem;color:#d1d5db;margin:0">
+          <input type="checkbox" id="cb-show-archived" style="width:auto;margin:0">
+          แสดงโครงการที่ปิดแล้ว (Archived)
+        </label>
+        <span class="muted" style="font-size:0.78rem">ใช้ soft delete — กู้คืนได้จากมุมมองนี้</span>
+      </div>
       <div class="proj-wrap" style="overflow-x:auto;margin-top:14px">
         <table class="proj-table"><thead><tr><th class="col-code">รหัส</th><th class="col-name">ชื่อโครงการ</th><th class="col-pct">%</th><th class="col-st">สถานะ</th><th class="col-cs">สถานะปัจจุบัน</th><th class="col-actions"></th></tr></thead>
         <tbody id="tb-projects"></tbody></table>
@@ -1292,12 +1328,18 @@ function setSyncStatus(d) {
 }
 
 function fillProjectSelects(projects) {
+  const active = projects.filter(p => Number(p.is_active) === 1);
   const ni = sel('ni-project');
-  ni.innerHTML = '<option value="">—</option>' + projects.map(p =>
+  ni.innerHTML = '<option value="">—</option>' + active.map(p =>
     `<option value="${p.id}">${esc(p.name)}</option>`).join('');
   const nr = sel('no-rel');
-  nr.innerHTML = '<option value="">—</option>' + projects.map(p =>
+  nr.innerHTML = '<option value="">—</option>' + active.map(p =>
     `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+}
+
+function projectsWithTasksUrl() {
+  const cb = sel('cb-show-archived');
+  return '/admin/api/hospital-work/projects-with-tasks' + ((cb && cb.checked) ? '?include_inactive=1' : '');
 }
 
 function taskStatusOpts(cur) {
@@ -1349,21 +1391,36 @@ function renderAddTaskBlock(pid) {
 }
 
 function renderProjectWithTasksRows(p) {
+  const archived = Number(p.is_active) === 0;
   const tasks = p.tasks || [];
   const n = tasks.length;
-  const taskHtml = tasks.map(t => renderTaskCard(p.id, t)).join('');
-  const mainRow = `<tr class="proj-main" data-id="${p.id}">
-    <td class="col-code"><code>${esc(p.code)}</code></td>
-    <td class="col-name">${esc(p.name)}</td>
-    <td class="col-pct"><input type="number" class="p-pct" min="0" max="100" style="width:100%;max-width:64px" value="${p.percent_complete}"></td>
-    <td class="col-st"><input type="text" class="p-st" style="width:100%" value="${attr(p.status)}"></td>
-    <td class="col-cs"><input type="text" class="p-cs" style="width:100%" placeholder="สถานะปัจจุบัน" value="${attr(p.current_status||'')}"></td>
-    <td class="col-actions row-actions">
-      <button type="button" class="btn btn-primary save-proj" data-id="${p.id}">บันทึก</button>
+  const dis = archived ? ' disabled' : '';
+  const badge = archived ? ' <span class="pill pill-archived">Archived</span>' : '';
+  const actions = archived
+    ? `<button type="button" class="btn extra-proj" data-id="${p.id}">รายละเอียด</button>
+      <button type="button" class="btn btn-primary restore-proj" data-id="${p.id}">กู้คืน</button>`
+    : `<button type="button" class="btn btn-primary save-proj" data-id="${p.id}">บันทึก</button>
       <button type="button" class="btn extra-proj" data-id="${p.id}">รายละเอียด</button>
-      <button type="button" class="btn btn-danger del-proj" data-id="${p.id}">ปิด</button>
+      <button type="button" class="btn btn-danger del-proj" data-id="${p.id}">ปิดโครงการ</button>`;
+  const mainRow = `<tr class="proj-main${archived ? ' proj-archived' : ''}" data-id="${p.id}">
+    <td class="col-code"><code>${esc(p.code)}</code></td>
+    <td class="col-name">${esc(p.name)}${badge}</td>
+    <td class="col-pct"><input type="number" class="p-pct" min="0" max="100" style="width:100%;max-width:64px" value="${p.percent_complete}"${dis}></td>
+    <td class="col-st"><input type="text" class="p-st" style="width:100%" value="${attr(p.status)}"${dis}></td>
+    <td class="col-cs"><input type="text" class="p-cs" style="width:100%" placeholder="สถานะปัจจุบัน" value="${attr(p.current_status||'')}"${dis}></td>
+    <td class="col-actions row-actions">${actions}</td></tr>`;
+  let tasksBlock;
+  if (archived) {
+    tasksBlock = `<tr class="proj-tasks-row proj-tasks-archived" data-pid="${p.id}">
+    <td colspan="6" class="proj-tasks-cell">
+      <div class="proj-task-wrap">
+        <div class="muted" style="font-size:0.8rem;margin-bottom:6px">งานในโครงการ</div>
+        <div class="muted" style="padding:6px 0;line-height:1.55">โครงการถูกปิดแล้ว — งานไม่เข้า Daily Report • มี ${n} รายการในระบบ • กด <strong>กู้คืน</strong> เพื่อแก้ไขงานอีกครั้ง</div>
+      </div>
     </td></tr>`;
-  const tasksRow = `<tr class="proj-tasks-row" data-pid="${p.id}">
+  } else {
+    const taskHtml = tasks.map(t => renderTaskCard(p.id, t)).join('');
+    tasksBlock = `<tr class="proj-tasks-row" data-pid="${p.id}">
     <td colspan="6" class="proj-tasks-cell">
       <div class="proj-task-wrap">
         <div class="muted" style="font-size:0.8rem;margin-bottom:6px">งานในโครงการ</div>
@@ -1374,7 +1431,8 @@ function renderProjectWithTasksRows(p) {
         </div>
       </div>
     </td></tr>`;
-  return mainRow + tasksRow;
+  }
+  return mainRow + tasksBlock;
 }
 
 function openProjectExtra(pid) {
@@ -1399,7 +1457,7 @@ function openProjectExtra(pid) {
 
 async function loadAll() {
   const [projects, issues, other, preview] = await Promise.all([
-    api('/admin/api/hospital-work/projects-with-tasks'),
+    api(projectsWithTasksUrl()),
     api('/admin/api/hospital-work/issues'),
     api('/admin/api/hospital-work/other-tasks'),
     api('/admin/api/hospital-work/daily-report-preview'),
@@ -1524,10 +1582,16 @@ async function loadAll() {
     });
   });
   document.querySelectorAll('.del-proj').forEach(b => b.addEventListener('click', async () => {
-    if (!confirm('ปิดโครงการนี้ (soft delete)?')) return;
+    if (!confirm('ต้องการปิดโครงการนี้ไหม? โครงการจะไม่แสดงใน Daily Report แต่ยังสามารถกู้คืนได้')) return;
     await api('/admin/api/hospital-work/projects/'+b.dataset.id, {method:'DELETE'});
     if (extraProjectId === parseInt(b.dataset.id,10)) { extraProjectId=null; sel('project-extra').style.display='none'; }
     await loadAll();
+  }));
+  document.querySelectorAll('.restore-proj').forEach(b => b.addEventListener('click', async () => {
+    try {
+      await api('/admin/api/hospital-work/projects/'+b.dataset.id+'/restore', {method:'PUT', body:'{}'});
+      await loadAll();
+    } catch (e) { alert(e.message); }
   }));
   document.querySelectorAll('.del-issue').forEach(b => b.addEventListener('click', async () => {
     await api('/admin/api/hospital-work/issues/'+b.dataset.id, {method:'DELETE'});
@@ -1539,7 +1603,11 @@ async function loadAll() {
   }));
 
   setSyncStatus(new Date());
-  if (extraProjectId) openProjectExtra(extraProjectId);
+  if (extraProjectId) {
+    const still = _projectsCache.find(x => x.id === extraProjectId);
+    if (still) openProjectExtra(extraProjectId);
+    else { extraProjectId = null; sel('project-extra').style.display = 'none'; }
+  }
 }
 
 sel('btn-save-project-extra').addEventListener('click', async () => {
@@ -1640,6 +1708,8 @@ sel('btn-report-scroll-top').addEventListener('click', () => {
   t.scrollTop = 0;
   t.focus({ preventScroll: true });
 });
+const _cbArch = sel('cb-show-archived');
+if (_cbArch) _cbArch.addEventListener('change', () => { loadAll().catch(e => alert(e.message)); });
 loadAll().catch(e => alert(e.message));
 </script>
 </body>
