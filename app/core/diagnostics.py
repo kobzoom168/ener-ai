@@ -745,6 +745,25 @@ _WORK_UPDATE_SIGNALS = (
     "Host VM Resource",
 )
 
+_HOSPITAL_PROJECT_HINTS = (
+    "backup solution",
+    "backup to aws",
+    "cloud contact center",
+    "cloud pbx",
+    "host vm",
+    "host vm resource",
+    "storage",
+    "dicom",
+    "migration db",
+    "pbx",
+)
+
+
+def _hospital_project_hint_hit(tl: str) -> bool:
+    if any(h in tl for h in _HOSPITAL_PROJECT_HINTS):
+        return True
+    return bool(re.search(r"\b(?:tor|boq)\b", tl, flags=re.I))
+
 _LONG_REPORT_MARKERS = (
     "Project ",
     "Current Status",
@@ -755,6 +774,56 @@ _LONG_REPORT_MARKERS = (
     "Migration ",
     "งานโรงบาล",
 )
+
+
+def _work_update_signal_matches(raw: str, tl: str, signal: str) -> bool:
+    """Thai signals: case-sensitive on original text; English: ASCII case-fold."""
+    if not signal:
+        return False
+    if any("\u0e00" <= c <= "\u0e7f" for c in signal):
+        return signal in raw
+    return signal.lower() in tl
+
+
+def looks_like_long_project_report(text: str) -> bool:
+    """Heuristic: long narrative with multiple distinct project-report markers."""
+    raw = (text or "").strip()
+    if len(raw) < 180:
+        return False
+    tl = raw.lower()
+    kinds = 0
+    for m in _LONG_REPORT_MARKERS:
+        if _work_update_signal_matches(raw, tl, m):
+            kinds += 1
+    return kinds >= 2
+
+
+def is_work_update_message(text: str) -> bool:
+    """Hospital / standup / project status — not Ener-AI resource checks."""
+    raw = (text or "").strip()
+    if not raw:
+        return False
+    tl = raw.lower()
+
+    if looks_like_long_project_report(raw):
+        return True
+
+    if "งานโรงบาล" in raw and _hospital_project_hint_hit(tl):
+        return True
+
+    if len(raw) < 60:
+        return False
+
+    score = 0
+    if "งานโรงบาล" in raw:
+        score += 3
+    for p in _WORK_UPDATE_SIGNALS:
+        if p == "งานโรงบาล":
+            continue
+        if _work_update_signal_matches(raw, tl, p):
+            score += 1
+    return score >= 4
+
 
 _EXPLICIT_RESOURCE_DIAGNOSTIC_PHRASES = (
     "cpu เท่าไหร่",
@@ -775,31 +844,6 @@ _EXPLICIT_RESOURCE_DIAGNOSTIC_PHRASES = (
     "เช็ค disk",
     "ดู disk",
 )
-
-
-def is_work_update_message(text: str) -> bool:
-    """Hospital / standup / project status wall-of-text — not server resource checks."""
-    raw = text or ""
-    if len(raw) < 60:
-        return False
-    score = 0
-    if "งานโรงบาล" in raw:
-        score += 3
-    for p in _WORK_UPDATE_SIGNALS:
-        if p == "งานโรงบาล":
-            continue
-        if p in raw:
-            score += 1
-    return score >= 4
-
-
-def looks_like_long_project_report(text: str) -> bool:
-    """Heuristic: long narrative with multiple project-report markers."""
-    raw = text or ""
-    if len(raw) < 180:
-        return False
-    hits = sum(1 for m in _LONG_REPORT_MARKERS if m in raw)
-    return hits >= 2
 
 
 def explicit_resource_diagnostic_query(text: str) -> bool:
@@ -826,12 +870,82 @@ def explicit_resource_diagnostic_position(line: str) -> int | None:
     return best
 
 
+def _ener_ai_system_scope(tl: str, raw: str) -> bool:
+    """This host / Ener-AI product — not customer infra prose."""
+    if "ener-ai" in tl or "ener ai" in tl:
+        return True
+    if re.search(r"ener\s*[\-_]?\s*ai\b", tl):
+        return True
+    compact = tl.replace(" ", "")
+    if "ระบบener" in compact or "ของระบบener" in compact:
+        return True
+    if "/diag" in tl:
+        return True
+    return False
+
+
+def detect_target_scope(text: str) -> str:
+    """
+    Rough NL scope for resource routing and guardrails.
+    Returns one of: ener_ai_system, external_customer_system, work_report,
+    general_planning, normal.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return "normal"
+    tl = raw.lower()
+
+    if is_work_update_message(raw):
+        return "work_report"
+
+    if ("ลูกค้า" in raw or "customer" in tl) and any(
+        x in tl for x in ("server", "ล่ม", "down", "database", "infra", "ระบบลูกค้า")
+    ):
+        return "external_customer_system"
+
+    planning = (
+        "วางแผน",
+        "ช่วยสรุป",
+        "ช่วยเขียน",
+        "caption",
+        "content",
+        "คิด content",
+        "tiktok",
+        "ข่าว",
+        "migration db",
+        "db to aws",
+        "traffic network",
+        "เช็ค traffic",
+        "ถ้าเอา db",
+        "aws infra",
+        "จะพอไหม",
+        "ช่วยสรุปข่าว",
+        "เหนื่อยมาก",
+    )
+    if any(p in tl or p in raw for p in planning):
+        return "general_planning"
+
+    if "ผมเหนื่อย" in raw or "ฉันเหนื่อย" in raw:
+        return "general_planning"
+
+    if _ener_ai_system_scope(tl, raw):
+        return "ener_ai_system"
+
+    if explicit_resource_diagnostic_query(raw) and len(raw) <= 280:
+        return "ener_ai_system"
+
+    return "normal"
+
+
 def allow_resource_diagnostic_natural_language(text: str) -> bool:
     """Single-intent NL resource: block work updates and long unstructured pastes."""
     if is_work_update_message(text):
         return False
     if explicit_resource_diagnostic_query(text):
         return True
+    scope = detect_target_scope(text)
+    if scope in ("general_planning", "external_customer_system", "work_report"):
+        return False
     if len(text) <= 200:
         return True
     if looks_like_long_project_report(text):
@@ -840,24 +954,36 @@ def allow_resource_diagnostic_natural_language(text: str) -> bool:
 
 
 def position_diag_resource_for_router(line: str, full_message: str) -> int | None:
-    """NL router: suppress diag_resource inside work updates / long project reports."""
+    """NL router: suppress diag_resource for work/planning/customer scope unless Ener-AI or explicit."""
     if is_work_update_message(full_message):
         return None
+
     expl_line = explicit_resource_diagnostic_query(line)
     matches = matches_resource_diagnostic_intent(line)
     if not matches and not expl_line:
         return None
+
     expl_full = explicit_resource_diagnostic_query(full_message)
-    if expl_line or expl_full:
-        if expl_line:
-            pos = explicit_resource_diagnostic_position(line)
-            if pos is not None:
-                return pos
+
+    if expl_line:
+        pos = explicit_resource_diagnostic_position(line)
+        return pos if pos is not None else 0
+
+    if expl_full and len(full_message) <= 240:
         if matches:
             return resource_diagnostic_intent_position(line)
         return 0
-    if len(full_message) <= 200:
+
+    scope = detect_target_scope(full_message)
+    if scope in ("work_report", "external_customer_system", "general_planning"):
+        return None
+
+    if scope == "ener_ai_system" and matches:
         return resource_diagnostic_intent_position(line)
+
+    if len(full_message) <= 200:
+        return resource_diagnostic_intent_position(line) if matches else None
+
     if looks_like_long_project_report(full_message):
         return None
     return None
@@ -1243,6 +1369,9 @@ def format_work_update_ack_thai(text: str) -> str:
     raw = (text or "").strip()
     lines = [
         "✅ **รับงานโรงบาลวันนี้แล้ว**",
+        "",
+        "📌 **หมายเหตุ:** รับสรุปในแชทนี้เท่านั้น — **ยังไม่ได้บันทึกลงฐานข้อมูลอัตโนมัติ** "
+        "(บันทึกจริงต้องผ่าน flow อนุมัติหรือคำสั่งแยก เช่น approve / `/standup` ตามที่ทีมกำหนด)",
         "",
         "**อัปเดตที่จับได้:**",
         "",

@@ -36,7 +36,7 @@ class TestWorkUpdateRouting(unittest.TestCase):
     def test_short_check_server_is_diag_resource(self):
         self.assertEqual(classify_message_intents("เช็ค server"), ["diag_resource"])
 
-    def test_long_project_report_network_not_resource_without_work_signals(self):
+    def test_long_project_report_is_work_update_not_resource(self):
         text = (
             "List Today\n"
             "Project 1: something\n"
@@ -44,9 +44,31 @@ class TestWorkUpdateRouting(unittest.TestCase):
             + "filler line\n" * 40
             + "\nเตรียมเรื่อง network, server infra AWS DB\n"
         )
-        self.assertFalse(diag.is_work_update_message(text))
-        intents = classify_message_intents(text)
-        self.assertNotIn("diag_resource", intents)
+        self.assertTrue(diag.is_work_update_message(text))
+        self.assertEqual(classify_message_intents(text), ["work_update"])
+        self.assertNotIn("diag_resource", classify_message_intents(text))
+
+    def test_short_hospital_with_project_hints(self):
+        text = "งานโรงบาลวันนี้\nBackup Solution เหลือ Training\nHost VM รอราคา"
+        self.assertTrue(diag.is_work_update_message(text))
+        self.assertEqual(classify_message_intents(text), ["work_update"])
+
+    def test_lowercase_english_markers(self):
+        text = (
+            "list today\n"
+            "project 1: x\n"
+            "current status: ok\n"
+            "% complete: 10%\n"
+            + "pad\n" * 30
+        )
+        self.assertTrue(diag.is_work_update_message(text))
+        self.assertEqual(classify_message_intents(text), ["work_update"])
+
+    def test_ack_states_not_persisted_to_db(self):
+        ack = diag.format_work_update_ack_thai(
+            "งานโรงบาล\nBackup Solution: ok\nHost VM: pending\n"
+        )
+        self.assertIn("ยังไม่ได้บันทึก", ack)
 
     def test_work_update_system_tool_returns_none(self):
         self.assertIsNone(classify_system_tool_intent(_hospital_wall()))
