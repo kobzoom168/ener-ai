@@ -1130,6 +1130,8 @@ async def _run_nl_intent_section(
     """Build one markdown section for multi-intent NL routing (real tools / diagnostics)."""
     from app.core import diagnostics as diag
 
+    if intent == "work_update":
+        return "### งานโรงบาล / อัปเดตโครงการ", diag.format_work_update_ack_thai(text)
     if intent == "communication":
         return "### 💬 การติดตามลูกค้า / ทีม", diag.communication_followup_reply_thai(text)
     if intent == "system_status":

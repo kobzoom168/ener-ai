@@ -22,7 +22,7 @@ class TestMultiIntentRouter(unittest.TestCase):
     def test_server_only(self):
         self.assertEqual(
             classify_message_intents("เช็ค server ของระบบ Ener AI"),
-            ["system_server"],
+            ["diag_resource"],
         )
 
     def test_diag_resource_thai_cpu(self):
@@ -62,7 +62,7 @@ class TestMultiIntentRouter(unittest.TestCase):
         text = "เช็ค CPU\nมี error ไหม"
         self.assertEqual(
             classify_message_intents(text),
-            ["system_server", "system_errors"],
+            ["diag_resource", "system_errors"],
         )
 
     def test_max_four_intents(self):

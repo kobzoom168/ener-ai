@@ -732,6 +732,137 @@ def resource_diagnostic_intent_position(text: str) -> int | None:
     return min(positions) if positions else 0
 
 
+_WORK_UPDATE_SIGNALS = (
+    "งานโรงบาล",
+    "List Today",
+    "Project 1",
+    "Current Status",
+    "% Complete",
+    "สิ่งที่ต้องทำวันนี้",
+    "หัวข้อที่ต้องการสื่อสาร",
+    "Cloud Contact Center",
+    "Backup Solution",
+    "Host VM Resource",
+)
+
+_LONG_REPORT_MARKERS = (
+    "Project ",
+    "Current Status",
+    "% Complete",
+    "List Today",
+    "หัวข้อที่ต้องการสื่อสาร",
+    "สิ่งที่ต้องทำวันนี้",
+    "Migration ",
+    "งานโรงบาล",
+)
+
+_EXPLICIT_RESOURCE_DIAGNOSTIC_PHRASES = (
+    "cpu เท่าไหร่",
+    "ซีพียู",
+    "ram ละ",
+    "resource ตอนนี้",
+    "เช็ค server",
+    "/diag resource",
+    "docker stats",
+    "ใช้ mem",
+    "ใช้ memory",
+    "memory usage",
+    "เช็ค ram",
+    "ดู ram",
+    "เช็ค cpu",
+    "ดู cpu",
+    "ดู server",
+    "เช็ค disk",
+    "ดู disk",
+)
+
+
+def is_work_update_message(text: str) -> bool:
+    """Hospital / standup / project status wall-of-text — not server resource checks."""
+    raw = text or ""
+    if len(raw) < 60:
+        return False
+    score = 0
+    if "งานโรงบาล" in raw:
+        score += 3
+    for p in _WORK_UPDATE_SIGNALS:
+        if p == "งานโรงบาล":
+            continue
+        if p in raw:
+            score += 1
+    return score >= 4
+
+
+def looks_like_long_project_report(text: str) -> bool:
+    """Heuristic: long narrative with multiple project-report markers."""
+    raw = text or ""
+    if len(raw) < 180:
+        return False
+    hits = sum(1 for m in _LONG_REPORT_MARKERS if m in raw)
+    return hits >= 2
+
+
+def explicit_resource_diagnostic_query(text: str) -> bool:
+    """Short explicit ops questions — allowed even inside longer paste when matched on full text."""
+    t = (text or "").lower()
+    th = text or ""
+    for p in _EXPLICIT_RESOURCE_DIAGNOSTIC_PHRASES:
+        if p.lower() in t or p in th:
+            return True
+    return False
+
+
+def explicit_resource_diagnostic_position(line: str) -> int | None:
+    """Earliest index of an explicit resource phrase on this line (for NL ordering)."""
+    raw = line or ""
+    t = raw.lower()
+    best: int | None = None
+    for p in _EXPLICIT_RESOURCE_DIAGNOSTIC_PHRASES:
+        j = raw.find(p)
+        if j < 0:
+            j = t.find(p.lower())
+        if j >= 0:
+            best = j if best is None else min(best, j)
+    return best
+
+
+def allow_resource_diagnostic_natural_language(text: str) -> bool:
+    """Single-intent NL resource: block work updates and long unstructured pastes."""
+    if is_work_update_message(text):
+        return False
+    if explicit_resource_diagnostic_query(text):
+        return True
+    if len(text) <= 200:
+        return True
+    if looks_like_long_project_report(text):
+        return False
+    return False
+
+
+def position_diag_resource_for_router(line: str, full_message: str) -> int | None:
+    """NL router: suppress diag_resource inside work updates / long project reports."""
+    if is_work_update_message(full_message):
+        return None
+    expl_line = explicit_resource_diagnostic_query(line)
+    matches = matches_resource_diagnostic_intent(line)
+    if not matches and not expl_line:
+        return None
+    expl_full = explicit_resource_diagnostic_query(full_message)
+    if expl_line or expl_full:
+        if expl_line:
+            pos = explicit_resource_diagnostic_position(line)
+            if pos is not None:
+                return pos
+        if matches:
+            return resource_diagnostic_intent_position(line)
+        return 0
+    if len(full_message) <= 200:
+        return resource_diagnostic_intent_position(line)
+    if looks_like_long_project_report(full_message):
+        return None
+    return None
+
+
 async def collect_resource_usage() -> dict[str, Any]:
     """Gather metrics from DB snapshot, live psutil, and optional docker stats (real exec only)."""
     out: dict[str, Any] = {
@@ -1107,6 +1238,62 @@ def format_multi_intent_quick_summary_bullets(intents: list[str], cache: dict[st
     return "\n".join(lines)
 
 
+def format_work_update_ack_thai(text: str) -> str:
+    """Deterministic ack for hospital / project standup paste (not LLM)."""
+    raw = (text or "").strip()
+    lines = [
+        "✅ **รับงานโรงบาลวันนี้แล้ว**",
+        "",
+        "**อัปเดตที่จับได้:**",
+        "",
+    ]
+    blocks: list[tuple[str, tuple[str, ...]]] = [
+        ("Cloud Contact Center / PBX", ("cloud contact center", "cloud pbx", "pbx")),
+        ("Backup Solution", ("backup solution", "backup to aws")),
+        ("Host VM Resource", ("host vm resource", "host vm")),
+        ("Migration DB to AWS", ("migration db", "db to aws", "aws infra")),
+    ]
+    has_any = False
+    for label, keys in blocks:
+        snippet = ""
+        for ln in raw.splitlines():
+            l2 = ln.lower()
+            if any(k in l2 for k in keys):
+                snippet = ln.strip()
+                break
+        if snippet:
+            has_any = True
+            lines.append(f"- **{label}:** {sanitize_diagnostic_text(snippet[:220])}")
+    if not has_any:
+        lines.append(
+            "- _(แยกหัวข้ออัตโนมัติไม่ครบ — เนื้อหาอยู่ในข้อความต้นฉบับทั้งก้อน)_"
+        )
+
+    if "สิ่งที่ต้องทำวันนี้" in raw:
+        idx = raw.find("สิ่งที่ต้องทำวันนี้")
+        tail = raw[idx:].splitlines()
+        todo_lines = tail[1 : min(15, len(tail))] if len(tail) > 1 else []
+        buf: list[str] = []
+        for x in todo_lines:
+            s = x.strip()
+            if not s:
+                break
+            if s.lower().startswith("project ") and buf:
+                break
+            buf.append(s)
+        todo_txt = "\n".join(buf)[:650]
+        if todo_txt:
+            lines.extend(["", "**สิ่งที่ต้องทำวันนี้:**", sanitize_diagnostic_text(todo_txt)])
+
+    lines.extend(
+        [
+            "",
+            "_ถ้ามีบรรทัดที่อยากให้ช่วยแตกงาน / ใส่ due / เชื่อมกับ task ในระบบ บอกเป็นจุดได้ครับ_",
+        ]
+    )
+    return sanitize_diagnostic_text("\n".join(lines)[:3800])
+
+
 def classify_diagnostic_intent(text: str) -> str | None:
     if is_communication_followup_intent(text):
         return None
@@ -1138,7 +1325,9 @@ def classify_diagnostic_intent(text: str) -> str | None:
     ]
     if any(k in t for k in agent_kw):
         return "agent"
-    if matches_resource_diagnostic_intent(th):
+    if allow_resource_diagnostic_natural_language(th) and (
+        matches_resource_diagnostic_intent(th) or explicit_resource_diagnostic_query(th)
+    ):
         return "resource"
     return None
 

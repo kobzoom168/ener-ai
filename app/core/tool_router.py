@@ -6,7 +6,11 @@ from __future__ import annotations
 import re
 from typing import Iterable
 
-from app.core.diagnostics import list_stakeholder_no_response_phrases, resource_diagnostic_intent_position
+from app.core.diagnostics import (
+    is_work_update_message,
+    list_stakeholder_no_response_phrases,
+    position_diag_resource_for_router,
+)
 
 _MAX_INTENTS = 4
 
@@ -253,7 +257,7 @@ def _pos_system_status(line: str) -> int | None:
     return None
 
 
-def _intents_ordered_for_line(line: str) -> list[str]:
+def _intents_ordered_for_line(line: str, full_message: str) -> list[str]:
     """Collect intents that apply to this line, ordered by first match position."""
     pairs: list[tuple[int, str]] = []
 
@@ -267,7 +271,7 @@ def _intents_ordered_for_line(line: str) -> list[str]:
     add(_pos_diag_agent(line), "diag_agent")
     add(_pos_system_errors(line), "system_errors")
     add(_pos_system_logs(line), "system_logs")
-    add(resource_diagnostic_intent_position(line), "diag_resource")
+    add(position_diag_resource_for_router(line, full_message), "diag_resource")
     add(_pos_system_server(line), "system_server")
     add(_pos_system_status(line), "system_status")
 
@@ -291,6 +295,8 @@ def classify_message_intents(text: str) -> list[str]:
     raw = (text or "").strip()
     if not raw:
         return []
+    if is_work_update_message(raw):
+        return ["work_update"]
     lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
     if not lines:
         lines = [raw]
@@ -298,7 +304,7 @@ def classify_message_intents(text: str) -> list[str]:
     ordered: list[str] = []
     seen: set[str] = set()
     for line in lines:
-        for intent in _intents_ordered_for_line(line):
+        for intent in _intents_ordered_for_line(line, raw):
             if intent in seen:
                 continue
             seen.add(intent)
@@ -324,6 +330,8 @@ def classify_system_tool_intent(text: str) -> str | None:
         "system_errors": "errors",
     }
     for intent in classify_message_intents(text):
+        if intent == "work_update":
+            continue
         if intent in mapping:
             return mapping[intent]  # type: ignore[return-value]
     return None

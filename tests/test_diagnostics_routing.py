@@ -33,6 +33,7 @@ class TestDiagnosticRouting(unittest.TestCase):
         self.assertEqual(classify_diagnostic_intent("ใช้ mem เท่าไหร่"), "resource")
         self.assertEqual(classify_diagnostic_intent("memory usage เท่าไหร่"), "resource")
         self.assertEqual(classify_diagnostic_intent("container หนักไหม"), "resource")
+        self.assertEqual(classify_diagnostic_intent("เช็ค server"), "resource")
 
     def test_memory_word_alone_not_resource(self):
         self.assertIsNone(classify_diagnostic_intent("memory"))
