@@ -8586,6 +8586,7 @@ async def hw_projects_update(project_id: int, request: Request):
     body = await request.json()
     from app.core import hospital_work as hw
 
+    body = {k: v for k, v in (body or {}).items() if k != "percent_complete"}
     try:
         row = await hw.update_project(project_id, body or {})
     except Exception as e:

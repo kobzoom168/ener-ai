@@ -14,6 +14,7 @@ Manual QA checklist (mirror of database._migrate_hospital_schema docstring):
 - Summary tab: GET /admin/api/hospital-work/dashboard — cards, projects overview,
   all tasks table with filters, issues & other tasks (active data only).
 - Task order: hospital_project_tasks.sort_order (ลำดับ) — lower first; new task auto-appends.
+- Project % complete: auto from tasks — done counts full, in_progress half, others zero; no tasks → 0%.
 """
 
 from __future__ import annotations
@@ -211,6 +212,67 @@ def _task_not_done(status: str | None) -> bool:
     return str(status or "").strip().lower() not in ("done",)
 
 
+def _task_status_progress_weight(status: str | None) -> float:
+    """Contribution toward project %: done=1.0, in_progress=0.5, else 0."""
+    s = str(status or "").strip().lower()
+    if s == "done":
+        return 1.0
+    if s == "in_progress":
+        return 0.5
+    return 0.0
+
+
+def percent_complete_from_tasks(tasks: list[dict[str, Any]]) -> int:
+    """0–100 from active project tasks (empty list → 0)."""
+    if not tasks:
+        return 0
+    n = float(len(tasks))
+    score = sum(_task_status_progress_weight(t.get("status")) for t in tasks)
+    return int(min(100, max(0, round(score / n * 100.0))))
+
+
+async def _percent_complete_by_project_ids(
+    db: aiosqlite.Connection, pids: list[int]
+) -> dict[int, int]:
+    """Aggregate task-based % per project_id (same formula as percent_complete_from_tasks)."""
+    if not pids:
+        return {}
+    ph = ",".join("?" * len(pids))
+    cur = await db.execute(
+        f"""
+        SELECT project_id,
+               COUNT(*) AS n,
+               SUM(CASE WHEN LOWER(TRIM(COALESCE(status, ''))) = 'done' THEN 1 ELSE 0 END) AS dn,
+               SUM(CASE WHEN LOWER(TRIM(COALESCE(status, ''))) = 'in_progress' THEN 1 ELSE 0 END) AS pn
+        FROM hospital_project_tasks
+        WHERE is_active = 1 AND project_id IN ({ph})
+        GROUP BY project_id
+        """,
+        pids,
+    )
+    out: dict[int, int] = {}
+    for r in await cur.fetchall():
+        d = dict(r)
+        total = int(d["n"] or 0)
+        if total <= 0:
+            continue
+        dn = int(d["dn"] or 0)
+        pn = int(d["pn"] or 0)
+        score = float(dn) + 0.5 * float(pn)
+        out[int(d["project_id"])] = int(
+            min(100, max(0, round(score / float(total) * 100.0)))
+        )
+    return out
+
+
+async def refresh_project_percent_from_tasks(project_id: int) -> int:
+    """Recompute hospital_projects.percent_complete from active tasks and persist."""
+    tasks = await list_tasks(project_id)
+    pct = percent_complete_from_tasks(tasks)
+    await update_project(project_id, {"percent_complete": pct})
+    return pct
+
+
 def _parse_iso_date_bkk(value: str | None) -> datetime | None:
     v = (str(value) if value is not None else "").strip()
     if not v:
@@ -404,7 +466,12 @@ async def list_projects(*, include_inactive: bool = False) -> list[dict[str, Any
                 """
             )
         rows = await cur.fetchall()
-    return [_row(r) for r in rows if r]
+        projects = [_row(r) for r in rows if r]
+        pids = [int(p["id"]) for p in projects]
+        pct_map = await _percent_complete_by_project_ids(db, pids)
+    for p in projects:
+        p["percent_complete"] = pct_map.get(int(p["id"]), 0)
+    return projects
 
 
 async def get_project(project_id: int) -> dict[str, Any] | None:
@@ -413,7 +480,12 @@ async def get_project(project_id: int) -> dict[str, Any] | None:
             "SELECT * FROM hospital_projects WHERE id = ?",
             (project_id,),
         )
-        return _row(await cur.fetchone())
+        row = _row(await cur.fetchone())
+        if not row:
+            return None
+        pct_map = await _percent_complete_by_project_ids(db, [project_id])
+        row["percent_complete"] = pct_map.get(project_id, 0)
+        return row
 
 
 async def create_project(body: dict[str, Any]) -> dict[str, Any]:
@@ -423,7 +495,7 @@ async def create_project(body: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("name required")
     cd = _slug_code(b.get("code") or nm)
     status = str(b.get("status") or "In Progress")
-    pct = int(b.get("percent_complete") or 0)
+    pct = 0  # % จากงานในโครงการเท่านั้น — โครงการใหม่เริ่มที่ 0
     curst = str(b.get("current_status") or "")
     sort_order = int(b.get("sort_order") or 0)
     description = str(b.get("description") or "")
@@ -509,7 +581,10 @@ async def restore_project(project_id: int) -> dict[str, Any] | None:
     existing = await get_project(project_id)
     if not existing:
         return None
-    return await update_project(project_id, {"is_active": 1})
+    row = await update_project(project_id, {"is_active": 1})
+    if row:
+        await refresh_project_percent_from_tasks(project_id)
+    return row
 
 
 async def list_tasks(project_id: int) -> list[dict[str, Any]]:
@@ -591,7 +666,9 @@ async def create_task(project_id: int, body: dict[str, Any]) -> dict[str, Any]:
         cur2 = await db.execute(
             "SELECT * FROM hospital_project_tasks WHERE id = ?", (tid,)
         )
-        return _row(await cur2.fetchone()) or {}
+        row = _row(await cur2.fetchone()) or {}
+    await refresh_project_percent_from_tasks(project_id)
+    return row
 
 
 async def update_task(task_id: int, fields: dict[str, Any]) -> dict[str, Any] | None:
@@ -603,7 +680,8 @@ async def update_task(task_id: int, fields: dict[str, Any]) -> dict[str, Any] | 
         tr = await cur.fetchone()
     if not tr:
         return None
-    parent = await get_project(int(tr["project_id"]))
+    old_project_id = int(tr["project_id"])
+    parent = await get_project(old_project_id)
     if not parent or int(parent.get("is_active") or 0) != 1:
         raise ValueError("โครงการถูกปิดแล้ว กู้คืนโครงการก่อนแก้ไขงาน")
 
@@ -638,11 +716,25 @@ async def update_task(task_id: int, fields: dict[str, Any]) -> dict[str, Any] | 
         cur = await db.execute(
             "SELECT * FROM hospital_project_tasks WHERE id = ?", (task_id,)
         )
-        return _row(await cur.fetchone())
+        updated = _row(await cur.fetchone())
+    if updated:
+        new_pid = int(updated["project_id"])
+        await refresh_project_percent_from_tasks(new_pid)
+        if new_pid != old_project_id:
+            await refresh_project_percent_from_tasks(old_project_id)
+    return updated
 
 
 async def delete_task(task_id: int) -> bool:
     async with get_db() as db:
+        cur0 = await db.execute(
+            "SELECT project_id FROM hospital_project_tasks WHERE id = ? AND is_active = 1",
+            (task_id,),
+        )
+        tr = await cur0.fetchone()
+        if not tr:
+            return False
+        project_id = int(tr["project_id"])
         cur = await db.execute(
             """
             UPDATE hospital_project_tasks
@@ -652,7 +744,10 @@ async def delete_task(task_id: int) -> bool:
             (task_id,),
         )
         await db.commit()
-        return cur.rowcount > 0
+        ok = cur.rowcount > 0
+    if ok:
+        await refresh_project_percent_from_tasks(project_id)
+    return ok
 
 
 async def list_projects_with_tasks(
@@ -680,7 +775,18 @@ async def list_projects_with_tasks(
         if not d:
             continue
         task_map[int(d["project_id"])].append(d)
-    return [{**p, "tasks": task_map[int(p["id"])]} for p in projects]
+    out: list[dict[str, Any]] = []
+    for p in projects:
+        pid = int(p["id"])
+        tlist = task_map[pid]
+        out.append(
+            {
+                **p,
+                "tasks": tlist,
+                "percent_complete": percent_complete_from_tasks(tlist),
+            }
+        )
+    return out
 
 
 async def list_issues(project_id: int | None = None) -> list[dict[str, Any]]:
@@ -1035,10 +1141,12 @@ async def build_hospital_dashboard_summary() -> dict[str, Any]:
     open_task_by_pid: dict[int, int] = {}
     all_tasks_out: list[dict[str, Any]] = []
     rank_by_pid: dict[int, int] = {}
+    task_by_pid: dict[int, list[dict[str, Any]]] = {}
     for t in tasks_raw:
         if not t:
             continue
         pid = int(t["project_id"])
+        task_by_pid.setdefault(pid, []).append(t)
         if _task_not_done(t.get("status")):
             open_task_by_pid[pid] = open_task_by_pid.get(pid, 0) + 1
         rank_by_pid[pid] = rank_by_pid.get(pid, 0) + 1
@@ -1074,7 +1182,9 @@ async def build_hospital_dashboard_summary() -> dict[str, Any]:
                 "name": p.get("name") or "",
                 "code": p.get("code") or "",
                 "status": p.get("status") or "",
-                "percent_complete": int(p.get("percent_complete") or 0),
+                "percent_complete": percent_complete_from_tasks(
+                    task_by_pid.get(pid, [])
+                ),
                 "next_step": p.get("next_step") or "",
                 "implementation_date": p.get("implementation_date") or "",
                 "implementation_date_display": format_report_date_value(
@@ -1254,7 +1364,7 @@ async def build_daily_report_preview() -> dict[str, Any]:
                 "name": p["name"],
                 "code": p["code"],
                 "status": p["status"],
-                "percent_complete": p["percent_complete"],
+                "percent_complete": percent_complete_from_tasks(tasks),
                 "current_status": p.get("current_status") or "",
                 "start_date": p.get("start_date") or "",
                 "end_date": p.get("end_date") or "",
@@ -1487,7 +1597,7 @@ def build_hospital_work_html() -> str:
         <span class="muted" style="font-size:0.78rem">ใช้ soft delete — กู้คืนได้จากมุมมองนี้</span>
       </div>
       <div class="proj-wrap" style="overflow-x:auto;margin-top:14px">
-        <table class="proj-table"><thead><tr><th class="col-code">รหัส</th><th class="col-name">ชื่อโครงการ</th><th class="col-pct">%</th><th class="col-st">สถานะ</th><th class="col-cs">สถานะปัจจุบัน</th><th class="col-actions"></th></tr></thead>
+        <table class="proj-table"><thead><tr><th class="col-code">รหัส</th><th class="col-name">ชื่อโครงการ</th><th class="col-pct" title="คำนวณจากงานในโครงการ: done=100%, in_progress=50% ต่อหัว, เฉลี่ยทั้งหมด">% <span class="muted" style="font-weight:400;font-size:0.72rem">auto</span></th><th class="col-st">สถานะ</th><th class="col-cs">สถานะปัจจุบัน</th><th class="col-actions"></th></tr></thead>
         <tbody id="tb-projects"></tbody></table>
       </div>
       <div id="project-extra" class="subpanel" style="display:none;margin-top:16px">
@@ -1730,7 +1840,7 @@ function renderProjectWithTasksRows(p) {
   const mainRow = `<tr class="proj-main${archived ? ' proj-archived' : ''}" id="proj-row-${p.id}" data-id="${p.id}">
     <td class="col-code"><code>${esc(p.code)}</code></td>
     <td class="col-name">${esc(p.name)}${badge}</td>
-    <td class="col-pct"><input type="number" class="p-pct" min="0" max="100" style="width:100%;max-width:64px" value="${p.percent_complete}"${dis}></td>
+    <td class="col-pct"><span class="p-pct-val">${p.percent_complete ?? 0}</span><span class="muted" style="font-size:0.72rem">%</span></td>
     <td class="col-st"><input type="text" class="p-st" style="width:100%" value="${attr(p.status)}"${dis}></td>
     <td class="col-cs"><input type="text" class="p-cs" style="width:100%" placeholder="สถานะปัจจุบัน" value="${attr(p.current_status||'')}"${dis}></td>
     <td class="col-actions row-actions">${actions}</td></tr>`;
@@ -2060,11 +2170,10 @@ async function loadAll() {
   document.querySelectorAll('.save-proj').forEach(b => b.addEventListener('click', async () => {
     const tr = b.closest('tr.proj-main');
     if (!tr) return;
-    const pct = parseInt(tr.querySelector('.p-pct').value,10)||0;
     const st = tr.querySelector('.p-st').value;
     const cs = tr.querySelector('.p-cs').value;
     await api('/admin/api/hospital-work/projects/'+b.dataset.id, {method:'PUT', body: JSON.stringify({
-      percent_complete: pct, status: st, current_status: cs
+      status: st, current_status: cs
     })});
     await loadAll();
   }));
