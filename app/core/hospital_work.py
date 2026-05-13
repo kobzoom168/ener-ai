@@ -13,7 +13,7 @@ Manual QA checklist (mirror of database._migrate_hospital_schema docstring):
   in DB leaves picker empty until user picks a calendar day).
 - Summary tab: GET /admin/api/hospital-work/dashboard — cards, projects overview,
   all tasks table with filters, issues & other tasks (active data only).
-"""
+- Task order: hospital_project_tasks.sort_order (ลำดับ) — lower first; new task auto-appends.
 
 from __future__ import annotations
 
@@ -535,7 +535,14 @@ async def create_task(project_id: int, body: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("title required")
     status = str(b.get("status") or "open")
     due_hint = str(b.get("due_hint") or "")
-    sort_order = int(b.get("sort_order") or 0)
+    raw_so = b.get("sort_order")
+    sort_order_val: int | None = None
+    if raw_so not in (None, ""):
+        try:
+            sort_order_val = int(raw_so)
+        except (TypeError, ValueError):
+            sort_order_val = None
+    use_auto_sort = sort_order_val is None or sort_order_val <= 0
     details = str(b.get("details") or "")
     notes = str(b.get("notes") or "")
     start_date = b.get("start_date")
@@ -543,6 +550,20 @@ async def create_task(project_id: int, body: dict[str, Any]) -> dict[str, Any]:
     due_date = b.get("due_date")
 
     async with get_db() as db:
+        if use_auto_sort:
+            curm = await db.execute(
+                """
+                SELECT COALESCE(MAX(sort_order), 0) AS m
+                FROM hospital_project_tasks
+                WHERE project_id = ? AND is_active = 1
+                """,
+                (project_id,),
+            )
+            rm = await curm.fetchone()
+            sort_order = int(rm["m"] if rm and rm["m"] is not None else 0) + 1
+        else:
+            sort_order = int(sort_order_val or 1)
+
         await db.execute(
             """
             INSERT INTO hospital_project_tasks (
@@ -592,6 +613,11 @@ async def update_task(task_id: int, fields: dict[str, Any]) -> dict[str, Any] | 
             continue
         if k in ("start_date", "end_date", "due_date") and v == "":
             v = None
+        if k == "sort_order":
+            try:
+                v = int(v) if v not in ("", None) else 0
+            except (TypeError, ValueError):
+                continue
         sets.append(f"{k} = ?")
         vals.append(v)
     if not sets:
@@ -1007,12 +1033,15 @@ async def build_hospital_dashboard_summary() -> dict[str, Any]:
 
     open_task_by_pid: dict[int, int] = {}
     all_tasks_out: list[dict[str, Any]] = []
+    rank_by_pid: dict[int, int] = {}
     for t in tasks_raw:
         if not t:
             continue
         pid = int(t["project_id"])
         if _task_not_done(t.get("status")):
             open_task_by_pid[pid] = open_task_by_pid.get(pid, 0) + 1
+        rank_by_pid[pid] = rank_by_pid.get(pid, 0) + 1
+        so = int(t.get("sort_order") or 0)
         all_tasks_out.append(
             {
                 "id": int(t["id"]),
@@ -1028,6 +1057,8 @@ async def build_hospital_dashboard_summary() -> dict[str, Any]:
                 "end_date": t.get("end_date") or "",
                 "details": t.get("details") or "",
                 "notes": t.get("notes") or "",
+                "sort_order": so,
+                "rank_in_project": rank_by_pid[pid],
             }
         )
 
@@ -1341,7 +1372,7 @@ def build_hospital_work_html() -> str:
   .proj-task-wrap{padding:12px 12px 4px}
   .proj-task-scroll{max-height:min(360px,50vh);overflow-y:auto;overflow-x:auto;margin-bottom:8px;padding-right:4px}
   .task-card-edit{border:1px solid #262626;border-radius:8px;padding:10px;margin-bottom:10px;background:#111}
-  .task-grid{display:grid;grid-template-columns:minmax(120px,2fr) 100px minmax(80px,1fr) 130px 130px 130px;gap:8px;align-items:end}
+  .task-grid{display:grid;grid-template-columns:84px minmax(120px,2fr) 100px minmax(80px,1fr) 130px 130px 130px;gap:8px;align-items:end}
   @media(max-width:1100px){.task-grid{grid-template-columns:1fr 1fr}}
   .toggle-proj-tasks{margin-bottom:8px}
   .add-task-section{margin-top:4px;padding-top:12px;border-top:1px dashed #333}
@@ -1411,7 +1442,7 @@ def build_hospital_work_html() -> str:
       <label class="chk-inline"><input type="checkbox" id="sum-f-due-week"> due สัปดาห์นี้</label>
     </div>
     <div class="sum-table-wrap">
-      <table class="sum-table"><thead><tr><th>โครงการ</th><th>งาน</th><th>สถานะ</th><th>due_hint</th><th>due</th><th>รายละเอียด</th><th></th></tr></thead>
+      <table class="sum-table"><thead><tr><th>#</th><th>โครงการ</th><th>งาน</th><th>สถานะ</th><th>due_hint</th><th>due</th><th>รายละเอียด</th><th></th></tr></thead>
       <tbody id="tb-sum-all-tasks"></tbody></table>
     </div>
 
@@ -1640,8 +1671,10 @@ function taskStatusOpts(cur) {
 
 function renderTaskCard(pid, t) {
   const st = t.status || 'open';
+  const so = Number(t.sort_order != null ? t.sort_order : 0);
   return `<div class="task-card-edit" id="task-card-${t.id}" data-task-id="${t.id}" data-project-id="${pid}">
     <div class="task-grid">
+      <div><label>ลำดับ</label><input class="t-sort" type="number" min="0" step="1" title="เลขน้อยมาก่อน (1,2,3…)" value="${so}"></div>
       <div><label>หัวข้อ</label><input class="t-title" value="${attr(t.title||'')}"></div>
       <div><label>สถานะ</label><select class="t-status">${taskStatusOpts(st)}</select></div>
       <div><label>due_hint</label><input class="t-due-hint" value="${attr(t.due_hint||'')}"></div>
@@ -1662,8 +1695,9 @@ function renderTaskCard(pid, t) {
 
 function renderAddTaskBlock(pid) {
   return `<div class="add-task-section" data-pid="${pid}">
-    <div class="muted" style="font-size:0.78rem;margin-bottom:6px">เพิ่มงานใหม่</div>
+    <div class="muted" style="font-size:0.78rem;margin-bottom:6px">เพิ่มงานใหม่ <span style="opacity:0.85">• ลำดับ: เลขน้อยขึ้นก่อน — เว้นว่าง = ต่อท้ายคิวอัตโนมัติ</span></div>
     <div class="task-grid">
+      <div><label>ลำดับ</label><input class="at-sort" type="number" min="0" step="1" placeholder="อัตโนมัติ" title="เว้นว่างหรือ 0 = ต่อท้าย"></div>
       <div><label>หัวข้อ</label><input class="at-title" placeholder="ชื่องาน"></div>
       <div><label>สถานะ</label><select class="at-status"><option selected>open</option><option>in_progress</option><option>done</option></select></div>
       <div><label>due_hint</label><input class="at-due-hint" placeholder="วันนี้ / สัปดาห์นี้"></div>
@@ -1777,6 +1811,7 @@ function renderSummaryTaskRows() {
   tb.innerHTML = rows.map(t => {
     const det = [t.details,t.notes].filter(Boolean).join(' · ');
     return `<tr data-task-id="${t.id}" data-project-id="${t.project_id}">
+      <td title="sort_order=${t.sort_order ?? 0}"><strong>${t.rank_in_project != null ? t.rank_in_project : '—'}</strong></td>
       <td>${esc(t.project_name||'')}</td>
       <td>${esc(t.title||'')}</td>
       <td>${esc(t.status||'')}</td>
@@ -1788,7 +1823,7 @@ function renderSummaryTaskRows() {
         <button type="button" class="btn sum-task-edit" data-task-id="${t.id}" data-project-id="${t.project_id}">ไปแก้ไข</button>
         <button type="button" class="btn btn-danger sum-task-del" data-task-id="${t.id}">ลบ</button>
       </td></tr>`;
-  }).join('') || '<tr><td colspan="7" class="muted">ไม่มีรายการที่ตรงตัวกรอง</td></tr>';
+  }).join('') || '<tr><td colspan="8" class="muted">ไม่มีรายการที่ตรงตัวกรอง</td></tr>';
 }
 
 function renderDashboard(d) {
@@ -2058,7 +2093,8 @@ async function loadAll() {
         start_date: card.querySelector('.t-sd').value,
         end_date: card.querySelector('.t-ed').value,
         details: card.querySelector('.t-details').value,
-        notes: card.querySelector('.t-notes').value
+        notes: card.querySelector('.t-notes').value,
+        sort_order: (parseInt((card.querySelector('.t-sort') && card.querySelector('.t-sort').value) || '0', 10) || 0)
       };
       try {
         await api('/admin/api/hospital-work/tasks/'+tid, {method:'PUT', body: JSON.stringify(body)});
@@ -2083,6 +2119,8 @@ async function loadAll() {
       const errEl = sec.querySelector('.err-inline-task');
       if (errEl) errEl.textContent = '';
       try {
+        const atSort = sec.querySelector('.at-sort');
+        const soRaw = atSort && atSort.value !== '' ? parseInt(atSort.value, 10) : 0;
         await api('/admin/api/hospital-work/projects/'+pid+'/tasks', {method:'POST', body: JSON.stringify({
           title: sec.querySelector('.at-title').value,
           status: sec.querySelector('.at-status').value,
@@ -2091,7 +2129,8 @@ async function loadAll() {
           details: sec.querySelector('.at-details').value,
           notes: sec.querySelector('.at-notes').value,
           start_date: sec.querySelector('.at-sd').value,
-          end_date: sec.querySelector('.at-ed').value
+          end_date: sec.querySelector('.at-ed').value,
+          sort_order: soRaw > 0 ? soRaw : 0
         })});
         await loadAll();
       } catch (e) { if (errEl) errEl.textContent = e.message; else alert(e.message); }
