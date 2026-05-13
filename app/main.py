@@ -2463,6 +2463,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       <a class="nav-link" href="/admin/logs">Logs</a>
       <a class="nav-link" href="/admin/config">⚙️ Config</a>
       <a class="nav-link" href="/admin/routing">🔀 Routing</a>
+      <a class="nav-link" href="/admin/hospital-work">🏥 Hospital Work</a>
       <a class="nav-link" href="/admin/api-status">📡 API Status</a>
       <a class="nav-link" href="/platform">🚀 Platform</a>
       <a class="nav-link" href="/admin/terminal" target="_blank" rel="noopener noreferrer">💻 Terminal</a>
@@ -8521,6 +8522,241 @@ async def admin_routing_update(intent: str, request: Request):
         )
         await db.commit()
     return JSONResponse({"ok": True})
+
+
+# ── Hospital Work Dashboard (Phase 1) ───────────────────────────────────────
+
+@app.get("/admin/hospital-work")
+async def admin_hospital_work_page(request: Request):
+    await _verify_admin_session(request)
+    from app.core.hospital_work import build_hospital_work_html
+
+    return HTMLResponse(build_hospital_work_html())
+
+
+@app.get("/admin/api/hospital-work/projects")
+async def hw_projects_list(request: Request, include_inactive: str = ""):
+    await _require_admin(request)
+    from app.core import hospital_work as hw
+
+    inc = (include_inactive or "").lower() in ("1", "true", "yes")
+    return JSONResponse(await hw.list_projects(include_inactive=inc))
+
+
+@app.post("/admin/api/hospital-work/projects")
+async def hw_projects_create(request: Request):
+    await _require_admin(request)
+    body = await request.json()
+    from app.core import hospital_work as hw
+
+    try:
+        row = await hw.create_project(
+            body.get("name", ""),
+            code=body.get("code"),
+            status=body.get("status") or "In Progress",
+            percent_complete=int(body.get("percent_complete") or 0),
+            current_status=body.get("current_status") or "",
+            sort_order=int(body.get("sort_order") or 0),
+        )
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except Exception as e:
+        if "UNIQUE constraint" in str(e).upper():
+            return JSONResponse({"error": "รหัสโครงการซ้ำ"}, status_code=409)
+        raise
+    return JSONResponse(row)
+
+
+@app.put("/admin/api/hospital-work/projects/{project_id}")
+async def hw_projects_update(project_id: int, request: Request):
+    await _require_admin(request)
+    body = await request.json()
+    from app.core import hospital_work as hw
+
+    try:
+        row = await hw.update_project(project_id, body or {})
+    except Exception as e:
+        if "UNIQUE constraint" in str(e).upper():
+            return JSONResponse({"error": "รหัสโครงการซ้ำ"}, status_code=409)
+        raise
+    if not row:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse(row)
+
+
+@app.delete("/admin/api/hospital-work/projects/{project_id}")
+async def hw_projects_delete(project_id: int, request: Request):
+    await _require_admin(request)
+    from app.core import hospital_work as hw
+
+    ok = await hw.delete_project_soft(project_id)
+    if not ok:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/admin/api/hospital-work/projects/{project_id}/tasks")
+async def hw_tasks_list(project_id: int, request: Request):
+    await _require_admin(request)
+    from app.core import hospital_work as hw
+
+    return JSONResponse(await hw.list_tasks(project_id))
+
+
+@app.post("/admin/api/hospital-work/projects/{project_id}/tasks")
+async def hw_tasks_create(project_id: int, request: Request):
+    await _require_admin(request)
+    body = await request.json()
+    from app.core import hospital_work as hw
+
+    try:
+        row = await hw.create_task(
+            project_id,
+            body.get("title", ""),
+            status=body.get("status") or "open",
+            due_hint=body.get("due_hint") or "",
+            sort_order=int(body.get("sort_order") or 0),
+        )
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return JSONResponse(row)
+
+
+@app.put("/admin/api/hospital-work/tasks/{task_id}")
+async def hw_tasks_update(task_id: int, request: Request):
+    await _require_admin(request)
+    body = await request.json()
+    from app.core import hospital_work as hw
+
+    row = await hw.update_task(task_id, body or {})
+    if not row:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse(row)
+
+
+@app.delete("/admin/api/hospital-work/tasks/{task_id}")
+async def hw_tasks_delete(task_id: int, request: Request):
+    await _require_admin(request)
+    from app.core import hospital_work as hw
+
+    ok = await hw.delete_task(task_id)
+    if not ok:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/admin/api/hospital-work/issues")
+async def hw_issues_list(request: Request, project_id: int | None = None):
+    await _require_admin(request)
+    from app.core import hospital_work as hw
+
+    return JSONResponse(await hw.list_issues(project_id))
+
+
+@app.post("/admin/api/hospital-work/issues")
+async def hw_issues_create(request: Request):
+    await _require_admin(request)
+    body = await request.json()
+    from app.core import hospital_work as hw
+
+    raw_pid = body.get("project_id")
+    project_id = None
+    if raw_pid is not None and str(raw_pid).strip() != "":
+        try:
+            project_id = int(raw_pid)
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "invalid project_id"}, status_code=400)
+    try:
+        row = await hw.create_issue(
+            body.get("title", ""),
+            project_id=project_id,
+            severity=body.get("severity") or "medium",
+            status=body.get("status") or "open",
+            details=body.get("details") or "",
+        )
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return JSONResponse(row)
+
+
+@app.put("/admin/api/hospital-work/issues/{issue_id}")
+async def hw_issues_update(issue_id: int, request: Request):
+    await _require_admin(request)
+    body = await request.json()
+    from app.core import hospital_work as hw
+
+    row = await hw.update_issue(issue_id, body or {})
+    if not row:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse(row)
+
+
+@app.delete("/admin/api/hospital-work/issues/{issue_id}")
+async def hw_issues_delete(issue_id: int, request: Request):
+    await _require_admin(request)
+    from app.core import hospital_work as hw
+
+    ok = await hw.delete_issue(issue_id)
+    if not ok:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/admin/api/hospital-work/other-tasks")
+async def hw_other_list(request: Request):
+    await _require_admin(request)
+    from app.core import hospital_work as hw
+
+    return JSONResponse(await hw.list_other_tasks())
+
+
+@app.post("/admin/api/hospital-work/other-tasks")
+async def hw_other_create(request: Request):
+    await _require_admin(request)
+    body = await request.json()
+    from app.core import hospital_work as hw
+
+    try:
+        row = await hw.create_other_task(
+            body.get("title", ""),
+            status=body.get("status") or "open",
+            notes=body.get("notes") or "",
+            sort_order=int(body.get("sort_order") or 0),
+        )
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return JSONResponse(row)
+
+
+@app.put("/admin/api/hospital-work/other-tasks/{ot_id}")
+async def hw_other_update(ot_id: int, request: Request):
+    await _require_admin(request)
+    body = await request.json()
+    from app.core import hospital_work as hw
+
+    row = await hw.update_other_task(ot_id, body or {})
+    if not row:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse(row)
+
+
+@app.delete("/admin/api/hospital-work/other-tasks/{ot_id}")
+async def hw_other_delete(ot_id: int, request: Request):
+    await _require_admin(request)
+    from app.core import hospital_work as hw
+
+    ok = await hw.delete_other_task(ot_id)
+    if not ok:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/admin/api/hospital-work/daily-report-preview")
+async def hw_daily_report_preview(request: Request):
+    await _require_admin(request)
+    from app.core import hospital_work as hw
+
+    return JSONResponse(await hw.build_daily_report_preview())
 
 
 # ── API Status Monitor ────────────────────────────────────────────────────────

@@ -6,6 +6,95 @@ from app.core.config import settings
 DB_PATH = Path(settings.database_path)
 
 
+async def _seed_hospital_work_phase1(db: aiosqlite.Connection) -> None:
+    cur = await db.execute("SELECT COUNT(*) AS n FROM hospital_projects")
+    row = await cur.fetchone()
+    if row and int(row["n"] or 0) > 0:
+        return
+
+    seeds = [
+        (
+            "โครงการ HIS Core",
+            "his_core",
+            "In Progress",
+            35,
+            "รอ UAT จากฝ่ายเวชภัณฑ์",
+            1,
+        ),
+        (
+            "Lab / LIS Interface",
+            "lab_lis",
+            "In Progress",
+            60,
+            "ทดสอบ HL7 outbound",
+            2,
+        ),
+        (
+            "PACS / RIS Integration",
+            "pacs_ris",
+            "Planning",
+            10,
+            "รวบรวม requirement จากรังสีวิทยา",
+            3,
+        ),
+    ]
+    for name, code, status, pct, curst, sort in seeds:
+        await db.execute(
+            """
+            INSERT INTO hospital_projects
+            (name, code, status, percent_complete, current_status, sort_order)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (name, code, status, pct, curst, sort),
+        )
+        cur2 = await db.execute("SELECT last_insert_rowid() AS id")
+        r2 = await cur2.fetchone()
+        pid = int(r2["id"])
+
+        if code == "his_core":
+            tasks = [
+                ("ตั้งค่า SSO กับ AD", "open", "สัปดาห์นี้", 1),
+                ("แมป master patient index", "open", "", 2),
+            ]
+        elif code == "lab_lis":
+            tasks = [
+                ("Verify ORU^R01 mapping", "in_progress", "วันนี้", 1),
+                ("เอกสาร handover กับ vendor", "open", "", 2),
+            ]
+        else:
+            tasks = [
+                ("Workshop กับแผนกรังสี", "open", "สัปดาห์หน้า", 1),
+            ]
+        for title, tstat, due, tsort in tasks:
+            await db.execute(
+                """
+                INSERT INTO hospital_project_tasks
+                (project_id, title, status, due_hint, sort_order)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (pid, title, tstat, due, tsort),
+            )
+
+    await db.execute(
+        """
+        INSERT INTO hospital_issues
+        (project_id, title, severity, status, details)
+        SELECT id, 'สิทธิ์รายงานใน EMR ไม่ตรงกับบทบาทจริง', 'high', 'open',
+               'รอประชุมกับ CISO'
+        FROM hospital_projects WHERE code = 'his_core' LIMIT 1
+        """
+    )
+    await db.execute(
+        """
+        INSERT INTO hospital_other_tasks
+        (title, status, notes, sort_order)
+        VALUES
+        ('ประชุม steering committee รายเดือน', 'open', 'เตรียมสไลด์สรุป milestone', 1),
+        ('อัปเดต RACI matrix', 'open', '', 2)
+        """
+    )
+
+
 @asynccontextmanager
 async def get_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -16,6 +105,7 @@ async def get_db():
         db.row_factory = aiosqlite.Row
         await db.execute("PRAGMA journal_mode=WAL")
         await db.execute("PRAGMA busy_timeout=10000")
+        await db.execute("PRAGMA foreign_keys=ON")
         yield db
 
 
@@ -355,6 +445,60 @@ async def init_db():
                 deployed_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS hospital_projects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                code TEXT UNIQUE NOT NULL,
+                status TEXT DEFAULT 'In Progress',
+                percent_complete INTEGER DEFAULT 0,
+                current_status TEXT DEFAULT '',
+                sort_order INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS hospital_project_tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                status TEXT DEFAULT 'open',
+                due_hint TEXT DEFAULT '',
+                sort_order INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (project_id) REFERENCES hospital_projects(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS hospital_issues (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER,
+                title TEXT NOT NULL,
+                severity TEXT DEFAULT 'medium',
+                status TEXT DEFAULT 'open',
+                details TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (project_id) REFERENCES hospital_projects(id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS hospital_other_tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                status TEXT DEFAULT 'open',
+                notes TEXT DEFAULT '',
+                sort_order INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_hospital_project_tasks_pid
+                ON hospital_project_tasks(project_id, sort_order);
+            CREATE INDEX IF NOT EXISTS idx_hospital_issues_pid
+                ON hospital_issues(project_id, status);
+            CREATE INDEX IF NOT EXISTS idx_hospital_other_sort
+                ON hospital_other_tasks(sort_order);
+
             CREATE INDEX IF NOT EXISTS idx_agent_events_agent
                 ON agent_events(agent_name, result, created_at);
             CREATE INDEX IF NOT EXISTS idx_agent_events_tags
@@ -458,6 +602,7 @@ async def init_db():
             ("local", "hetzner", "CPX32-main", "204.168.246.103",
              "active", 4, 8192, 80, 16.49),
         )
+        await _seed_hospital_work_phase1(db)
         await db.commit()
 
 
@@ -473,6 +618,10 @@ async def get_system_stats() -> dict:
             ("ai_runs", "ai_runs"),
             ("uploads", "uploads"),
             ("standup_projects", "standup_projects"),
+            ("hospital_projects", "hospital_projects"),
+            ("hospital_project_tasks", "hospital_project_tasks"),
+            ("hospital_issues", "hospital_issues"),
+            ("hospital_other_tasks", "hospital_other_tasks"),
         ]:
             try:
                 cur = await db.execute(f"SELECT COUNT(*) AS c FROM {table}")
