@@ -1131,7 +1131,18 @@ async def _run_nl_intent_section(
     from app.core import diagnostics as diag
 
     if intent == "work_update":
-        return "### งานโรงบาล / อัปเดตโครงการ", diag.format_work_update_ack_thai(text)
+        from app.core import domain_scope as dom
+
+        snap_footer = await dom.persist_hospital_work_snapshot_for_chat(chat_id, text)
+        body = diag.format_work_update_ack_thai(text)
+        if snap_footer:
+            body = f"{body}\n\n{snap_footer}"
+        return "### งานโรงบาล / อัปเดตโครงการ", body
+    if intent == "work_query":
+        from app.core import domain_scope as dom
+
+        body = await dom.format_work_query_reply_thai(text, chat_id)
+        return "### งาน / คำถามติดตามสถานะ", body
     if intent == "communication":
         return "### 💬 การติดตามลูกค้า / ทีม", diag.communication_followup_reply_thai(text)
     if intent == "system_status":

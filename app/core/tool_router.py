@@ -11,6 +11,7 @@ from app.core.diagnostics import (
     list_stakeholder_no_response_phrases,
     position_diag_resource_for_router,
 )
+from app.core.domain_scope import is_work_query_message
 
 _MAX_INTENTS = 4
 
@@ -297,6 +298,8 @@ def classify_message_intents(text: str) -> list[str]:
         return []
     if is_work_update_message(raw):
         return ["work_update"]
+    if is_work_query_message(raw):
+        return ["work_query"]
     lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
     if not lines:
         lines = [raw]
@@ -330,7 +333,7 @@ def classify_system_tool_intent(text: str) -> str | None:
         "system_errors": "errors",
     }
     for intent in classify_message_intents(text):
-        if intent == "work_update":
+        if intent in ("work_update", "work_query"):
             continue
         if intent in mapping:
             return mapping[intent]  # type: ignore[return-value]
