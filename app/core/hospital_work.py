@@ -7,8 +7,9 @@ Manual QA checklist (mirror of database._migrate_hospital_schema docstring):
 - Soft delete: task/issue/other rows with is_active=0 disappear from lists and report.
 - Daily report: standup_mention (e.g. @Noom); body mentions Cloud / PBX / Backup /
   Migration DB when seeded data present.
-- Date fields: UI uses input type=date; DB stores YYYY-MM-DD; report shows 13-May-2026;
-  legacy 13-May-2026 in DB still loads in pickers via toDateInputValue.
+- Date fields (incl. implementation_date): UI uses input type=date; DB stores YYYY-MM-DD;
+  report shows 13-May-2026; legacy 13-May-2026 loads via toDateInputValue (Thai month text
+  in DB leaves picker empty until user picks a calendar day).
 - Manual UX: add open issue e.g. "ระบบช้า" → appears in Daily Report section 1; add task
   with due_date = today → appears under "สิ่งที่ต้องทำวันนี้"; soft-delete task → gone
   from table and report.
@@ -149,10 +150,11 @@ def format_report_date_bkk(now: datetime) -> str:
 
 
 def format_report_date_value(value: str | None) -> str:
-    """Format a stored date for the daily report text.
+    """Format a stored date for the daily report text (tasks, project dates, implementation).
 
     - YYYY-MM-DD (canonical DB from date pickers) -> 13-May-2026
     - 13-May-2026 style -> returned unchanged
+    - other non-empty strings (e.g. legacy Thai month text) -> returned unchanged
     - empty -> ""
     """
     v = (str(value) if value is not None else "").strip()
@@ -285,7 +287,7 @@ def _build_list_today_report_text(
             if date_bits:
                 line += " [" + ", ".join(date_bits) + "]"
             lines.append(line)
-        impl = po.get("implementation_date") or ""
+        impl = format_report_date_value(po.get("implementation_date"))
         lines.append("")
         lines.append(f"กำหนดการ Implementation: {impl}")
         lines.append("---------------------------------------------------------------")
@@ -1075,7 +1077,7 @@ def build_hospital_work_html() -> str:
 
   <div id="sec-overview">
     <p class="muted" style="margin-bottom:12px">CRUD จาก DB — ลบงาน/Issue/Other = soft delete (is_active=0)</p>
-    <p class="muted" style="margin-bottom:8px;font-size:0.8rem">วันที่ (Start / End / Due): ใช้ตัวเลือกปฏิทิน — ระบบเก็บเป็น YYYY-MM-DD และแสดงใน Daily Report เป็นรูปแบบ 13-May-2026 • Implementation date ยังเป็นข้อความ (เดือน/ปี)</p>
+    <p class="muted" style="margin-bottom:8px;font-size:0.8rem">ทุกช่องวันที่รวม Implementation date ใช้ตัวเลือกปฏิทิน — ระบบเก็บเป็น YYYY-MM-DD และแสดงใน Daily Report เป็นรูปแบบ 13-May-2026 • ถ้าข้อมูลเก่าเป็นข้อความเดือน/ปี (เช่น กรกฎาคม 2569) ช่องวันที่จะว่างจนกว่าจะเลือกวันใหม่</p>
   </div>
 
   <section id="sec-projects">
@@ -1086,7 +1088,7 @@ def build_hospital_work_html() -> str:
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
         <div><label>Priority</label><select id="np-priority"><option>High</option><option selected>Medium</option><option>Low</option></select></div>
-        <div><label>Implementation date</label><input id="np-impl" placeholder="กรกฎาคม 2569"></div>
+        <div><label>Implementation date</label><input id="np-impl" type="date"></div>
       </div>
       <div style="margin-bottom:10px"><label>Next step</label><input id="np-next" placeholder="ขั้นตอนถัดไป"></div>
       <div style="margin-bottom:10px"><label>description</label><textarea id="np-desc" placeholder="รายละเอียดโครงการ"></textarea></div>
@@ -1101,7 +1103,7 @@ def build_hospital_work_html() -> str:
         <div class="field-group">
           <h4>Basic</h4>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-            <div><label>Implementation (ข้อความ)</label><input id="pe-impl" placeholder="เช่น กรกฎาคม 2569"></div>
+            <div><label>Implementation date</label><input id="pe-impl" type="date"></div>
             <div><label>priority</label><select id="pe-priority"><option>High</option><option>Medium</option><option>Low</option></select></div>
           </div>
           <div style="margin-top:8px"><label>next_step</label><input id="pe-next"></div>
@@ -1299,7 +1301,7 @@ function openProjectExtra(pid) {
   if (!p) return;
   sel('project-extra').style.display = 'block';
   sel('pe-id').textContent = String(pid);
-  sel('pe-impl').value = p.implementation_date || '';
+  sel('pe-impl').value = toDateInputValue(p.implementation_date);
   sel('pe-next').value = p.next_step || '';
   sel('pe-desc').value = p.description || '';
   sel('pe-vendor').value = p.vendor || '';
