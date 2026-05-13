@@ -6,92 +6,258 @@ from app.core.config import settings
 DB_PATH = Path(settings.database_path)
 
 
-async def _seed_hospital_work_phase1(db: aiosqlite.Connection) -> None:
-    cur = await db.execute("SELECT COUNT(*) AS n FROM hospital_projects")
-    row = await cur.fetchone()
-    if row and int(row["n"] or 0) > 0:
+async def _hospital_column_names(db: aiosqlite.Connection, table: str) -> set[str]:
+    cur = await db.execute(f'PRAGMA table_info("{table}")')
+    return {str(r["name"]) for r in await cur.fetchall()}
+
+
+async def _hospital_add_column_if_missing(
+    db: aiosqlite.Connection, table: str, column: str, sql_type_default: str
+) -> None:
+    cols = await _hospital_column_names(db, table)
+    if column not in cols:
+        await db.execute(f'ALTER TABLE "{table}" ADD COLUMN "{column}" {sql_type_default}')
+
+
+async def _migrate_hospital_schema(db: aiosqlite.Connection) -> None:
+    cur = await db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='hospital_projects' LIMIT 1"
+    )
+    if not await cur.fetchone():
         return
 
-    seeds = [
-        (
-            "โครงการ HIS Core",
-            "his_core",
+    migrations: list[tuple[str, str, str]] = [
+        ("hospital_projects", "description", "TEXT DEFAULT ''"),
+        ("hospital_projects", "start_date", "TEXT"),
+        ("hospital_projects", "end_date", "TEXT"),
+        ("hospital_projects", "due_date", "TEXT"),
+        ("hospital_projects", "implementation_date", "TEXT"),
+        ("hospital_projects", "next_step", "TEXT DEFAULT ''"),
+        ("hospital_projects", "notes", "TEXT DEFAULT ''"),
+        ("hospital_projects", "vendor", "TEXT DEFAULT ''"),
+        ("hospital_projects", "owner", "TEXT DEFAULT ''"),
+        ("hospital_projects", "priority", "TEXT DEFAULT 'Medium'"),
+        ("hospital_project_tasks", "details", "TEXT DEFAULT ''"),
+        ("hospital_project_tasks", "start_date", "TEXT"),
+        ("hospital_project_tasks", "end_date", "TEXT"),
+        ("hospital_project_tasks", "due_date", "TEXT"),
+        ("hospital_project_tasks", "notes", "TEXT DEFAULT ''"),
+        ("hospital_project_tasks", "is_active", "INTEGER DEFAULT 1"),
+        ("hospital_issues", "system_name", "TEXT DEFAULT ''"),
+        ("hospital_issues", "impact", "TEXT DEFAULT ''"),
+        ("hospital_issues", "priority", "TEXT DEFAULT 'Medium'"),
+        ("hospital_issues", "start_date", "TEXT"),
+        ("hospital_issues", "end_date", "TEXT"),
+        ("hospital_issues", "due_date", "TEXT"),
+        ("hospital_issues", "what_done", "TEXT DEFAULT ''"),
+        ("hospital_issues", "next_step", "TEXT DEFAULT ''"),
+        ("hospital_issues", "notes", "TEXT DEFAULT ''"),
+        ("hospital_issues", "is_active", "INTEGER DEFAULT 1"),
+        ("hospital_other_tasks", "details", "TEXT DEFAULT ''"),
+        ("hospital_other_tasks", "priority", "TEXT DEFAULT 'Medium'"),
+        ("hospital_other_tasks", "requester", "TEXT DEFAULT ''"),
+        ("hospital_other_tasks", "start_date", "TEXT"),
+        ("hospital_other_tasks", "end_date", "TEXT"),
+        ("hospital_other_tasks", "due_date", "TEXT"),
+        ("hospital_other_tasks", "related_project_id", "INTEGER"),
+        ("hospital_other_tasks", "is_active", "INTEGER DEFAULT 1"),
+    ]
+    for table, column, ddl in migrations:
+        try:
+            await _hospital_add_column_if_missing(db, table, column, ddl)
+        except Exception:
+            pass
+
+    index_stmts = [
+        "CREATE INDEX IF NOT EXISTS idx_hospital_projects_active_sort ON hospital_projects(is_active, sort_order)",
+        "CREATE INDEX IF NOT EXISTS idx_hospital_tasks_pid_active_sort ON hospital_project_tasks(project_id, is_active, sort_order)",
+        "CREATE INDEX IF NOT EXISTS idx_hospital_issues_active_status_prio_due ON hospital_issues(is_active, status, priority, due_date)",
+        "CREATE INDEX IF NOT EXISTS idx_hospital_other_active_status_due ON hospital_other_tasks(is_active, status, due_date)",
+    ]
+    for stmt in index_stmts:
+        try:
+            await db.execute(stmt)
+        except Exception:
+            pass
+
+
+async def _seed_hospital_work_phase1(db: aiosqlite.Connection) -> None:
+    cur = await db.execute("SELECT code FROM hospital_projects")
+    codes = {str(r["code"]) for r in await cur.fetchall()}
+    legacy = {"his_core", "lab_lis", "pacs_ris"}
+    if codes and codes <= legacy:
+        await db.executescript(
+            """
+            DELETE FROM hospital_issues;
+            DELETE FROM hospital_project_tasks;
+            DELETE FROM hospital_other_tasks;
+            DELETE FROM hospital_projects;
+            """
+        )
+        codes = set()
+    if codes:
+        return
+
+    def ins_project(
+        name: str,
+        code: str,
+        status: str,
+        pct: int,
+        current_status: str,
+        next_step: str,
+        implementation_date: str,
+        sort_order: int,
+        description: str = "",
+        priority: str = "Medium",
+    ) -> tuple:
+        return (
+            name,
+            code,
+            status,
+            pct,
+            current_status,
+            sort_order,
+            description,
+            next_step,
+            implementation_date,
+            priority,
+        )
+
+    projects: list[tuple] = [
+        ins_project(
+            "Cloud Contact Center และ Cloud PBX",
+            "cloud_cc_pbx",
             "In Progress",
-            35,
-            "รอ UAT จากฝ่ายเวชภัณฑ์",
+            5,
+            "PBX เอาระบบขึ้นภายใน May 2026 เปลี่ยนระบบจาก PABX เป็น PBX Phone System บน Cloud",
+            "ตาม Scope of Work + แจ้งจัดซื้อออก PO",
+            "กรกฎาคม 2569",
             1,
         ),
-        (
-            "Lab / LIS Interface",
-            "lab_lis",
+        ins_project(
+            "Backup Solution",
+            "backup_solution",
             "In Progress",
-            60,
-            "ทดสอบ HL7 outbound",
+            85,
+            "ติดตั้งเสร็จ เหลือ Backup to AWS + Training + Document",
+            "FWD meeting ให้ทีม YIP config backup to AWS + ทำ Document",
+            "",
             2,
         ),
-        (
-            "PACS / RIS Integration",
-            "pacs_ris",
-            "Planning",
-            10,
-            "รวบรวม requirement จากรังสีวิทยา",
+        ins_project(
+            "จัดหา Storage",
+            "procure_storage",
+            "In Progress",
+            20,
+            "อัปเดตราคาใหม่ เครื่องมือแพทย์ DB DICOM file network 25gb",
+            "ตามใบเสนอราคา + เสนอ solution",
+            "",
             3,
         ),
+        ins_project(
+            "Host VM Resource",
+            "host_vm_resource",
+            "In Progress",
+            30,
+            "นัดสรุป solution",
+            "ตามใบเสนอราคา + นัด final solution",
+            "",
+            4,
+        ),
+        ins_project(
+            "Improvement New Network",
+            "improve_network",
+            "In Progress",
+            78,
+            "อยู่ในขั้นวางแผน",
+            "วางแผน infrastructure ใหม่",
+            "Dec 2026",
+            5,
+        ),
     ]
-    for name, code, status, pct, curst, sort in seeds:
+
+    task_rows: list[tuple[int, str, str, str, int, str, str]] = []
+
+    for (
+        name,
+        code,
+        status,
+        pct,
+        current_status,
+        sort_order,
+        description,
+        next_step,
+        implementation_date,
+        priority,
+    ) in projects:
         await db.execute(
             """
-            INSERT INTO hospital_projects
-            (name, code, status, percent_complete, current_status, sort_order)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO hospital_projects (
+                name, code, status, percent_complete, current_status, sort_order,
+                description, next_step, implementation_date, priority, is_active
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
             """,
-            (name, code, status, pct, curst, sort),
+            (
+                name,
+                code,
+                status,
+                pct,
+                current_status,
+                sort_order,
+                description,
+                next_step,
+                implementation_date,
+                priority,
+            ),
         )
-        cur2 = await db.execute("SELECT last_insert_rowid() AS id")
-        r2 = await cur2.fetchone()
-        pid = int(r2["id"])
+        curp = await db.execute("SELECT last_insert_rowid() AS id")
+        pid = int((await curp.fetchone())["id"])
 
-        if code == "his_core":
-            tasks = [
-                ("ตั้งค่า SSO กับ AD", "open", "สัปดาห์นี้", 1),
-                ("แมป master patient index", "open", "", 2),
+        if code == "cloud_cc_pbx":
+            task_rows += [
+                (pid, "ทบทวน TOR และ BOQ (ฉบับปรับปรุง)", "open", "", 1, "", ""),
+                (pid, "สรุป Proposal และคัดเลือก Vendor Phase 1", "open", "", 2, "", ""),
+                (pid, "แผนรองรับ Scalability & Integration", "open", "", 3, "", ""),
             ]
-        elif code == "lab_lis":
-            tasks = [
-                ("Verify ORU^R01 mapping", "in_progress", "วันนี้", 1),
-                ("เอกสาร handover กับ vendor", "open", "", 2),
+        elif code == "backup_solution":
+            task_rows += [
+                (pid, "Meeting config backup to AWS", "open", "", 1, "", ""),
+                (pid, "ทำ Document ให้เสร็จ", "open", "", 2, "", ""),
             ]
-        else:
-            tasks = [
-                ("Workshop กับแผนกรังสี", "open", "สัปดาห์หน้า", 1),
+        elif code == "procure_storage":
+            task_rows += [
+                (pid, "อัปเดตราคา", "open", "", 1, "", ""),
+                (pid, "เสนอ solution", "open", "", 2, "", ""),
             ]
-        for title, tstat, due, tsort in tasks:
-            await db.execute(
-                """
-                INSERT INTO hospital_project_tasks
-                (project_id, title, status, due_hint, sort_order)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (pid, title, tstat, due, tsort),
-            )
+        elif code == "host_vm_resource":
+            task_rows += [
+                (pid, "นัดสรุป solution", "open", "", 1, "", ""),
+            ]
+        elif code == "improve_network":
+            task_rows += [
+                (pid, "วางแผน infrastructure ใหม่", "open", "", 1, "", ""),
+            ]
+
+    for pid, title, tstat, due_hint, tsort, details, notes in task_rows:
+        await db.execute(
+            """
+            INSERT INTO hospital_project_tasks (
+                project_id, title, status, due_hint, sort_order, details, notes, is_active
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+            """,
+            (pid, title, tstat, due_hint, tsort, details, notes),
+        )
 
     await db.execute(
         """
-        INSERT INTO hospital_issues
-        (project_id, title, severity, status, details)
-        SELECT id, 'สิทธิ์รายงานใน EMR ไม่ตรงกับบทบาทจริง', 'high', 'open',
-               'รอประชุมกับ CISO'
-        FROM hospital_projects WHERE code = 'his_core' LIMIT 1
-        """
-    )
-    await db.execute(
-        """
-        INSERT INTO hospital_other_tasks
-        (title, status, notes, sort_order)
-        VALUES
-        ('ประชุม steering committee รายเดือน', 'open', 'เตรียมสไลด์สรุป milestone', 1),
-        ('อัปเดต RACI matrix', 'open', '', 2)
-        """
+        INSERT INTO hospital_other_tasks (
+            title, status, notes, sort_order, details, priority, is_active
+        ) VALUES (?, 'open', '', 1, ?, 'Medium', 1)
+        """,
+        (
+            "Migration DB to AWS",
+            "เช็ค traffic network ว่า DB ขึ้น AWS infra จะพอไหม เตรียม network/server infra",
+        ),
     )
 
 
@@ -454,6 +620,16 @@ async def init_db():
                 current_status TEXT DEFAULT '',
                 sort_order INTEGER DEFAULT 0,
                 is_active INTEGER DEFAULT 1,
+                description TEXT DEFAULT '',
+                start_date TEXT,
+                end_date TEXT,
+                due_date TEXT,
+                implementation_date TEXT,
+                next_step TEXT DEFAULT '',
+                notes TEXT DEFAULT '',
+                vendor TEXT DEFAULT '',
+                owner TEXT DEFAULT '',
+                priority TEXT DEFAULT 'Medium',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
@@ -465,6 +641,12 @@ async def init_db():
                 status TEXT DEFAULT 'open',
                 due_hint TEXT DEFAULT '',
                 sort_order INTEGER DEFAULT 0,
+                details TEXT DEFAULT '',
+                start_date TEXT,
+                end_date TEXT,
+                due_date TEXT,
+                notes TEXT DEFAULT '',
+                is_active INTEGER DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (project_id) REFERENCES hospital_projects(id) ON DELETE CASCADE
@@ -477,6 +659,16 @@ async def init_db():
                 severity TEXT DEFAULT 'medium',
                 status TEXT DEFAULT 'open',
                 details TEXT DEFAULT '',
+                system_name TEXT DEFAULT '',
+                impact TEXT DEFAULT '',
+                priority TEXT DEFAULT 'Medium',
+                start_date TEXT,
+                end_date TEXT,
+                due_date TEXT,
+                what_done TEXT DEFAULT '',
+                next_step TEXT DEFAULT '',
+                notes TEXT DEFAULT '',
+                is_active INTEGER DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (project_id) REFERENCES hospital_projects(id) ON DELETE SET NULL
@@ -488,8 +680,17 @@ async def init_db():
                 status TEXT DEFAULT 'open',
                 notes TEXT DEFAULT '',
                 sort_order INTEGER DEFAULT 0,
+                details TEXT DEFAULT '',
+                priority TEXT DEFAULT 'Medium',
+                requester TEXT DEFAULT '',
+                start_date TEXT,
+                end_date TEXT,
+                due_date TEXT,
+                related_project_id INTEGER,
+                is_active INTEGER DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (related_project_id) REFERENCES hospital_projects(id) ON DELETE SET NULL
             );
 
             CREATE INDEX IF NOT EXISTS idx_hospital_project_tasks_pid
@@ -498,6 +699,14 @@ async def init_db():
                 ON hospital_issues(project_id, status);
             CREATE INDEX IF NOT EXISTS idx_hospital_other_sort
                 ON hospital_other_tasks(sort_order);
+            CREATE INDEX IF NOT EXISTS idx_hospital_projects_active_sort
+                ON hospital_projects(is_active, sort_order);
+            CREATE INDEX IF NOT EXISTS idx_hospital_tasks_pid_active_sort
+                ON hospital_project_tasks(project_id, is_active, sort_order);
+            CREATE INDEX IF NOT EXISTS idx_hospital_issues_active_status_prio_due
+                ON hospital_issues(is_active, status, priority, due_date);
+            CREATE INDEX IF NOT EXISTS idx_hospital_other_active_status_due
+                ON hospital_other_tasks(is_active, status, due_date);
 
             CREATE INDEX IF NOT EXISTS idx_agent_events_agent
                 ON agent_events(agent_name, result, created_at);
@@ -506,6 +715,7 @@ async def init_db():
             CREATE UNIQUE INDEX IF NOT EXISTS idx_news_url_date
                 ON news_items(url, date(datetime(fetched_at, '+7 hours')));
         """)
+        await _migrate_hospital_schema(db)
         cursor = await db.execute("PRAGMA table_info(memories)")
         columns = await cursor.fetchall()
         column_names = {row["name"] for row in columns}

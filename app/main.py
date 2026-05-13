@@ -8550,20 +8550,24 @@ async def hw_projects_create(request: Request):
     from app.core import hospital_work as hw
 
     try:
-        row = await hw.create_project(
-            body.get("name", ""),
-            code=body.get("code"),
-            status=body.get("status") or "In Progress",
-            percent_complete=int(body.get("percent_complete") or 0),
-            current_status=body.get("current_status") or "",
-            sort_order=int(body.get("sort_order") or 0),
-        )
+        row = await hw.create_project(body or {})
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:
         if "UNIQUE constraint" in str(e).upper():
             return JSONResponse({"error": "รหัสโครงการซ้ำ"}, status_code=409)
         raise
+    return JSONResponse(row)
+
+
+@app.get("/admin/api/hospital-work/projects/{project_id}")
+async def hw_projects_get(project_id: int, request: Request):
+    await _require_admin(request)
+    from app.core import hospital_work as hw
+
+    row = await hw.get_project(project_id)
+    if not row:
+        return JSONResponse({"error": "not found"}, status_code=404)
     return JSONResponse(row)
 
 
@@ -8610,13 +8614,7 @@ async def hw_tasks_create(project_id: int, request: Request):
     from app.core import hospital_work as hw
 
     try:
-        row = await hw.create_task(
-            project_id,
-            body.get("title", ""),
-            status=body.get("status") or "open",
-            due_hint=body.get("due_hint") or "",
-            sort_order=int(body.get("sort_order") or 0),
-        )
+        row = await hw.create_task(project_id, body or {})
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     return JSONResponse(row)
@@ -8659,21 +8657,8 @@ async def hw_issues_create(request: Request):
     body = await request.json()
     from app.core import hospital_work as hw
 
-    raw_pid = body.get("project_id")
-    project_id = None
-    if raw_pid is not None and str(raw_pid).strip() != "":
-        try:
-            project_id = int(raw_pid)
-        except (TypeError, ValueError):
-            return JSONResponse({"error": "invalid project_id"}, status_code=400)
     try:
-        row = await hw.create_issue(
-            body.get("title", ""),
-            project_id=project_id,
-            severity=body.get("severity") or "medium",
-            status=body.get("status") or "open",
-            details=body.get("details") or "",
-        )
+        row = await hw.create_issue(body)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     return JSONResponse(row)
@@ -8717,12 +8702,7 @@ async def hw_other_create(request: Request):
     from app.core import hospital_work as hw
 
     try:
-        row = await hw.create_other_task(
-            body.get("title", ""),
-            status=body.get("status") or "open",
-            notes=body.get("notes") or "",
-            sort_order=int(body.get("sort_order") or 0),
-        )
+        row = await hw.create_other_task(body or {})
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     return JSONResponse(row)
