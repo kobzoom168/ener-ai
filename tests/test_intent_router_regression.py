@@ -56,6 +56,33 @@ class TestIntentRouterRegression(unittest.TestCase):
         self.assertEqual(diag.detect_target_scope("เช็ค cpu"), "ener_ai_system")
         self.assertEqual(diag.detect_target_scope("งานโรงบาล\nList Today"), "work_report")
 
+    def test_vendor_and_tor_tasks_not_diag(self):
+        for msg in (
+            "ช่วยวิเคราะห์ vendor PBX",
+            "ทำ TOR Cloud PBX ให้หน่อย",
+        ):
+            with self.subTest(msg=msg):
+                self.assertNotIn("diag_resource", classify_message_intents(msg))
+                self.assertNotIn("work_update", classify_message_intents(msg))
+
+    def test_host_vm_pricing_not_diag(self):
+        self.assertNotIn(
+            "diag_resource",
+            classify_message_intents("Host VM Resource ราคาเท่าไหร่ดี"),
+        )
+
+    def test_customer_memory_full_not_diag(self):
+        self.assertNotIn(
+            "diag_resource",
+            classify_message_intents("ระบบลูกค้า memory เต็ม"),
+        )
+
+    def test_ener_ai_memory_check_is_diag(self):
+        self.assertEqual(
+            classify_message_intents("เช็ค memory ของ Ener-AI"),
+            ["diag_resource"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

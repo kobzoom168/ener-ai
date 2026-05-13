@@ -764,16 +764,50 @@ def _hospital_project_hint_hit(tl: str) -> bool:
         return True
     return bool(re.search(r"\b(?:tor|boq)\b", tl, flags=re.I))
 
-_LONG_REPORT_MARKERS = (
-    "Project ",
+
+_STRONG_LONG_REPORT_MARKERS = (
+    "List Today",
     "Current Status",
     "% Complete",
-    "List Today",
-    "หัวข้อที่ต้องการสื่อสาร",
     "สิ่งที่ต้องทำวันนี้",
+    "หัวข้อที่ต้องการสื่อสาร",
+)
+_WEAK_LONG_REPORT_MARKERS = (
+    "Project ",
     "Migration ",
     "งานโรงบาล",
 )
+_LONG_REPORT_MARKERS = _STRONG_LONG_REPORT_MARKERS + _WEAK_LONG_REPORT_MARKERS
+
+
+def _hospital_core_report_signal(raw: str, tl: str) -> bool:
+    """Standup / status header lines (case-fold English)."""
+    if "list today" in tl:
+        return True
+    if "project 1" in tl or re.search(r"\bproject\s+\d+\b", tl):
+        return True
+    if "current status" in tl:
+        return True
+    if "% complete" in tl or "%complete" in tl.replace(" ", ""):
+        return True
+    if "สิ่งที่ต้องทำวันนี้" in raw:
+        return True
+    if "หัวข้อที่ต้องการสื่อสาร" in raw:
+        return True
+    return False
+
+
+def _hospital_casual_mood_only(raw: str, tl: str) -> bool:
+    """งานโรงบาล + venting without any project/report cue."""
+    if "งานโรงบาล" not in raw:
+        return False
+    if not any(w in raw for w in ("เหนื่อย", "ท้อ", "หมดไฟ")):
+        return False
+    if _hospital_core_report_signal(raw, tl):
+        return False
+    if _hospital_project_hint_hit(tl):
+        return False
+    return True
 
 
 def _work_update_signal_matches(raw: str, tl: str, signal: str) -> bool:
@@ -786,15 +820,16 @@ def _work_update_signal_matches(raw: str, tl: str, signal: str) -> bool:
 
 
 def looks_like_long_project_report(text: str) -> bool:
-    """Heuristic: long narrative with multiple distinct project-report markers."""
+    """Long paste: need ≥1 strong standup marker plus ≥2 markers overall (weak alone is not enough)."""
     raw = (text or "").strip()
     if len(raw) < 180:
         return False
     tl = raw.lower()
-    kinds = 0
-    for m in _LONG_REPORT_MARKERS:
-        if _work_update_signal_matches(raw, tl, m):
-            kinds += 1
+    if not any(_work_update_signal_matches(raw, tl, m) for m in _STRONG_LONG_REPORT_MARKERS):
+        return False
+    kinds = sum(
+        1 for m in _LONG_REPORT_MARKERS if _work_update_signal_matches(raw, tl, m)
+    )
     return kinds >= 2
 
 
@@ -808,8 +843,12 @@ def is_work_update_message(text: str) -> bool:
     if looks_like_long_project_report(raw):
         return True
 
-    if "งานโรงบาล" in raw and _hospital_project_hint_hit(tl):
+    if "งานโรงบาล" in raw and _hospital_core_report_signal(raw, tl):
         return True
+
+    if "งานโรงบาล" in raw and _hospital_project_hint_hit(tl):
+        if not _hospital_casual_mood_only(raw, tl):
+            return True
 
     if len(raw) < 60:
         return False
@@ -843,6 +882,8 @@ _EXPLICIT_RESOURCE_DIAGNOSTIC_PHRASES = (
     "ดู server",
     "เช็ค disk",
     "ดู disk",
+    "เช็ค memory",
+    "ดู memory",
 )
 
 
@@ -899,14 +940,30 @@ def detect_target_scope(text: str) -> str:
         return "work_report"
 
     if ("ลูกค้า" in raw or "customer" in tl) and any(
-        x in tl for x in ("server", "ล่ม", "down", "database", "infra", "ระบบลูกค้า")
+        x in tl
+        for x in (
+            "server",
+            "memory",
+            "disk",
+            "ล่ม",
+            "down",
+            "database",
+            "infra",
+            "ระบบลูกค้า",
+        )
     ):
         return "external_customer_system"
+
+    if ("host vm" in tl or "host vm resource" in tl) and any(
+        x in raw or x in tl for x in ("ราคา", "quote", "quotation")
+    ):
+        return "general_planning"
 
     planning = (
         "วางแผน",
         "ช่วยสรุป",
         "ช่วยเขียน",
+        "ช่วยวิเคราะห์",
         "caption",
         "content",
         "คิด content",
@@ -921,6 +978,9 @@ def detect_target_scope(text: str) -> str:
         "จะพอไหม",
         "ช่วยสรุปข่าว",
         "เหนื่อยมาก",
+        "vendor",
+        "tor cloud",
+        "cloud pbx",
     )
     if any(p in tl or p in raw for p in planning):
         return "general_planning"
@@ -937,15 +997,24 @@ def detect_target_scope(text: str) -> str:
     return "normal"
 
 
+def _is_short_explicit_resource_message(text: str) -> bool:
+    """Whole message is a brief explicit ops check (still allowed under non–Ener-AI scope)."""
+    raw = (text or "").strip()
+    if len(raw) > 280:
+        return False
+    return explicit_resource_diagnostic_query(raw)
+
+
 def allow_resource_diagnostic_natural_language(text: str) -> bool:
     """Single-intent NL resource: block work updates and long unstructured pastes."""
     if is_work_update_message(text):
         return False
+    scope = detect_target_scope(text)
+    if scope in ("work_report", "external_customer_system", "general_planning"):
+        if not _is_short_explicit_resource_message(text):
+            return False
     if explicit_resource_diagnostic_query(text):
         return True
-    scope = detect_target_scope(text)
-    if scope in ("general_planning", "external_customer_system", "work_report"):
-        return False
     if len(text) <= 200:
         return True
     if looks_like_long_project_report(text):

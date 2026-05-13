@@ -53,6 +53,16 @@ class TestWorkUpdateRouting(unittest.TestCase):
         self.assertTrue(diag.is_work_update_message(text))
         self.assertEqual(classify_message_intents(text), ["work_update"])
 
+    def test_hospital_with_list_today_short_message(self):
+        text = "งานโรงบาล\nList Today"
+        self.assertTrue(diag.is_work_update_message(text))
+        self.assertEqual(classify_message_intents(text), ["work_update"])
+
+    def test_hospital_mood_only_not_work_update(self):
+        text = "งานโรงบาล วันนี้เหนื่อยมาก"
+        self.assertFalse(diag.is_work_update_message(text))
+        self.assertNotEqual(classify_message_intents(text), ["work_update"])
+
     def test_lowercase_english_markers(self):
         text = (
             "list today\n"
@@ -72,6 +82,11 @@ class TestWorkUpdateRouting(unittest.TestCase):
 
     def test_work_update_system_tool_returns_none(self):
         self.assertIsNone(classify_system_tool_intent(_hospital_wall()))
+
+    def test_migration_project_only_not_long_report_shape(self):
+        text = "Project Alpha scope\nMigration DB notes\n" + "detail\n" * 45
+        self.assertFalse(diag.looks_like_long_project_report(text))
+        self.assertFalse(diag.is_work_update_message(text))
 
 
 if __name__ == "__main__":
