@@ -11,7 +11,8 @@ Manual QA checklist (mirror of database._migrate_hospital_schema docstring):
 - Date fields (incl. implementation_date): UI uses input type=date; DB stores YYYY-MM-DD;
   report shows 13-May-2026; legacy 13-May-2026 loads via toDateInputValue (Thai month text
   in DB leaves picker empty until user picks a calendar day).
-- Manual QA: ปิดโครงการ → หายจาก active list + report; ติ๊ก archived → เห็น + กู้คืน → กลับ active.
+- Summary tab: GET /admin/api/hospital-work/dashboard — cards, projects overview,
+  all tasks table with filters, issues & other tasks (active data only).
 """
 
 from __future__ import annotations
@@ -203,6 +204,31 @@ def _is_due_today(
     if now.strftime("%d/%m/%Y") in d or now.strftime("%d-%m-%Y") in d:
         return True
     return False
+
+
+def _task_not_done(status: str | None) -> bool:
+    return str(status or "").strip().lower() not in ("done",)
+
+
+def _parse_iso_date_bkk(value: str | None) -> datetime | None:
+    v = (str(value) if value is not None else "").strip()
+    if not v:
+        return None
+    m_iso = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", v)
+    if not m_iso:
+        return None
+    y, mo, d = int(m_iso.group(1)), int(m_iso.group(2)), int(m_iso.group(3))
+    try:
+        return datetime(y, mo, d, tzinfo=_TZ_BKK)
+    except ValueError:
+        return None
+
+
+def _is_overdue_iso(due_date: str | None, now: datetime) -> bool:
+    dt = _parse_iso_date_bkk(due_date)
+    if not dt:
+        return False
+    return dt.date() < now.date()
 
 
 def _build_list_today_report_text(
@@ -912,6 +938,212 @@ def hospital_admin_sync_info() -> dict[str, str]:
     }
 
 
+async def build_hospital_dashboard_summary() -> dict[str, Any]:
+    """Aggregate active projects/tasks/issues/other for Summary dashboard (is_active=1 only)."""
+    now = datetime.now(_TZ_BKK)
+    generated_at = now.isoformat()
+
+    async with get_db() as db:
+        proj_cur = await db.execute(
+            """
+            SELECT * FROM hospital_projects
+            WHERE is_active = 1
+            ORDER BY sort_order ASC, id ASC
+            """
+        )
+        projects_raw = [_row(r) for r in await proj_cur.fetchall() if r]
+
+        task_cur = await db.execute(
+            """
+            SELECT t.*, p.name AS project_name, p.code AS project_code
+            FROM hospital_project_tasks t
+            INNER JOIN hospital_projects p ON p.id = t.project_id AND p.is_active = 1
+            WHERE t.is_active = 1
+            ORDER BY p.sort_order ASC, p.id ASC, t.sort_order ASC, t.id ASC
+            """
+        )
+        tasks_raw = [_row(r) for r in await task_cur.fetchall() if r]
+
+        issues_cur = await db.execute(
+            """
+            SELECT i.*, p.name AS project_name
+            FROM hospital_issues i
+            LEFT JOIN hospital_projects p ON p.id = i.project_id AND p.is_active = 1
+            WHERE i.is_active = 1
+              AND (i.project_id IS NULL OR p.id IS NOT NULL)
+            ORDER BY
+                CASE i.severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
+                i.id DESC
+            """
+        )
+        issues_raw = [_row(r) for r in await issues_cur.fetchall() if r]
+
+        ot_cur = await db.execute(
+            """
+            SELECT o.*, p.name AS related_project_name
+            FROM hospital_other_tasks o
+            LEFT JOIN hospital_projects p ON p.id = o.related_project_id AND p.is_active = 1
+            WHERE o.is_active = 1
+              AND (o.related_project_id IS NULL OR p.id IS NOT NULL)
+            ORDER BY o.sort_order ASC, o.id ASC
+            """
+        )
+        other_raw = [_row(r) for r in await ot_cur.fetchall() if r]
+
+    issues_open = [
+        d for d in issues_raw if d and _issue_open_for_report(d.get("status"))
+    ]
+
+    open_issue_by_pid: dict[int, int] = {}
+    for iss in issues_open:
+        pid = iss.get("project_id")
+        if pid is None:
+            continue
+        try:
+            ip = int(pid)
+        except (TypeError, ValueError):
+            continue
+        open_issue_by_pid[ip] = open_issue_by_pid.get(ip, 0) + 1
+
+    open_task_by_pid: dict[int, int] = {}
+    all_tasks_out: list[dict[str, Any]] = []
+    for t in tasks_raw:
+        if not t:
+            continue
+        pid = int(t["project_id"])
+        if _task_not_done(t.get("status")):
+            open_task_by_pid[pid] = open_task_by_pid.get(pid, 0) + 1
+        all_tasks_out.append(
+            {
+                "id": int(t["id"]),
+                "project_id": pid,
+                "project_name": t.get("project_name") or "",
+                "project_code": t.get("project_code") or "",
+                "title": t.get("title") or "",
+                "status": t.get("status") or "",
+                "due_hint": t.get("due_hint") or "",
+                "due_date": t.get("due_date") or "",
+                "due_date_display": format_report_date_value(t.get("due_date")),
+                "start_date": t.get("start_date") or "",
+                "end_date": t.get("end_date") or "",
+                "details": t.get("details") or "",
+                "notes": t.get("notes") or "",
+            }
+        )
+
+    projects_out: list[dict[str, Any]] = []
+    for p in projects_raw:
+        if not p:
+            continue
+        pid = int(p["id"])
+        projects_out.append(
+            {
+                "id": pid,
+                "name": p.get("name") or "",
+                "code": p.get("code") or "",
+                "status": p.get("status") or "",
+                "percent_complete": int(p.get("percent_complete") or 0),
+                "next_step": p.get("next_step") or "",
+                "implementation_date": p.get("implementation_date") or "",
+                "implementation_date_display": format_report_date_value(
+                    p.get("implementation_date")
+                ),
+                "due_date": p.get("due_date") or "",
+                "due_date_display": format_report_date_value(p.get("due_date")),
+                "open_task_count": open_task_by_pid.get(pid, 0),
+                "issue_count": open_issue_by_pid.get(pid, 0),
+            }
+        )
+
+    issues_out = [
+        {
+            "id": int(x["id"]),
+            "title": x.get("title") or "",
+            "system_name": x.get("system_name") or "",
+            "priority": x.get("priority") or "",
+            "severity": x.get("severity") or "",
+            "status": x.get("status") or "",
+            "next_step": x.get("next_step") or "",
+            "project_id": x.get("project_id"),
+            "project_name": x.get("project_name") or "",
+        }
+        for x in issues_open
+    ]
+
+    other_out: list[dict[str, Any]] = []
+    for o in other_raw:
+        if not o:
+            continue
+        other_out.append(
+            {
+                "id": int(o["id"]),
+                "title": o.get("title") or "",
+                "status": o.get("status") or "",
+                "priority": o.get("priority") or "",
+                "requester": o.get("requester") or "",
+                "related_project_id": o.get("related_project_id"),
+                "related_project_name": o.get("related_project_name") or "",
+                "due_date": o.get("due_date") or "",
+                "due_date_display": format_report_date_value(o.get("due_date")),
+                "details": o.get("details") or "",
+                "notes": o.get("notes") or "",
+            }
+        )
+
+    due_today = 0
+    for t in tasks_raw:
+        if not t:
+            continue
+        if _task_not_done(t.get("status")) and _is_due_today(
+            t.get("due_hint"), t.get("due_date"), now
+        ):
+            due_today += 1
+    for o in other_raw:
+        if not o:
+            continue
+        if _task_not_done(o.get("status")) and _is_due_today(
+            None, o.get("due_date"), now
+        ):
+            due_today += 1
+
+    need_attention = 0
+    for iss in issues_open:
+        if str(iss.get("severity") or "").strip().lower() == "high":
+            need_attention += 1
+    for t in tasks_raw:
+        if not t:
+            continue
+        if _task_not_done(t.get("status")) and _is_overdue_iso(
+            str(t.get("due_date") or ""), now
+        ):
+            need_attention += 1
+    for o in other_raw:
+        if not o:
+            continue
+        if _task_not_done(o.get("status")) and _is_overdue_iso(
+            str(o.get("due_date") or ""), now
+        ):
+            need_attention += 1
+
+    summary = {
+        "active_projects": len(projects_out),
+        "open_issues": len(issues_open),
+        "project_tasks": len(all_tasks_out),
+        "other_tasks": len(other_out),
+        "due_today": due_today,
+        "need_attention": need_attention,
+    }
+
+    return {
+        "summary": summary,
+        "generated_at": generated_at,
+        "projects": projects_out,
+        "all_project_tasks": all_tasks_out,
+        "issues": issues_out,
+        "other_tasks": other_out,
+    }
+
+
 async def build_daily_report_preview() -> dict[str, Any]:
     now = datetime.now(_TZ_BKK)
     generated_at = now.isoformat()
@@ -1119,6 +1351,18 @@ def build_hospital_work_html() -> str:
   #report-preview{font-family:ui-monospace,monospace;font-size:0.8rem;line-height:1.5;min-height:360px;max-height:min(70vh,520px);resize:vertical;overflow-y:auto}
   .report-meta{display:flex;flex-wrap:wrap;gap:12px 20px;margin-bottom:12px;font-size:0.85rem;color:#9ca3af}
   .report-toolbar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;align-items:center}
+  .summary-section{margin-bottom:22px}
+  .summary-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:12px;margin-bottom:8px}
+  .sum-card{background:#151515;border:1px solid #2a2a2a;border-radius:10px;padding:12px 14px}
+  .sum-card b{display:block;font-size:1.28rem;color:#f9fafb;line-height:1.2}
+  .sum-card span{display:block;font-size:0.72rem;color:#9ca3af;margin-top:4px;line-height:1.35}
+  .sum-h3{font-size:0.92rem;color:#93c5fd;margin:20px 0 8px;font-weight:600}
+  .sum-table-wrap{overflow-x:auto;margin-bottom:4px;border-radius:8px;border:1px solid #222}
+  .sum-table{font-size:0.8rem}
+  .sum-filters{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:10px}
+  .sum-filters label{display:flex;flex-direction:column;gap:4px;font-size:0.72rem;color:#9ca3af;margin:0}
+  .sum-filters select,.sum-filters input[type="checkbox"]{width:auto;min-width:0}
+  .sum-filters .chk-inline{flex-direction:row;align-items:center;gap:6px}
 </style>
 </head>
 <body>
@@ -1130,6 +1374,7 @@ def build_hospital_work_html() -> str:
 </header>
 <div class="container">
   <nav class="page-nav" aria-label="Hospital Work sections">
+    <a href="#sec-summary">Summary</a>
     <a href="#sec-overview">ภาพรวม</a>
     <a href="#sec-projects">โครงการ</a>
     <a href="#sec-issues">Issues</a>
@@ -1138,9 +1383,54 @@ def build_hospital_work_html() -> str:
     <a href="#sec-ai">AI Review</a>
   </nav>
 
+  <section id="sec-summary" class="summary-section">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:14px">
+      <h2 style="margin:0;font-size:1.05rem;color:#f9fafb">Summary Dashboard</h2>
+      <div class="row-actions" style="align-items:center">
+        <button type="button" class="btn btn-primary" id="btn-refresh-summary">รีเฟรช Summary</button>
+        <span class="muted" id="sum-generated" style="font-size:0.78rem;max-width:20rem"></span>
+      </div>
+    </div>
+    <div class="summary-cards" id="sum-cards"></div>
+
+    <h3 class="sum-h3">Overview — โครงการที่เปิดอยู่</h3>
+    <div class="sum-table-wrap">
+      <table class="sum-table"><thead><tr><th>โครงการ</th><th>สถานะ</th><th>%</th><th>Next step</th><th>Impl / Due</th><th>งานเปิด</th><th>Issues</th><th></th></tr></thead>
+      <tbody id="tb-sum-projects"></tbody></table>
+    </div>
+
+    <h3 class="sum-h3">งานในโครงการทั้งหมด</h3>
+    <div class="sum-filters">
+      <label>สถานะ
+        <select id="sum-f-status"><option value="">ทั้งหมด</option><option>open</option><option>in_progress</option><option>done</option></select>
+      </label>
+      <label>โครงการ
+        <select id="sum-f-proj"><option value="">ทั้งหมด</option></select>
+      </label>
+      <label class="chk-inline"><input type="checkbox" id="sum-f-due-today"> due วันนี้</label>
+      <label class="chk-inline"><input type="checkbox" id="sum-f-due-week"> due สัปดาห์นี้</label>
+    </div>
+    <div class="sum-table-wrap">
+      <table class="sum-table"><thead><tr><th>โครงการ</th><th>งาน</th><th>สถานะ</th><th>due_hint</th><th>due</th><th>รายละเอียด</th><th></th></tr></thead>
+      <tbody id="tb-sum-all-tasks"></tbody></table>
+    </div>
+
+    <h3 class="sum-h3">Issues ที่ยังไม่ปิด</h3>
+    <div class="sum-table-wrap">
+      <table class="sum-table"><thead><tr><th>หัวข้อ</th><th>system</th><th>Pri / Sev</th><th>สถานะ</th><th>next_step</th><th>โครงการ</th></tr></thead>
+      <tbody id="tb-sum-issues"></tbody></table>
+    </div>
+
+    <h3 class="sum-h3">Other Tasks (active)</h3>
+    <div class="sum-table-wrap">
+      <table class="sum-table"><thead><tr><th>หัวข้อ</th><th>สถานะ</th><th>priority</th><th>requester</th><th>โครงการ</th><th>due</th><th></th></tr></thead>
+      <tbody id="tb-sum-other"></tbody></table>
+    </div>
+  </section>
+
   <div id="sec-overview">
     <p class="muted" style="margin-bottom:12px">CRUD จาก DB — ลบงาน/Issue/Other = soft delete (is_active=0) • ปิดโครงการ = soft delete โครงการ (กู้คืนได้ ไม่มี hard delete ใน Phase นี้)</p>
-    <p class="muted" style="margin-bottom:8px;font-size:0.8rem">งานในโครงการแสดงใต้แต่ละโครงการในตารางด้านล่าง • ทุกช่องวันที่รวม Implementation date ใช้ตัวเลือกปฏิทิน — ระบบเก็บเป็น YYYY-MM-DD และแสดงใน Daily Report เป็นรูปแบบ 13-May-2026 • ถ้าข้อมูลเก่าเป็นข้อความเดือน/ปี (เช่น กรกฎาคม 2569) ช่องวันที่จะว่างจนกว่าจะเลือกวันใหม่</p>
+    <p class="muted" style="margin-bottom:8px;font-size:0.8rem">สรุปภาพรวมอยู่ที่แท็บ <strong>Summary</strong> ด้านบน (การ์ด + ตารางงานรวม + Issues / Other) — จากนั้นเป็น CRUD รายละเอียดด้านล่าง • งานในโครงการแสดงใต้แต่ละโครงการในตาราง • วันที่ใช้ปฏิทิน เก็บ YYYY-MM-DD แสดงในรายงานเป็น 13-May-2026</p>
   </div>
 
   <section id="sec-projects">
@@ -1350,7 +1640,7 @@ function taskStatusOpts(cur) {
 
 function renderTaskCard(pid, t) {
   const st = t.status || 'open';
-  return `<div class="task-card-edit" data-task-id="${t.id}" data-project-id="${pid}">
+  return `<div class="task-card-edit" id="task-card-${t.id}" data-task-id="${t.id}" data-project-id="${pid}">
     <div class="task-grid">
       <div><label>หัวข้อ</label><input class="t-title" value="${attr(t.title||'')}"></div>
       <div><label>สถานะ</label><select class="t-status">${taskStatusOpts(st)}</select></div>
@@ -1402,7 +1692,7 @@ function renderProjectWithTasksRows(p) {
     : `<button type="button" class="btn btn-primary save-proj" data-id="${p.id}">บันทึก</button>
       <button type="button" class="btn extra-proj" data-id="${p.id}">รายละเอียด</button>
       <button type="button" class="btn btn-danger del-proj" data-id="${p.id}">ปิดโครงการ</button>`;
-  const mainRow = `<tr class="proj-main${archived ? ' proj-archived' : ''}" data-id="${p.id}">
+  const mainRow = `<tr class="proj-main${archived ? ' proj-archived' : ''}" id="proj-row-${p.id}" data-id="${p.id}">
     <td class="col-code"><code>${esc(p.code)}</code></td>
     <td class="col-name">${esc(p.name)}${badge}</td>
     <td class="col-pct"><input type="number" class="p-pct" min="0" max="100" style="width:100%;max-width:64px" value="${p.percent_complete}"${dis}></td>
@@ -1411,7 +1701,7 @@ function renderProjectWithTasksRows(p) {
     <td class="col-actions row-actions">${actions}</td></tr>`;
   let tasksBlock;
   if (archived) {
-    tasksBlock = `<tr class="proj-tasks-row proj-tasks-archived" data-pid="${p.id}">
+    tasksBlock = `<tr class="proj-tasks-row proj-tasks-archived" id="proj-tasks-anchor-${p.id}" data-pid="${p.id}">
     <td colspan="6" class="proj-tasks-cell">
       <div class="proj-task-wrap">
         <div class="muted" style="font-size:0.8rem;margin-bottom:6px">งานในโครงการ</div>
@@ -1420,7 +1710,7 @@ function renderProjectWithTasksRows(p) {
     </td></tr>`;
   } else {
     const taskHtml = tasks.map(t => renderTaskCard(p.id, t)).join('');
-    tasksBlock = `<tr class="proj-tasks-row" data-pid="${p.id}">
+    tasksBlock = `<tr class="proj-tasks-row" id="proj-tasks-anchor-${p.id}" data-pid="${p.id}">
     <td colspan="6" class="proj-tasks-cell">
       <div class="proj-task-wrap">
         <div class="muted" style="font-size:0.8rem;margin-bottom:6px">งานในโครงการ</div>
@@ -1433,6 +1723,229 @@ function renderProjectWithTasksRows(p) {
     </td></tr>`;
   }
   return mainRow + tasksBlock;
+}
+
+let _dashboardCache = null;
+
+function todayYMDLocal() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+
+function isoToLocalMidnight(iso) {
+  if (!iso || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(String(iso).trim())) return null;
+  const p = String(iso).trim().split('-');
+  return new Date(parseInt(p[0],10), parseInt(p[1],10)-1, parseInt(p[2],10));
+}
+
+function isoInThisCalendarWeek(iso) {
+  const dt = isoToLocalMidnight(iso);
+  if (!dt || isNaN(dt.getTime())) return false;
+  const now = new Date();
+  const wd = (now.getDay() + 6) % 7;
+  const mon = new Date(now.getFullYear(), now.getMonth(), now.getDate() - wd);
+  mon.setHours(0,0,0,0);
+  const sun = new Date(mon);
+  sun.setDate(mon.getDate() + 6);
+  sun.setHours(23,59,59,999);
+  return dt >= mon && dt <= sun;
+}
+
+function taskDueTodayClient(t) {
+  const y = todayYMDLocal();
+  if ((t.due_date || '').trim() === y) return true;
+  const h = (t.due_hint || '').toLowerCase();
+  if (h.includes('today') || (t.due_hint || '').indexOf('วันนี้') >= 0) return true;
+  return false;
+}
+
+function taskMatchesSummaryFilters(t) {
+  const st = sel('sum-f-status').value;
+  if (st && (t.status || '') !== st) return false;
+  const pid = sel('sum-f-proj').value;
+  if (pid && String(t.project_id) !== pid) return false;
+  if (sel('sum-f-due-today').checked && !taskDueTodayClient(t)) return false;
+  if (sel('sum-f-due-week').checked && !isoInThisCalendarWeek(t.due_date)) return false;
+  return true;
+}
+
+function renderSummaryTaskRows() {
+  const tb = sel('tb-sum-all-tasks');
+  if (!tb || !_dashboardCache) return;
+  const src = _dashboardCache.all_project_tasks || [];
+  const rows = src.filter(taskMatchesSummaryFilters);
+  tb.innerHTML = rows.map(t => {
+    const det = [t.details,t.notes].filter(Boolean).join(' · ');
+    return `<tr data-task-id="${t.id}" data-project-id="${t.project_id}">
+      <td>${esc(t.project_name||'')}</td>
+      <td>${esc(t.title||'')}</td>
+      <td>${esc(t.status||'')}</td>
+      <td>${esc(t.due_hint||'')}</td>
+      <td>${esc(t.due_date_display || t.due_date || '—')}</td>
+      <td class="muted" style="max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${attr(det)}">${esc(det||'—')}</td>
+      <td class="row-actions">
+        <button type="button" class="btn sum-task-done" data-task-id="${t.id}">done</button>
+        <button type="button" class="btn sum-task-edit" data-task-id="${t.id}" data-project-id="${t.project_id}">ไปแก้ไข</button>
+        <button type="button" class="btn btn-danger sum-task-del" data-task-id="${t.id}">ลบ</button>
+      </td></tr>`;
+  }).join('') || '<tr><td colspan="7" class="muted">ไม่มีรายการที่ตรงตัวกรอง</td></tr>';
+}
+
+function renderDashboard(d) {
+  _dashboardCache = d;
+  const s = d.summary || {};
+  const gen = d.generated_at || '';
+  const sg = sel('sum-generated');
+  if (sg) {
+    try { sg.textContent = gen ? ('อัปเดต Summary: ' + new Date(gen).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' })) : ''; }
+    catch (e) { sg.textContent = gen || ''; }
+  }
+  const cards = sel('sum-cards');
+  if (cards) {
+    const defs = [
+      ['โครงการเปิด', s.active_projects ?? 0],
+      ['Issues เปิด', s.open_issues ?? 0],
+      ['งานในโครงการ', s.project_tasks ?? 0],
+      ['Other tasks', s.other_tasks ?? 0],
+      ['Due วันนี้', s.due_today ?? 0],
+      ['ต้องจับตา', s.need_attention ?? 0],
+    ];
+    cards.innerHTML = defs.map(([lab, n]) => `<div class="sum-card"><b>${n}</b><span>${esc(lab)}</span></div>`).join('');
+  }
+  const tbp = sel('tb-sum-projects');
+  if (tbp) {
+    tbp.innerHTML = (d.projects||[]).map(p => {
+      const implDue = [p.implementation_date_display||'', p.due_date_display||''].filter(Boolean).join(' · ') || '—';
+      return `<tr>
+        <td><strong>${esc(p.name)}</strong><div class="muted" style="font-size:0.72rem"><code>${esc(p.code||'')}</code></div></td>
+        <td>${esc(p.status||'')}</td>
+        <td>${p.percent_complete ?? 0}%</td>
+        <td style="max-width:200px">${esc(p.next_step||'—')}</td>
+        <td class="muted" style="font-size:0.78rem">${esc(implDue)}</td>
+        <td>${p.open_task_count ?? 0}</td>
+        <td>${p.issue_count ?? 0}</td>
+        <td class="row-actions">
+          <button type="button" class="btn sum-goto" data-pid="${p.id}" data-nav="row">ดู</button>
+          <button type="button" class="btn sum-goto" data-pid="${p.id}" data-nav="tasks">งาน</button>
+          <button type="button" class="btn sum-goto" data-pid="${p.id}" data-nav="details">รายละเอียด</button>
+        </td></tr>`;
+    }).join('') || '<tr><td colspan="8" class="muted">ไม่มีโครงการ</td></tr>';
+  }
+  const sp = sel('sum-f-proj');
+  if (sp) {
+    const cur = sp.value;
+    sp.innerHTML = '<option value="">ทั้งหมด</option>' + (d.projects||[]).map(p =>
+      `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+    if ([...sp.options].some(o => o.value === cur)) sp.value = cur;
+  }
+  renderSummaryTaskRows();
+  const tbi = sel('tb-sum-issues');
+  if (tbi) {
+    tbi.innerHTML = (d.issues||[]).map(i => `<tr>
+      <td>${esc(i.title||'')}</td>
+      <td>${esc(i.system_name||'')}</td>
+      <td>${esc((i.priority||'') + ' / ' + (i.severity||''))}</td>
+      <td>${esc(i.status||'')}</td>
+      <td>${esc(i.next_step||'—')}</td>
+      <td>${esc(i.project_name||'—')}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">ไม่มี open issue</td></tr>';
+  }
+  const tbo = sel('tb-sum-other');
+  if (tbo) {
+    tbo.innerHTML = (d.other_tasks||[]).map(o => `<tr data-ot-id="${o.id}">
+      <td>${esc(o.title||'')}</td>
+      <td>${esc(o.status||'')}</td>
+      <td>${esc(o.priority||'')}</td>
+      <td>${esc(o.requester||'')}</td>
+      <td>${esc(o.related_project_name||'—')}</td>
+      <td>${esc(o.due_date_display||o.due_date||'—')}</td>
+      <td class="row-actions">
+        <button type="button" class="btn btn-danger sum-ot-del" data-id="${o.id}">ลบ</button>
+      </td></tr>`).join('') || '<tr><td colspan="7" class="muted">ไม่มี other task</td></tr>';
+  }
+}
+
+function bindSummarySectionOnce() {
+  const sec = document.getElementById('sec-summary');
+  if (!sec || sec.dataset.bound === '1') return;
+  sec.dataset.bound = '1';
+  ['sum-f-status','sum-f-proj'].forEach(id => { const el = sel(id); if (el) el.addEventListener('change', () => renderSummaryTaskRows()); });
+  ['sum-f-due-today','sum-f-due-week'].forEach(id => { const el = sel(id); if (el) el.addEventListener('change', () => renderSummaryTaskRows()); });
+  sec.addEventListener('click', async (e) => {
+    const g = e.target.closest('.sum-goto');
+    if (g) {
+      const pid = parseInt(g.dataset.pid, 10);
+      const mode = g.dataset.nav;
+      if (mode === 'details') {
+        extraProjectId = pid;
+        openProjectExtra(pid);
+        document.getElementById('project-extra')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        return;
+      }
+      const el = mode === 'tasks'
+        ? document.getElementById('proj-tasks-anchor-' + pid)
+        : document.getElementById('proj-row-' + pid);
+      if (el) {
+        if (mode === 'tasks') {
+          const body = el.querySelector('.proj-tasks-body');
+          if (body) body.style.display = 'block';
+          const tb = el.querySelector('.toggle-proj-tasks');
+          if (tb) tb.setAttribute('aria-expanded', 'true');
+        }
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else {
+        document.getElementById('sec-projects')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+      return;
+    }
+    const done = e.target.closest('.sum-task-done');
+    if (done) {
+      try {
+        await api('/admin/api/hospital-work/tasks/'+done.dataset.taskId, { method:'PUT', body: JSON.stringify({ status: 'done' }) });
+        await loadAll();
+      } catch (err) { alert(err.message); }
+      return;
+    }
+    const ed = e.target.closest('.sum-task-edit');
+    if (ed) {
+      const pid = parseInt(ed.dataset.projectId, 10);
+      const tid = parseInt(ed.dataset.taskId, 10);
+      const anchor = document.getElementById('proj-tasks-anchor-' + pid);
+      if (anchor) {
+        const body = anchor.querySelector('.proj-tasks-body');
+        if (body) body.style.display = 'block';
+        anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        setTimeout(() => {
+          document.getElementById('task-card-' + tid)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 350);
+      } else {
+        document.getElementById('sec-projects')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+      return;
+    }
+    const del = e.target.closest('.sum-task-del');
+    if (del) {
+      if (!confirm('ลบงานนี้ (soft delete)?')) return;
+      try {
+        await api('/admin/api/hospital-work/tasks/'+del.dataset.taskId, { method:'DELETE' });
+        await loadAll();
+      } catch (err) { alert(err.message); }
+      return;
+    }
+    const otd = e.target.closest('.sum-ot-del');
+    if (otd) {
+      if (!confirm('ลบ Other task นี้?')) return;
+      try {
+        await api('/admin/api/hospital-work/other-tasks/'+otd.dataset.id, { method:'DELETE' });
+        await loadAll();
+      } catch (err) { alert(err.message); }
+    }
+  });
+}
+
+async function refreshSummaryOnly() {
+  const d = await api('/admin/api/hospital-work/dashboard');
+  renderDashboard(d);
+  setSyncStatus(new Date());
 }
 
 function openProjectExtra(pid) {
@@ -1456,17 +1969,20 @@ function openProjectExtra(pid) {
 }
 
 async function loadAll() {
-  const [projects, issues, other, preview] = await Promise.all([
+  const [projects, issues, other, preview, dashboard] = await Promise.all([
     api(projectsWithTasksUrl()),
     api('/admin/api/hospital-work/issues'),
     api('/admin/api/hospital-work/other-tasks'),
     api('/admin/api/hospital-work/daily-report-preview'),
+    api('/admin/api/hospital-work/dashboard'),
   ]);
   _projectsCache = projects;
   const tb = sel('tb-projects');
   tb.innerHTML = projects.map(renderProjectWithTasksRows).join('');
 
   fillProjectSelects(projects);
+  renderDashboard(dashboard);
+  bindSummarySectionOnce();
 
   sel('tb-issues').innerHTML = issues.map(i => `<tr data-id="${i.id}">
     <td>${esc(i.title)}</td>
@@ -1710,6 +2226,8 @@ sel('btn-report-scroll-top').addEventListener('click', () => {
 });
 const _cbArch = sel('cb-show-archived');
 if (_cbArch) _cbArch.addEventListener('change', () => { loadAll().catch(e => alert(e.message)); });
+const _btnSum = sel('btn-refresh-summary');
+if (_btnSum) _btnSum.addEventListener('click', () => { refreshSummaryOnly().catch(e => alert(e.message)); });
 loadAll().catch(e => alert(e.message));
 </script>
 </body>
