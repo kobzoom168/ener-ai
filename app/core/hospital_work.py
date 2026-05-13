@@ -7,6 +7,8 @@ Manual QA checklist (mirror of database._migrate_hospital_schema docstring):
 - Soft delete: task/issue/other rows with is_active=0 disappear from lists and report.
 - Daily report: standup_mention (e.g. @Noom); body mentions Cloud / PBX / Backup /
   Migration DB when seeded data present.
+- Date fields: UI uses input type=date; DB stores YYYY-MM-DD; report shows 13-May-2026;
+  legacy 13-May-2026 in DB still loads in pickers via toDateInputValue.
 """
 
 from __future__ import annotations
@@ -143,6 +145,29 @@ def format_report_date_bkk(now: datetime) -> str:
     return f"{now.day}-{_EN_MONTH_ABBR[now.month - 1]}-{now.year}"
 
 
+def format_report_date_value(value: str | None) -> str:
+    """Format a stored date for the daily report text.
+
+    - YYYY-MM-DD (canonical DB from date pickers) -> 13-May-2026
+    - 13-May-2026 style -> returned unchanged
+    - empty -> ""
+    """
+    v = (str(value) if value is not None else "").strip()
+    if not v:
+        return ""
+    m_iso = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", v)
+    if m_iso:
+        y, mo, d = int(m_iso.group(1)), int(m_iso.group(2)), int(m_iso.group(3))
+        try:
+            dt = datetime(y, mo, d, tzinfo=_TZ_BKK)
+            return format_report_date_bkk(dt)
+        except ValueError:
+            return v
+    if re.fullmatch(r"\d{1,2}-[A-Za-z]{3}-\d{4}", v):
+        return v
+    return v
+
+
 def _week_range_label_bkk(now: datetime) -> str:
     wd = now.weekday()
     mon = (now - timedelta(days=wd)).replace(
@@ -155,12 +180,17 @@ def _week_range_label_bkk(now: datetime) -> str:
 def _is_due_today(
     due_hint: str | None, due_date: str | None, now: datetime
 ) -> bool:
+    """Primary due_date format in DB is YYYY-MM-DD; legacy free text still supported."""
     h = (due_hint or "").strip().lower()
     if "วันนี้" in (due_hint or "") or "today" in h:
         return True
     d = (due_date or "").strip()
     if not d:
         return False
+    m_iso = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", d)
+    if m_iso:
+        y, mo, day = int(m_iso.group(1)), int(m_iso.group(2)), int(m_iso.group(3))
+        return (now.year, now.month, now.day) == (y, mo, day)
     today_fmt = format_report_date_bkk(now)
     if today_fmt.lower() in d.lower():
         return True
@@ -199,8 +229,17 @@ def _build_list_today_report_text(
         for iss in issues_open:
             extra = iss.get("next_step") or iss.get("details") or ""
             line = f"- {iss.get('title', '')}"
-            if extra:
-                line += f" ({extra})"
+            bits = [extra] if extra else []
+            for label, key in (
+                ("start", "start_date"),
+                ("end", "end_date"),
+                ("due", "due_date"),
+            ):
+                fv = format_report_date_value(iss.get(key))
+                if fv:
+                    bits.append(f"{label} {fv}")
+            if bits:
+                line += f" ({', '.join(bits)})"
             lines.append(line)
 
     lines += [
@@ -214,10 +253,35 @@ def _build_list_today_report_text(
         lines.append(f">>สถานะปัจจุบัน: {po.get('current_status') or ''}")
         lines.append(f"Current Status: {po.get('status') or ''}")
         lines.append(f"% Complete: {po.get('percent_complete', 0)}%")
+        proj_dates: list[str] = []
+        psd = format_report_date_value(po.get("start_date"))
+        ped = format_report_date_value(po.get("end_date"))
+        pdd = format_report_date_value(po.get("due_date"))
+        if psd:
+            proj_dates.append(f"start {psd}")
+        if ped:
+            proj_dates.append(f"end {ped}")
+        if pdd:
+            proj_dates.append(f"due {pdd}")
+        if proj_dates:
+            lines.append("Schedule: " + ", ".join(proj_dates))
         lines.append("--------------")
         tasks = po.get("tasks") or []
         for t_i, tk in enumerate(tasks, start=1):
-            lines.append(f">{t_i}. {tk.get('title', '')}")
+            line = f">{t_i}. {tk.get('title', '')}"
+            date_bits: list[str] = []
+            sd = format_report_date_value(tk.get("start_date"))
+            ed = format_report_date_value(tk.get("end_date"))
+            dd = format_report_date_value(tk.get("due_date"))
+            if sd:
+                date_bits.append(f"start {sd}")
+            if ed:
+                date_bits.append(f"end {ed}")
+            if dd:
+                date_bits.append(f"due {dd}")
+            if date_bits:
+                line += " [" + ", ".join(date_bits) + "]"
+            lines.append(line)
         impl = po.get("implementation_date") or ""
         lines.append("")
         lines.append(f"กำหนดการ Implementation: {impl}")
@@ -235,8 +299,17 @@ def _build_list_today_report_text(
         for ot in other_tasks:
             det = ot.get("details") or ot.get("notes") or ""
             line = f"- {ot.get('title', '')}"
-            if det:
-                line += f" — {det}"
+            extras = [det] if det else []
+            for label, key in (
+                ("start", "start_date"),
+                ("end", "end_date"),
+                ("due", "due_date"),
+            ):
+                fv = format_report_date_value(ot.get(key))
+                if fv:
+                    extras.append(f"{label} {fv}")
+            if extras:
+                line += " — " + " | ".join(extras)
             lines.append(line)
 
     lines += [
@@ -256,7 +329,11 @@ def _build_list_today_report_text(
         tasks = po.get("tasks") or []
         for tk in tasks:
             if _is_due_today(tk.get("due_hint"), tk.get("due_date"), now):
-                lines.append(f"> {tk.get('title', '')}")
+                tln = f"> {tk.get('title', '')}"
+                dd = format_report_date_value(tk.get("due_date"))
+                if dd:
+                    tln += f" (due: {dd})"
+                lines.append(tln)
         lines.append("")
 
     lines.append("Issues:")
@@ -856,6 +933,9 @@ async def build_daily_report_preview() -> dict[str, Any]:
                 "status": p["status"],
                 "percent_complete": p["percent_complete"],
                 "current_status": p.get("current_status") or "",
+                "start_date": p.get("start_date") or "",
+                "end_date": p.get("end_date") or "",
+                "due_date": p.get("due_date") or "",
                 "implementation_date": p.get("implementation_date") or "",
                 "next_step": p.get("next_step") or "",
                 "tasks": [
@@ -865,6 +945,8 @@ async def build_daily_report_preview() -> dict[str, Any]:
                         "status": t["status"],
                         "due_hint": t.get("due_hint") or "",
                         "due_date": t.get("due_date") or "",
+                        "start_date": t.get("start_date") or "",
+                        "end_date": t.get("end_date") or "",
                     }
                     for t in tasks
                 ],
@@ -879,6 +961,9 @@ async def build_daily_report_preview() -> dict[str, Any]:
             "status": r["status"],
             "details": (r.get("details") or ""),
             "next_step": r.get("next_step") or "",
+            "start_date": r.get("start_date") or "",
+            "end_date": r.get("end_date") or "",
+            "due_date": r.get("due_date") or "",
             "project_id": r.get("project_id"),
             "project_name": r.get("project_name"),
         }
@@ -934,6 +1019,7 @@ def build_hospital_work_html() -> str:
   @media(max-width:900px){.grid2{grid-template-columns:1fr}}
   label{display:block;font-size:0.75rem;color:#9ca3af;margin-bottom:4px}
   input,select,textarea{width:100%;background:#0a0a0a;border:1px solid #333;border-radius:6px;padding:8px 10px;color:#e5e7eb;font-size:0.9rem}
+  input[type="date"]{color-scheme:dark}
   textarea{min-height:72px;font-family:ui-monospace,monospace;font-size:0.8rem}
   table{width:100%;border-collapse:collapse;font-size:0.85rem}
   th,td{padding:8px 10px;text-align:left;border-bottom:1px solid #222}
@@ -957,6 +1043,7 @@ def build_hospital_work_html() -> str:
 </header>
 <div class="container">
   <p class="muted" style="margin-bottom:16px">CRUD จาก DB — ลบงาน/Issue/Other = soft delete (is_active=0)</p>
+  <p class="muted" style="margin-bottom:14px;font-size:0.8rem">วันที่ (Start / End / Due): ใช้ตัวเลือกปฏิทิน — ระบบเก็บเป็น YYYY-MM-DD และแสดงใน Daily Report เป็นรูปแบบ 13-May-2026 • Implementation date ยังเป็นข้อความ (เดือน/ปี)</p>
 
   <div class="grid2">
     <section>
@@ -990,9 +1077,9 @@ def build_hospital_work_html() -> str:
           <div><label>owner</label><input id="pe-owner"></div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px">
-          <div><label>start_date</label><input id="pe-sd"></div>
-          <div><label>end_date</label><input id="pe-ed"></div>
-          <div><label>due_date</label><input id="pe-dd"></div>
+          <div><label>Start date</label><input id="pe-sd" type="date"></div>
+          <div><label>End date</label><input id="pe-ed" type="date"></div>
+          <div><label>Due date</label><input id="pe-dd" type="date"></div>
         </div>
         <div style="margin-top:8px"><label>notes</label><textarea id="pe-notes"></textarea></div>
         <button type="button" class="btn btn-primary" style="margin-top:10px" id="btn-save-project-extra">บันทึกฟิลด์เพิ่มเติม</button>
@@ -1011,12 +1098,12 @@ def build_hospital_work_html() -> str:
           <div><label>due_hint</label><input id="nt-due" placeholder="วันนี้ / สัปดาห์นี้"></div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
-          <div><label>due_date</label><input id="nt-due_date" placeholder="13-May-2026 หรือ YYYY-MM-DD"></div>
+          <div><label>Due date</label><input id="nt-due_date" type="date"></div>
           <div><label>details</label><input id="nt-details"></div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
-          <div><label>start_date</label><input id="nt-sd"></div>
-          <div><label>end_date</label><input id="nt-ed"></div>
+          <div><label>Start date</label><input id="nt-sd" type="date"></div>
+          <div><label>End date</label><input id="nt-ed" type="date"></div>
         </div>
         <div style="margin-bottom:8px"><label>notes</label><textarea id="nt-notes" placeholder="notes"></textarea></div>
         <button type="button" class="btn btn-primary" id="btn-add-task">เพิ่มงาน</button>
@@ -1048,9 +1135,9 @@ def build_hospital_work_html() -> str:
       </div>
       <div style="margin-bottom:8px"><label>next_step</label><input id="ni-next"></div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px">
-        <div><label>start_date</label><input id="ni-sd"></div>
-        <div><label>end_date</label><input id="ni-ed"></div>
-        <div><label>due_date</label><input id="ni-dd"></div>
+        <div><label>Start date</label><input id="ni-sd" type="date"></div>
+        <div><label>End date</label><input id="ni-ed" type="date"></div>
+        <div><label>Due date</label><input id="ni-dd" type="date"></div>
       </div>
       <div style="margin-bottom:8px"><label>รายละเอียด (details)</label><textarea id="ni-details"></textarea></div>
       <div style="margin-bottom:8px"><label>notes</label><textarea id="ni-notes"></textarea></div>
@@ -1074,6 +1161,11 @@ def build_hospital_work_html() -> str:
         <div><label>requester</label><input id="no-req"></div>
       </div>
       <div style="margin-bottom:8px"><label>related project</label><select id="no-rel"><option value="">—</option></select></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px">
+        <div><label>Start date</label><input id="no-sd" type="date"></div>
+        <div><label>End date</label><input id="no-ed" type="date"></div>
+        <div><label>Due date</label><input id="no-dd" type="date"></div>
+      </div>
       <div style="margin-bottom:8px"><label>notes</label><input id="no-notes"></div>
       <button type="button" class="btn btn-primary" id="btn-add-other">เพิ่ม</button>
       <div class="err" id="err-other"></div>
@@ -1111,6 +1203,29 @@ async function api(path, opt) {
 function esc(s){ const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
 function attr(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;'); }
 
+const _DATE_INPUT_MONTHS = { Jan:0, Feb:1, Mar:2, Apr:3, May:4, Jun:5, Jul:6, Aug:7, Sep:8, Oct:9, Nov:10, Dec:11 };
+/** Return YYYY-MM-DD for input[type=date], or '' — supports legacy 13-May-2026 */
+function toDateInputValue(v) {
+  if (v == null) return '';
+  const s = String(v).trim();
+  if (!s) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m = s.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})$/);
+  if (m) {
+    const day = parseInt(m[1], 10);
+    const monStr = m[2].charAt(0).toUpperCase() + m[2].slice(1).toLowerCase();
+    const mi = _DATE_INPUT_MONTHS[monStr];
+    if (mi === undefined) return '';
+    const y = parseInt(m[3], 10);
+    const dt = new Date(y, mi, day);
+    if (isNaN(dt.getTime()) || dt.getFullYear() !== y || dt.getMonth() !== mi || dt.getDate() !== day) return '';
+    const mm = String(mi + 1).padStart(2, '0');
+    const dd = String(day).padStart(2, '0');
+    return y + '-' + mm + '-' + dd;
+  }
+  return '';
+}
+
 function setSyncStatus(d) {
   const el = sel('sync-status');
   if (!el) return;
@@ -1138,9 +1253,9 @@ function openProjectExtra(pid) {
   sel('pe-desc').value = p.description || '';
   sel('pe-vendor').value = p.vendor || '';
   sel('pe-owner').value = p.owner || '';
-  sel('pe-sd').value = p.start_date || '';
-  sel('pe-ed').value = p.end_date || '';
-  sel('pe-dd').value = p.due_date || '';
+  sel('pe-sd').value = toDateInputValue(p.start_date);
+  sel('pe-ed').value = toDateInputValue(p.end_date);
+  sel('pe-dd').value = toDateInputValue(p.due_date);
   sel('pe-notes').value = p.notes || '';
   const pr = sel('pe-priority');
   pr.value = (p.priority && ['High','Medium','Low'].includes(p.priority)) ? p.priority : 'Medium';
@@ -1346,9 +1461,13 @@ sel('btn-add-other').addEventListener('click', async () => {
       priority: sel('no-priority').value,
       requester: sel('no-req').value,
       notes: sel('no-notes').value,
+      start_date: sel('no-sd').value || '',
+      end_date: sel('no-ed').value || '',
+      due_date: sel('no-dd').value || '',
       related_project_id: rel ? parseInt(rel,10) : null
     })});
     sel('no-title').value=''; sel('no-details').value=''; sel('no-notes').value=''; sel('no-req').value='';
+    sel('no-sd').value=''; sel('no-ed').value=''; sel('no-dd').value='';
     await loadAll();
   } catch(e) { sel('err-other').textContent = e.message; }
 });
