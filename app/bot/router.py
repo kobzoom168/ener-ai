@@ -851,7 +851,7 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/pending_sources — แหล่งข่าวที่รอ approve\n"
         "/approve_source <domain> — อนุมัติแหล่งข่าวใหม่\n\n"
         "**🖥️ Server**\n"
-        "/status — สรุปสถานะ + AI วิเคราะห์\n"
+        "/status — สรุปสถานะ (เรียก AI เฉพาะเมื่อมีหลักฐาน error จาก log)\n"
         "/server — CPU/RAM/Disk\n"
         "/logs — logs ล่าสุด\n"
         "/errors — errors อย่างเดียว\n"

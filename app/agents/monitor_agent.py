@@ -95,6 +95,24 @@ _NOISE_PATTERNS = [
 ]
 
 
+def _docker_logs_unavailable(log_text: str) -> bool:
+    """True if Docker log collector did not return usable log lines."""
+    s = (log_text or "").strip()
+    if not s:
+        return True
+    if s.startswith("ดึง logs ไม่ได้"):
+        return True
+    if "ไม่พบ container" in s:
+        return True
+    return False
+
+
+def _logs_filter_reported_no_errors(log_text: str) -> bool:
+    """Log read succeeded and error-only filter found nothing to report."""
+    s = (log_text or "").strip()
+    return "ไม่พบ error" in s or "ไม่มี logs" in s
+
+
 def get_docker_logs(lines: int = 20, filter_errors: bool = False) -> str:
     """ดึง docker logs ล่าสุด"""
     try:
@@ -366,43 +384,80 @@ async def cmd_server() -> str:
     return format_server_stats(stats)
 
 
+def _status_metric_line(metrics_ok: bool) -> str:
+    if metrics_ok:
+        return "สถานะจาก metric: CPU/RAM/Disk OK"
+    return "สถานะจาก metric: มีค่าที่ควรจับตา (ดูตัวเลขด้านบน)"
+
+
+def _status_log_limitation_block() -> str:
+    return (
+        "ข้อจำกัด: อ่าน log file ไม่ได้ — `log file: no_log_access`\n"
+        "next action: ถ้าต้องการ log ให้ mount `/var/log/ener-ai` หรือเพิ่ม docker log collector"
+    )
+
+
+async def _status_llm_summary(stats: dict, errors: str) -> str:
+    prompt = (
+        "คุณได้รับเฉพาะหลักฐานด้านล่างนี้เท่านั้น — **ห้าม** อ้าง version.json, path เฉพาะ, permission path, "
+        "API version, service ภายนอก หรือข้อมูลที่ไม่ได้ปรากฏใน excerpt\n\n"
+        "=== Evidence ===\n"
+        f"CPU: {stats['cpu_percent']:.1f}%\n"
+        f"RAM: {stats['ram_percent']:.1f}% ({stats['ram_used_gb']:.1f}/{stats['ram_total_gb']:.1f} GB)\n"
+        f"Disk: {stats['disk_percent']:.1f}%\n\n"
+        "=== Recent error log excerpt ===\n"
+        f"{errors[:1200]}\n\n"
+        "สรุปสั้น ๆ เป็นภาษาไทย: อ้างอิงเฉพาะข้อความใน excerpt และตัวเลข metric เท่านั้น"
+    )
+    summary = await _analyze_with_groq(prompt)
+    if summary:
+        return summary
+    return _basic_error_analysis(errors)
+
+
 @log_agent_run("MonitorAgent")
 async def cmd_status() -> str:
-    """สรุปสถานะทั้งหมด — ไม่เรียก LLM ถ้า metrics + logs ปกติ"""
+    """สรุปสถานะ — ไม่เรียก LLM เมื่อ metric ปกติและไม่มีหลักฐาน error จาก log."""
     stats = get_server_stats()
     errors = get_docker_logs(lines=50, filter_errors=True)
     err_stripped = (errors or "").strip()
 
-    no_log_errors = (
-        "ไม่พบ error" in err_stripped
-        or "ไม่มี logs" in err_stripped
-        or err_stripped == ""
-    )
+    logs_unavailable = _docker_logs_unavailable(err_stripped)
     cpu_ok = stats["cpu_percent"] < 80
     ram_ok = stats["ram_percent"] < 85
     disk_ok = stats["disk_percent"] < 80
+    metrics_ok = cpu_ok and ram_ok and disk_ok
+
     stats_text = format_server_stats(stats)
 
-    if no_log_errors and cpu_ok and ram_ok and disk_ok:
+    if logs_unavailable:
+        extra = ""
+        if not metrics_ok:
+            extra = (
+                "\nหมายเหตุ: ไม่มีหลักฐานจาก log — **ห้ามเดา** สาเหตุเชิง path/version.json/permission "
+                "ที่ไม่ได้ปรากฏในข้อความนี้"
+            )
+        return (
+            f"{stats_text}\n\n"
+            f"{_status_metric_line(metrics_ok)}\n"
+            f"{_status_log_limitation_block()}"
+            f"{extra}"
+        )
+
+    logs_clean = _logs_filter_reported_no_errors(err_stripped)
+
+    if metrics_ok and logs_clean:
         return f"{stats_text}\n\n📌 สรุป: ระบบปกติดี ไม่พบ error สำคัญ"
 
-    summary = ""
-    if not (no_log_errors and cpu_ok and ram_ok and disk_ok):
-        prompt = (
-            "คุณได้รับเฉพาะหลักฐานด้านล่างนี้เท่านั้น — **ห้าม** อ้าง API version, service ภายนอก, "
-            "หรือข้อมูลที่ไม่ได้ปรากฏใน evidence\n\n"
-            "=== Evidence ===\n"
-            f"CPU: {stats['cpu_percent']:.1f}%\n"
-            f"RAM: {stats['ram_percent']:.1f}% ({stats['ram_used_gb']:.1f}/{stats['ram_total_gb']:.1f} GB)\n"
-            f"Disk: {stats['disk_percent']:.1f}%\n\n"
-            "=== Recent error log excerpt ===\n"
-            f"{errors[:1200]}\n\n"
-            "สรุปสั้น ๆ เป็นภาษาไทย: สภาพทรัพยากร + มีความเสี่ยงจาก logs หรือไม่ (อ้างอิงเฉพาะข้อความใน excerpt)"
+    if not metrics_ok and logs_clean:
+        return (
+            f"{stats_text}\n\n"
+            f"{_status_metric_line(False)}\n"
+            "ข้อจำกัด: **ไม่มี** error excerpt จาก logs ในช่วงที่ดึงมา — "
+            "ใช้เฉพาะตัวเลข metric และ Top Processes ประกอบ (ไม่เรียก LLM เพราะไม่มีหลักฐาน error)"
         )
-        summary = await _analyze_with_groq(prompt)
-    if not summary:
-        summary = _basic_error_analysis(errors)
 
+    summary = await _status_llm_summary(stats, errors)
     return f"{stats_text}\n\n🤖 AI Analysis:\n{summary}"
 
 
