@@ -14,6 +14,7 @@ Manual QA checklist (mirror of database._migrate_hospital_schema docstring):
 - Summary tab: GET /admin/api/hospital-work/dashboard — cards, projects overview,
   all tasks table with filters, issues & other tasks (active data only).
 - Task order: hospital_project_tasks.sort_order (ลำดับ) — lower first; new task auto-appends.
+"""
 
 from __future__ import annotations
 
