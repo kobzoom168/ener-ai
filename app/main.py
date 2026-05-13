@@ -61,6 +61,9 @@ _TERMINAL_OTP_LAST_SENT_KEY = "terminal_otp_last_sent"
 _ADMIN_SESSION_PREFIX = "admin_session:"
 OTP_EXPIRE = 300
 SESSION_EXPIRE = 7200
+_ADMIN_OTP_HOUR_RL: dict[str, list[float]] = {}
+_ADMIN_OTP_HOUR_RL_MAX = 3
+_ADMIN_OTP_HOUR_RL_WINDOW = 3600.0
 _RANGE_OPTIONS = ["1h", "3h", "10h", "24h", "7d"]
 _AGENT_ORDER = [
     "MainChatAgent",
@@ -348,6 +351,27 @@ def _generate_otp() -> str:
 
 def _generate_session_token() -> str:
     return hashlib.sha256(f"{time.time()}{random.random()}".encode()).hexdigest()[:48]
+
+
+def _admin_otp_rate_limit_key(request: Request) -> str:
+    """Identity for admin OTP send rate limit (web client; maps to chat_id in bot context)."""
+    xf = (request.headers.get("x-forwarded-for") or "").strip()
+    if xf:
+        ip = xf.split(",")[0].strip()
+        if ip:
+            return ip[:200]
+    if request.client and request.client.host:
+        return str(request.client.host)[:200]
+    return "unknown"
+
+
+def _admin_otp_hour_bucket(request: Request, now: float) -> tuple[str, list[float]]:
+    key = f"hour_rl:{_admin_otp_rate_limit_key(request)}"
+    bucket = _ADMIN_OTP_HOUR_RL.setdefault(key, [])
+    cutoff = now - _ADMIN_OTP_HOUR_RL_WINDOW
+    while bucket and bucket[0] < cutoff:
+        bucket.pop(0)
+    return key, bucket
 
 
 async def _send_otp_telegram(otp: str, title: str = "Ener-AI Admin OTP") -> None:
@@ -2552,6 +2576,35 @@ def build_admin_html(overview: dict) -> HTMLResponse:
         .replace(/"/g, "&quot;");
     }}
 
+    const __adminDashIntervalIds = new Set();
+    function __trackAdminDashInterval(id) {{
+      __adminDashIntervalIds.add(id);
+      return id;
+    }}
+    function __clearIntervalIfTracked(id) {{
+      if (id == null) return;
+      clearInterval(id);
+      __adminDashIntervalIds.delete(id);
+    }}
+    function __clearAllAdminDashboardIntervals() {{
+      for (const id of [...__adminDashIntervalIds]) {{
+        clearInterval(id);
+        __adminDashIntervalIds.delete(id);
+      }}
+    }}
+    const __nativeFetch = window.fetch.bind(window);
+    window.fetch = function(...args) {{
+      return __nativeFetch(...args).then((res) => {{
+        try {{
+          const u = res.url || '';
+          if (res.status === 401 || u.includes('/admin/otp')) {{
+            __clearAllAdminDashboardIntervals();
+          }}
+        }} catch (e) {{}}
+        return res;
+      }});
+    }};
+
     const LAYOUT_KEY = 'ener-admin-layout-v1';
     const STYLE_KEY = 'ener-admin-style-v1';
     const PRESETS = {{
@@ -3293,7 +3346,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
     }}
 
     fetchLogs();
-    setInterval(fetchLogs, 10000);
+    __trackAdminDashInterval(setInterval(fetchLogs, 10000));
 
     async function refreshApiStatus() {{
       try {{
@@ -3324,7 +3377,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       }}
     }}
     refreshApiStatus();
-    setInterval(refreshApiStatus, 60000);
+    __trackAdminDashInterval(setInterval(refreshApiStatus, 60000));
 
     // ── API Status widget drag + resize + collapse ────────────────────────
     (function initApiStatusWidget() {{
@@ -3404,10 +3457,13 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       }}
       let handle = null;
       function apply() {{
-        if (handle) clearInterval(handle);
+        if (handle) {{
+          __clearIntervalIfTracked(handle);
+          handle = null;
+        }}
         const ms = Number(sel.value);
         localStorage.setItem(STORAGE_KEY, sel.value);
-        if (ms > 0) handle = setInterval(() => location.reload(), ms);
+        if (ms > 0) handle = __trackAdminDashInterval(setInterval(() => location.reload(), ms));
       }}
       sel.addEventListener('change', apply);
       apply();
@@ -8609,7 +8665,7 @@ async def admin_provider_status(request: Request):
     return JSONResponse({"providers": list(results), "checked_at": _time.strftime("%H:%M:%S")})
 
 
-async def _perform_admin_otp_send() -> dict:
+async def _perform_admin_otp_send(request: Request) -> dict:
     """Send admin OTP via Telegram only when allowed (manual trigger)."""
     async with _admin_otp_lock:
         otp_state = await _get_admin_otp_state()
@@ -8636,10 +8692,15 @@ async def _perform_admin_otp_send() -> dict:
             remaining = int(OTP_EXPIRE - (now - last_sent))
             return {"ok": False, "wait": max(1, remaining)}
 
+        _, rl_bucket = _admin_otp_hour_bucket(request, now)
+        if len(rl_bucket) >= _ADMIN_OTP_HOUR_RL_MAX:
+            return {"error": "Too many requests, wait 1 hour"}
+
         otp = _generate_otp()
         otp_expires_at = now + OTP_EXPIRE
         await _store_admin_otp(otp, otp_expires_at, now)
         await _send_otp_telegram(otp)
+        rl_bucket.append(now)
         _admin_otp_log.info("ADMIN_OTP_SENT_MANUAL expires_in=%s", OTP_EXPIRE)
         return {"ok": True, "expires_in": OTP_EXPIRE}
 
@@ -8789,8 +8850,13 @@ async def otp_page(request: Request):
       const res = await fetch('/admin/otp/send', { method: 'POST', credentials: 'same-origin' });
       const data = await res.json().catch(() => ({}));
       const msg = document.getElementById('msg');
+      if (res.status === 429 && data.error) {
+        msg.textContent = '❌ ' + data.error;
+        msg.style.color = '#ff4444';
+        return;
+      }
       if (!res.ok) {
-        msg.textContent = '❌ ส่ง OTP ไม่สำเร็จ';
+        msg.textContent = data.error ? ('❌ ' + data.error) : '❌ ส่ง OTP ไม่สำเร็จ';
         msg.style.color = '#ff4444';
         return;
       }
@@ -8817,7 +8883,8 @@ async def otp_page(request: Request):
       }
     }
 
-    startTimer();
+    // Never auto-send OTP on load; countdown only if OTP already valid.
+    if (seconds > 0) startTimer();
   </script>
 </body>
 </html>"""
@@ -8873,7 +8940,15 @@ async def verify_otp(request: Request):
 
 async def _admin_otp_send_response(request: Request, via: str = "send") -> JSONResponse:
     await log_otp_event("ADMIN_OTP_SEND_REQUEST", request=request, metadata={"via": via})
-    result = await _perform_admin_otp_send()
+    result = await _perform_admin_otp_send(request)
+    if result.get("error"):
+        await log_otp_event(
+            "ADMIN_OTP_HOUR_RATE_LIMIT",
+            request=request,
+            reason="hour_cap",
+            metadata={"via": via},
+        )
+        return JSONResponse(result, status_code=429)
     if result.get("already_valid"):
         await log_otp_event(
             "ADMIN_OTP_NOT_SENT_VALID_EXISTING",
