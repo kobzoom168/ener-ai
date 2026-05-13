@@ -8543,6 +8543,15 @@ async def hw_projects_list(request: Request, include_inactive: str = ""):
     return JSONResponse(await hw.list_projects(include_inactive=inc))
 
 
+@app.get("/admin/api/hospital-work/projects-with-tasks")
+async def hw_projects_with_tasks_list(request: Request, include_inactive: str = ""):
+    await _require_admin(request)
+    from app.core import hospital_work as hw
+
+    inc = (include_inactive or "").lower() in ("1", "true", "yes")
+    return JSONResponse(await hw.list_projects_with_tasks(include_inactive=inc))
+
+
 @app.post("/admin/api/hospital-work/projects")
 async def hw_projects_create(request: Request):
     await _require_admin(request)

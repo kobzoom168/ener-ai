@@ -10,9 +10,8 @@ Manual QA checklist (mirror of database._migrate_hospital_schema docstring):
 - Date fields (incl. implementation_date): UI uses input type=date; DB stores YYYY-MM-DD;
   report shows 13-May-2026; legacy 13-May-2026 loads via toDateInputValue (Thai month text
   in DB leaves picker empty until user picks a calendar day).
-- Manual UX: add open issue e.g. "ระบบช้า" → appears in Daily Report section 1; add task
-  with due_date = today → appears under "สิ่งที่ต้องทำวันนี้"; soft-delete task → gone
-  from table and report.
+- Manual UX: tasks live under each project row; add/edit/delete there; Daily Report
+  preview refreshes after loadAll.
 """
 
 from __future__ import annotations
@@ -580,6 +579,34 @@ async def delete_task(task_id: int) -> bool:
         return cur.rowcount > 0
 
 
+async def list_projects_with_tasks(
+    *, include_inactive: bool = False
+) -> list[dict[str, Any]]:
+    """Projects with nested active tasks (single round-trip for admin UI)."""
+    projects = await list_projects(include_inactive=include_inactive)
+    if not projects:
+        return []
+    pids = [int(p["id"]) for p in projects]
+    async with get_db() as db:
+        ph = ",".join("?" * len(pids))
+        cur = await db.execute(
+            f"""
+            SELECT * FROM hospital_project_tasks
+            WHERE project_id IN ({ph}) AND is_active = 1
+            ORDER BY project_id, sort_order ASC, id ASC
+            """,
+            pids,
+        )
+        rows = await cur.fetchall()
+    task_map: dict[int, list[dict[str, Any]]] = {pid: [] for pid in pids}
+    for r in rows:
+        d = _row(r)
+        if not d:
+            continue
+        task_map[int(d["project_id"])].append(d)
+    return [{**p, "tasks": task_map[int(p["id"])]} for p in projects]
+
+
 async def list_issues(project_id: int | None = None) -> list[dict[str, Any]]:
     async with get_db() as db:
         if project_id is None:
@@ -1049,6 +1076,14 @@ def build_hospital_work_html() -> str:
   .proj-table .col-cs{min-width:140px;vertical-align:top}
   .proj-table .col-actions{width:1%;white-space:nowrap;vertical-align:top}
   .proj-table input[type=text],.proj-table input[type=number]{min-width:0;max-width:100%}
+  tr.proj-tasks-row td{border-bottom:1px solid #262626;background:#0c0c0c;padding:0 10px 14px!important;vertical-align:top}
+  .proj-task-wrap{padding:12px 12px 4px}
+  .proj-task-scroll{max-height:min(360px,50vh);overflow-y:auto;overflow-x:auto;margin-bottom:8px;padding-right:4px}
+  .task-card-edit{border:1px solid #262626;border-radius:8px;padding:10px;margin-bottom:10px;background:#111}
+  .task-grid{display:grid;grid-template-columns:minmax(120px,2fr) 100px minmax(80px,1fr) 130px 130px 130px;gap:8px;align-items:end}
+  @media(max-width:1100px){.task-grid{grid-template-columns:1fr 1fr}}
+  .toggle-proj-tasks{margin-bottom:8px}
+  .add-task-section{margin-top:4px;padding-top:12px;border-top:1px dashed #333}
   .field-group{margin-top:14px;padding-top:14px;border-top:1px solid #333}
   .field-group:first-of-type{margin-top:0;padding-top:0;border-top:none}
   .field-group h4{font-size:0.72rem;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px;font-weight:600}
@@ -1068,7 +1103,6 @@ def build_hospital_work_html() -> str:
   <nav class="page-nav" aria-label="Hospital Work sections">
     <a href="#sec-overview">ภาพรวม</a>
     <a href="#sec-projects">โครงการ</a>
-    <a href="#sec-tasks">งานในโครงการ</a>
     <a href="#sec-issues">Issues</a>
     <a href="#sec-other">Other Tasks</a>
     <a href="#sec-report">Daily Report</a>
@@ -1077,7 +1111,7 @@ def build_hospital_work_html() -> str:
 
   <div id="sec-overview">
     <p class="muted" style="margin-bottom:12px">CRUD จาก DB — ลบงาน/Issue/Other = soft delete (is_active=0)</p>
-    <p class="muted" style="margin-bottom:8px;font-size:0.8rem">ทุกช่องวันที่รวม Implementation date ใช้ตัวเลือกปฏิทิน — ระบบเก็บเป็น YYYY-MM-DD และแสดงใน Daily Report เป็นรูปแบบ 13-May-2026 • ถ้าข้อมูลเก่าเป็นข้อความเดือน/ปี (เช่น กรกฎาคม 2569) ช่องวันที่จะว่างจนกว่าจะเลือกวันใหม่</p>
+    <p class="muted" style="margin-bottom:8px;font-size:0.8rem">งานในโครงการแสดงใต้แต่ละโครงการในตารางด้านล่าง • ทุกช่องวันที่รวม Implementation date ใช้ตัวเลือกปฏิทิน — ระบบเก็บเป็น YYYY-MM-DD และแสดงใน Daily Report เป็นรูปแบบ 13-May-2026 • ถ้าข้อมูลเก่าเป็นข้อความเดือน/ปี (เช่น กรกฎาคม 2569) ช่องวันที่จะว่างจนกว่าจะเลือกวันใหม่</p>
   </div>
 
   <section id="sec-projects">
@@ -1130,34 +1164,6 @@ def build_hospital_work_html() -> str:
         </div>
         <button type="button" class="btn btn-primary" style="margin-top:14px" id="btn-save-project-extra">บันทึกรายละเอียด</button>
         <div class="err" id="err-pe"></div>
-      </div>
-  </section>
-
-  <section id="sec-tasks">
-      <h2>งานในโครงการ <span class="muted" id="task-project-label"></span></h2>
-      <p class="muted" id="task-hint">เลือกโครงการจากตารางด้านบน แล้วเพิ่มหรือแก้งานด้านล่าง</p>
-      <div id="task-editor" style="display:none">
-        <div style="margin-bottom:8px"><label>หัวข้อ</label><input id="nt-title"></div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
-          <div><label>สถานะ</label>
-            <select id="nt-status"><option>open</option><option>in_progress</option><option>done</option></select></div>
-          <div><label>due_hint</label><input id="nt-due" placeholder="วันนี้ / สัปดาห์นี้"></div>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
-          <div><label>Due date</label><input id="nt-due_date" type="date"></div>
-          <div><label>details</label><input id="nt-details"></div>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
-          <div><label>Start date</label><input id="nt-sd" type="date"></div>
-          <div><label>End date</label><input id="nt-ed" type="date"></div>
-        </div>
-        <div style="margin-bottom:8px"><label>notes</label><textarea id="nt-notes" placeholder="notes"></textarea></div>
-        <button type="button" class="btn btn-primary" id="btn-add-task">เพิ่มงาน</button>
-        <div class="err" id="err-tasks"></div>
-        <div style="overflow-x:auto;margin-top:12px">
-          <table><thead><tr><th>งาน</th><th>สถานะ</th><th></th></tr></thead>
-          <tbody id="tb-tasks"></tbody></table>
-        </div>
       </div>
   </section>
 
@@ -1242,7 +1248,6 @@ def build_hospital_work_html() -> str:
 </div>
 <script>
 const sel = (id) => document.getElementById(id);
-let selectedProjectId = null;
 let extraProjectId = null;
 let _projectsCache = [];
 
@@ -1295,6 +1300,83 @@ function fillProjectSelects(projects) {
     `<option value="${p.id}">${esc(p.name)}</option>`).join('');
 }
 
+function taskStatusOpts(cur) {
+  const c = cur || 'open';
+  return ['open','in_progress','done'].map(s =>
+    `<option value="${s}"${s===c?' selected':''}>${s}</option>`).join('');
+}
+
+function renderTaskCard(pid, t) {
+  const st = t.status || 'open';
+  return `<div class="task-card-edit" data-task-id="${t.id}" data-project-id="${pid}">
+    <div class="task-grid">
+      <div><label>หัวข้อ</label><input class="t-title" value="${attr(t.title||'')}"></div>
+      <div><label>สถานะ</label><select class="t-status">${taskStatusOpts(st)}</select></div>
+      <div><label>due_hint</label><input class="t-due-hint" value="${attr(t.due_hint||'')}"></div>
+      <div><label>Due date</label><input class="t-due-date" type="date" value="${attr(toDateInputValue(t.due_date))}"></div>
+      <div><label>Start date</label><input class="t-sd" type="date" value="${attr(toDateInputValue(t.start_date))}"></div>
+      <div><label>End date</label><input class="t-ed" type="date" value="${attr(toDateInputValue(t.end_date))}"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+      <div><label>details</label><input class="t-details" value="${attr(t.details||'')}"></div>
+      <div><label>notes</label><textarea class="t-notes" rows="2">${esc(t.notes||'')}</textarea></div>
+    </div>
+    <div class="row-actions" style="margin-top:8px">
+      <button type="button" class="btn btn-primary save-inline-task" data-task-id="${t.id}">บันทึก</button>
+      <button type="button" class="btn btn-danger del-inline-task" data-task-id="${t.id}">ลบ</button>
+    </div>
+  </div>`;
+}
+
+function renderAddTaskBlock(pid) {
+  return `<div class="add-task-section" data-pid="${pid}">
+    <div class="muted" style="font-size:0.78rem;margin-bottom:6px">เพิ่มงานใหม่</div>
+    <div class="task-grid">
+      <div><label>หัวข้อ</label><input class="at-title" placeholder="ชื่องาน"></div>
+      <div><label>สถานะ</label><select class="at-status"><option selected>open</option><option>in_progress</option><option>done</option></select></div>
+      <div><label>due_hint</label><input class="at-due-hint" placeholder="วันนี้ / สัปดาห์นี้"></div>
+      <div><label>Due date</label><input class="at-due-date" type="date"></div>
+      <div><label>Start date</label><input class="at-sd" type="date"></div>
+      <div><label>End date</label><input class="at-ed" type="date"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+      <div><label>details</label><input class="at-details"></div>
+      <div><label>notes</label><textarea class="at-notes" rows="2"></textarea></div>
+    </div>
+    <button type="button" class="btn btn-primary at-add" style="margin-top:8px" data-pid="${pid}">เพิ่มงาน</button>
+    <div class="err err-inline-task" data-pid="${pid}" style="margin-top:6px"></div>
+  </div>`;
+}
+
+function renderProjectWithTasksRows(p) {
+  const tasks = p.tasks || [];
+  const n = tasks.length;
+  const taskHtml = tasks.map(t => renderTaskCard(p.id, t)).join('');
+  const mainRow = `<tr class="proj-main" data-id="${p.id}">
+    <td class="col-code"><code>${esc(p.code)}</code></td>
+    <td class="col-name">${esc(p.name)}</td>
+    <td class="col-pct"><input type="number" class="p-pct" min="0" max="100" style="width:100%;max-width:64px" value="${p.percent_complete}"></td>
+    <td class="col-st"><input type="text" class="p-st" style="width:100%" value="${attr(p.status)}"></td>
+    <td class="col-cs"><input type="text" class="p-cs" style="width:100%" placeholder="สถานะปัจจุบัน" value="${attr(p.current_status||'')}"></td>
+    <td class="col-actions row-actions">
+      <button type="button" class="btn btn-primary save-proj" data-id="${p.id}">บันทึก</button>
+      <button type="button" class="btn extra-proj" data-id="${p.id}">รายละเอียด</button>
+      <button type="button" class="btn btn-danger del-proj" data-id="${p.id}">ปิด</button>
+    </td></tr>`;
+  const tasksRow = `<tr class="proj-tasks-row" data-pid="${p.id}">
+    <td colspan="6" class="proj-tasks-cell">
+      <div class="proj-task-wrap">
+        <div class="muted" style="font-size:0.8rem;margin-bottom:6px">งานในโครงการ</div>
+        <button type="button" class="btn toggle-proj-tasks" data-pid="${p.id}" aria-expanded="true">งาน (${n}) — พับ/ขยาย</button>
+        <div class="proj-tasks-body" data-pid="${p.id}">
+          <div class="proj-task-scroll">${taskHtml || '<p class="muted" style="padding:4px 0">ยังไม่มีงาน — เพิ่มด้านล่าง</p>'}</div>
+          ${renderAddTaskBlock(p.id)}
+        </div>
+      </div>
+    </td></tr>`;
+  return mainRow + tasksRow;
+}
+
 function openProjectExtra(pid) {
   extraProjectId = pid;
   const p = _projectsCache.find(x => x.id === pid);
@@ -1317,25 +1399,14 @@ function openProjectExtra(pid) {
 
 async function loadAll() {
   const [projects, issues, other, preview] = await Promise.all([
-    api('/admin/api/hospital-work/projects'),
+    api('/admin/api/hospital-work/projects-with-tasks'),
     api('/admin/api/hospital-work/issues'),
     api('/admin/api/hospital-work/other-tasks'),
     api('/admin/api/hospital-work/daily-report-preview'),
   ]);
   _projectsCache = projects;
   const tb = sel('tb-projects');
-  tb.innerHTML = projects.map(p => `<tr data-id="${p.id}">
-    <td class="col-code"><code>${esc(p.code)}</code></td>
-    <td class="col-name">${esc(p.name)}</td>
-    <td class="col-pct"><input type="number" class="p-pct" min="0" max="100" style="width:100%;max-width:64px" value="${p.percent_complete}"></td>
-    <td class="col-st"><input type="text" class="p-st" style="width:100%" value="${attr(p.status)}"></td>
-    <td class="col-cs"><input type="text" class="p-cs" style="width:100%" placeholder="สถานะปัจจุบัน" value="${attr(p.current_status||'')}"></td>
-    <td class="col-actions row-actions">
-      <button type="button" class="btn btn-primary save-proj" data-id="${p.id}">บันทึก</button>
-      <button type="button" class="btn select-proj" data-id="${p.id}">งาน</button>
-      <button type="button" class="btn extra-proj" data-id="${p.id}">รายละเอียด</button>
-      <button type="button" class="btn btn-danger del-proj" data-id="${p.id}">ปิด</button>
-    </td></tr>`).join('');
+  tb.innerHTML = projects.map(renderProjectWithTasksRows).join('');
 
   fillProjectSelects(projects);
 
@@ -1377,7 +1448,8 @@ async function loadAll() {
     ', issues='+ (ev.hospital_issues||0) +', other='+ (ev.hospital_other_tasks||0) +'</p>';
 
   document.querySelectorAll('.save-proj').forEach(b => b.addEventListener('click', async () => {
-    const tr = b.closest('tr');
+    const tr = b.closest('tr.proj-main');
+    if (!tr) return;
     const pct = parseInt(tr.querySelector('.p-pct').value,10)||0;
     const st = tr.querySelector('.p-st').value;
     const cs = tr.querySelector('.p-cs').value;
@@ -1389,18 +1461,71 @@ async function loadAll() {
   document.querySelectorAll('.extra-proj').forEach(b => b.addEventListener('click', () => {
     openProjectExtra(parseInt(b.dataset.id,10));
   }));
-  document.querySelectorAll('.select-proj').forEach(b => b.addEventListener('click', async () => {
-    selectedProjectId = parseInt(b.dataset.id,10);
-    sel('task-project-label').textContent = '(#'+selectedProjectId+')';
-    sel('task-hint').style.display='none';
-    sel('task-editor').style.display='block';
-    await loadTasks();
-    document.getElementById('sec-tasks')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }));
+  document.querySelectorAll('.toggle-proj-tasks').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const wrap = btn.parentElement;
+      const body = wrap && wrap.querySelector('.proj-tasks-body');
+      if (!body) return;
+      const hidden = body.style.display === 'none';
+      body.style.display = hidden ? 'block' : 'none';
+      btn.setAttribute('aria-expanded', hidden ? 'true' : 'false');
+    });
+  });
+  document.querySelectorAll('.save-inline-task').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const card = btn.closest('.task-card-edit');
+      if (!card) return;
+      const tid = card.dataset.taskId;
+      const body = {
+        title: card.querySelector('.t-title').value,
+        status: card.querySelector('.t-status').value,
+        due_hint: card.querySelector('.t-due-hint').value,
+        due_date: card.querySelector('.t-due-date').value,
+        start_date: card.querySelector('.t-sd').value,
+        end_date: card.querySelector('.t-ed').value,
+        details: card.querySelector('.t-details').value,
+        notes: card.querySelector('.t-notes').value
+      };
+      try {
+        await api('/admin/api/hospital-work/tasks/'+tid, {method:'PUT', body: JSON.stringify(body)});
+        await loadAll();
+      } catch (e) { alert(e.message); }
+    });
+  });
+  document.querySelectorAll('.del-inline-task').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('ลบงานนี้?')) return;
+      try {
+        await api('/admin/api/hospital-work/tasks/'+btn.dataset.taskId, {method:'DELETE'});
+        await loadAll();
+      } catch (e) { alert(e.message); }
+    });
+  });
+  document.querySelectorAll('.at-add').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const pid = parseInt(btn.dataset.pid, 10);
+      const sec = btn.closest('.add-task-section');
+      if (!sec) return;
+      const errEl = sec.querySelector('.err-inline-task');
+      if (errEl) errEl.textContent = '';
+      try {
+        await api('/admin/api/hospital-work/projects/'+pid+'/tasks', {method:'POST', body: JSON.stringify({
+          title: sec.querySelector('.at-title').value,
+          status: sec.querySelector('.at-status').value,
+          due_hint: sec.querySelector('.at-due-hint').value,
+          due_date: sec.querySelector('.at-due-date').value,
+          details: sec.querySelector('.at-details').value,
+          notes: sec.querySelector('.at-notes').value,
+          start_date: sec.querySelector('.at-sd').value,
+          end_date: sec.querySelector('.at-ed').value
+        })});
+        await loadAll();
+      } catch (e) { if (errEl) errEl.textContent = e.message; else alert(e.message); }
+    });
+  });
   document.querySelectorAll('.del-proj').forEach(b => b.addEventListener('click', async () => {
     if (!confirm('ปิดโครงการนี้ (soft delete)?')) return;
     await api('/admin/api/hospital-work/projects/'+b.dataset.id, {method:'DELETE'});
-    if (selectedProjectId === parseInt(b.dataset.id,10)) { selectedProjectId=null; sel('task-editor').style.display='none'; sel('task-hint').style.display='block'; }
     if (extraProjectId === parseInt(b.dataset.id,10)) { extraProjectId=null; sel('project-extra').style.display='none'; }
     await loadAll();
   }));
@@ -1415,12 +1540,6 @@ async function loadAll() {
 
   setSyncStatus(new Date());
   if (extraProjectId) openProjectExtra(extraProjectId);
-  if (selectedProjectId) {
-    sel('task-editor').style.display = 'block';
-    sel('task-hint').style.display = 'none';
-    sel('task-project-label').textContent = '(#' + selectedProjectId + ')';
-    await loadTasks();
-  }
 }
 
 sel('btn-save-project-extra').addEventListener('click', async () => {
@@ -1443,25 +1562,6 @@ sel('btn-save-project-extra').addEventListener('click', async () => {
   } catch(e) { sel('err-pe').textContent = e.message; }
 });
 
-async function loadTasks() {
-  if (!selectedProjectId) return;
-  const tasks = await api('/admin/api/hospital-work/projects/'+selectedProjectId+'/tasks');
-  sel('tb-tasks').innerHTML = tasks.map(t => `<tr data-id="${t.id}">
-    <td>${esc(t.title)}</td>
-    <td><select class="task-st" data-id="${t.id}">${['open','in_progress','done'].map(s =>
-      `<option value="${s}" ${t.status===s?'selected':''}>${s}</option>`).join('')}</select></td>
-    <td><button type="button" class="btn btn-danger del-task" data-id="${t.id}">ลบ</button></td>
-    </tr>`).join('');
-  document.querySelectorAll('.task-st').forEach(el => el.addEventListener('change', async () => {
-    await api('/admin/api/hospital-work/tasks/'+el.dataset.id, {method:'PUT', body: JSON.stringify({status: el.value})});
-    await loadAll();
-  }));
-  document.querySelectorAll('.del-task').forEach(b => b.addEventListener('click', async () => {
-    await api('/admin/api/hospital-work/tasks/'+b.dataset.id, {method:'DELETE'});
-    await loadAll();
-  }));
-}
-
 sel('btn-refresh').addEventListener('click', () => { loadAll().catch(e => alert(e.message)); });
 sel('btn-add-project').addEventListener('click', async () => {
   sel('err-projects').textContent='';
@@ -1477,24 +1577,6 @@ sel('btn-add-project').addEventListener('click', async () => {
     sel('np-name').value=''; sel('np-code').value=''; sel('np-impl').value=''; sel('np-next').value=''; sel('np-desc').value='';
     await loadAll();
   } catch(e) { sel('err-projects').textContent = e.message; }
-});
-sel('btn-add-task').addEventListener('click', async () => {
-  sel('err-tasks').textContent='';
-  if (!selectedProjectId) return;
-  try {
-    await api('/admin/api/hospital-work/projects/'+selectedProjectId+'/tasks', {method:'POST', body: JSON.stringify({
-      title: sel('nt-title').value,
-      status: sel('nt-status').value,
-      due_hint: sel('nt-due').value,
-      due_date: sel('nt-due_date').value,
-      details: sel('nt-details').value,
-      notes: sel('nt-notes').value,
-      start_date: sel('nt-sd').value,
-      end_date: sel('nt-ed').value
-    })});
-    sel('nt-title').value=''; sel('nt-due_date').value=''; sel('nt-details').value=''; sel('nt-notes').value=''; sel('nt-sd').value=''; sel('nt-ed').value='';
-    await loadAll();
-  } catch(e) { sel('err-tasks').textContent = e.message; }
 });
 sel('btn-add-issue').addEventListener('click', async () => {
   sel('err-issues').textContent='';
