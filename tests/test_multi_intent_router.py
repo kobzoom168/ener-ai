@@ -40,6 +40,15 @@ class TestMultiIntentRouter(unittest.TestCase):
             ["diag_resource"],
         )
 
+    def test_diag_resource_memory_usage_thai(self):
+        self.assertEqual(
+            classify_message_intents("memory usage เท่าไหร่"),
+            ["diag_resource"],
+        )
+
+    def test_memorykeeper_is_diag_agent(self):
+        self.assertEqual(classify_message_intents("memorykeeper ล้ม"), ["diag_agent"])
+
     def test_communication_only(self):
         self.assertEqual(classify_message_intents("ลูกค้าไม่ตอบ"), ["communication"])
 

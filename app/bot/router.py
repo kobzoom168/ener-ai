@@ -1038,7 +1038,7 @@ async def cmd_resource_debug(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
     try:
         d = await diag.diagnose_resource_usage(debug=True)
-        txt = diag.format_resource_diagnosis_thai(d) + diag.format_resource_debug_appendix(d)
+        txt = diag.format_resource_diagnosis_thai(d, verbose_provenance=True) + diag.format_resource_debug_appendix(d)
         for chunk in diag.split_telegram_chunks(txt):
             await _reply_smart(update, chunk)
         await diag.log_diagnostic_audit(

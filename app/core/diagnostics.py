@@ -78,16 +78,26 @@ def sanitize_diagnostic_text(text: str | None) -> str:
     return s
 
 
-DIAGNOSTIC_PROVENANCE_RULE_TH = (
-    "\n\n**หลักฐาน / provenance:** รายงานนี้อิงเฉพาะข้อมูลที่ collector ดึงได้จริง — "
+DIAGNOSTIC_PROVENANCE_RULE_SHORT_TH = (
+    "\n\n**หลักฐาน:** อิงข้อมูลจาก collector ที่รันจริงเท่านั้น — "
+    "ไม่อ้างว่ารันคำสั่งแล้วหากไม่มีผลลัพธ์จริง"
+)
+
+DIAGNOSTIC_PROVENANCE_RULE_VERBOSE_TH = (
+    "**หลักฐาน / provenance (ฉบับเต็ม):** รายงานนี้อิงเฉพาะข้อมูลที่ collector ดึงได้จริง — "
     "**ห้าม** แสดงคำสั่ง shell เป็นถึง `output:` ถ้าไม่ได้ execute จริง "
     "ถ้าไม่มีสิทธิ์หรือไม่พบ docker socket จะระบุ `docker_stats: no_access` ชัดเจน "
     "(ยังไม่ได้รัน command นี้ เพราะ collector ไม่มีสิทธิ์/ไม่พบ docker socket)"
 )
 
+# Back-compat alias for code / tests referencing the long policy text
+DIAGNOSTIC_PROVENANCE_RULE_TH = DIAGNOSTIC_PROVENANCE_RULE_VERBOSE_TH
 
-def _diag_provenance_footer() -> str:
-    return DIAGNOSTIC_PROVENANCE_RULE_TH
+
+def _diag_provenance_footer(*, verbose: bool = False) -> str:
+    if verbose:
+        return "\n\n" + DIAGNOSTIC_PROVENANCE_RULE_VERBOSE_TH
+    return DIAGNOSTIC_PROVENANCE_RULE_SHORT_TH
 
 
 def _mask_ip(ip: str) -> str:
@@ -638,13 +648,48 @@ _RESOURCE_SUBSTRINGS_TH = (
     "ทรัพยากร",
 )
 _RESOURCE_WORD_RE = re.compile(
-    r"\b(cpu|ram|mem|memory|resource)\b",
+    r"\b(cpu|ram|mem|resource)\b",
     re.I,
 )
 
+_SERVER_METRICS_FRESH_SEC = 300
+
+
+def _is_agent_memory_diagnostic_topic(text: str) -> bool:
+    """Agent/memory pipeline issues — must not classify as resource usage."""
+    t = (text or "").lower()
+    th = text or ""
+    if "memorykeeper" in t:
+        return True
+    if "memory curator" in t or "memorycurator" in th.replace(" ", "").lower():
+        return True
+    if "agent ล้ม" in th or "ระบบล่ม" in th:
+        return True
+    return False
+
+
+def _memory_in_resource_context(text: str) -> bool:
+    """RAM-style questions using the word 'memory' (not standalone)."""
+    t = (text or "").lower()
+    raw = text or ""
+    if "memory usage" in t or "memory utilization" in t:
+        return True
+    if "ใช้ memory" in raw or "ใช้ memory" in t:
+        return True
+    if "ใช้memory" in raw.replace(" ", ""):
+        return True
+    if "memory" in t:
+        if any(x in raw for x in ("เท่า", "เท่าไร", "เท่าไหร่", "เท่าไร่")):
+            return True
+        if "usage" in t:
+            return True
+    return False
+
 
 def matches_resource_diagnostic_intent(text: str) -> bool:
-    """CPU/RAM/memory/resource questions (natural language)."""
+    """CPU/RAM/memory-resource questions (natural language)."""
+    if _is_agent_memory_diagnostic_topic(text):
+        return False
     raw = text or ""
     t = raw.lower()
     if any(s in raw for s in _RESOURCE_SUBSTRINGS_TH):
@@ -652,6 +697,8 @@ def matches_resource_diagnostic_intent(text: str) -> bool:
     if _RESOURCE_WORD_RE.search(t):
         return True
     if "ram" in t and any(x in raw for x in ("ละ", "ไหน", "เท่า", "เท่าไร", "เท่าไหร่", "เท่าไร่")):
+        return True
+    if _memory_in_resource_context(text):
         return True
     return False
 
@@ -673,6 +720,15 @@ def resource_diagnostic_intent_position(text: str) -> int | None:
         ri = t.find("ram")
         if ri >= 0 and any(x in raw for x in ("ละ", "ไหน", "เท่า", "เท่าไร", "เท่าไหร่", "เท่าไร่")):
             positions.append(ri)
+    if _memory_in_resource_context(text):
+        for needle in ("memory usage", "memory utilization", "ใช้ memory", "memory"):
+            if needle == "ใช้ memory":
+                j = raw.find(needle)
+            else:
+                j = t.find(needle)
+            if j >= 0:
+                positions.append(j)
+                break
     return min(positions) if positions else 0
 
 
@@ -680,6 +736,8 @@ async def collect_resource_usage() -> dict[str, Any]:
     """Gather metrics from DB snapshot, live psutil, and optional docker stats (real exec only)."""
     out: dict[str, Any] = {
         "server_metrics": None,
+        "server_metrics_status": "absent",
+        "server_metrics_age_sec": None,
         "psutil": None,
         "docker_stats": None,
         "docker_status": "skipped",
@@ -700,7 +758,19 @@ async def collect_resource_usage() -> dict[str, Any]:
             )
             row = await cur.fetchone()
             if row:
-                out["server_metrics"] = dict(row)
+                sm = dict(row)
+                out["server_metrics"] = sm
+                ts = _parse_ts(str(sm.get("recorded_at") or ""))
+                now = datetime.now(timezone.utc)
+                if ts is None:
+                    out["server_metrics_status"] = "stale"
+                    out["server_metrics_age_sec"] = None
+                else:
+                    age = max(0.0, (now - ts).total_seconds())
+                    out["server_metrics_age_sec"] = age
+                    out["server_metrics_status"] = (
+                        "fresh" if age <= _SERVER_METRICS_FRESH_SEC else "stale"
+                    )
     except Exception as exc:
         out["errors"].append(f"server_metrics:{exc}")
 
@@ -724,40 +794,39 @@ async def collect_resource_usage() -> dict[str, Any]:
         out["errors"].append(f"psutil:{exc}")
 
     container = (getattr(settings, "docker_stats_container", None) or "").strip()
-    if not container:
-        out["docker_status"] = "skipped"
-        out["docker_reason"] = "docker_stats_container empty (disabled in config)"
-        return out
-
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "docker",
-            "stats",
-            "--no-stream",
-            "--format",
-            "{{json .}}",
-            container,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=5.0)
-        out_txt = (stdout or b"").decode("utf-8", errors="replace").strip()
-        err_txt = (stderr or b"").decode("utf-8", errors="replace").strip()
-        if proc.returncode == 0 and out_txt:
-            out["docker_stats"] = out_txt[:4000]
-            out["docker_status"] = "ok"
-        else:
+    if container:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "docker",
+                "stats",
+                "--no-stream",
+                "--format",
+                "{{json .}}",
+                container,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=5.0)
+            out_txt = (stdout or b"").decode("utf-8", errors="replace").strip()
+            err_txt = (stderr or b"").decode("utf-8", errors="replace").strip()
+            if proc.returncode == 0 and out_txt:
+                out["docker_stats"] = out_txt[:4000]
+                out["docker_status"] = "ok"
+            else:
+                out["docker_status"] = "no_access"
+                out["docker_reason"] = err_txt[:500] or f"exit_code={proc.returncode}"
+        except FileNotFoundError:
             out["docker_status"] = "no_access"
-            out["docker_reason"] = err_txt[:500] or f"exit_code={proc.returncode}"
-    except FileNotFoundError:
-        out["docker_status"] = "no_access"
-        out["docker_reason"] = "docker CLI not found in PATH"
-    except asyncio.TimeoutError:
-        out["docker_status"] = "no_access"
-        out["docker_reason"] = "docker stats timed out (5s)"
-    except Exception as exc:
-        out["docker_status"] = "no_access"
-        out["docker_reason"] = str(exc)[:500]
+            out["docker_reason"] = "docker CLI not found in PATH"
+        except asyncio.TimeoutError:
+            out["docker_status"] = "no_access"
+            out["docker_reason"] = "docker stats timed out (5s)"
+        except Exception as exc:
+            out["docker_status"] = "no_access"
+            out["docker_reason"] = str(exc)[:500]
+    else:
+        out["docker_status"] = "skipped"
+        out["docker_reason"] = "docker_stats_container empty (set DOCKER_STATS_CONTAINER in .env to enable)"
 
     return out
 
@@ -770,12 +839,16 @@ async def diagnose_resource_usage(*, debug: bool = False) -> dict[str, Any]:
 
     sm = collected.get("server_metrics") or {}
     ps = collected.get("psutil") or {}
+    sm_status = collected.get("server_metrics_status") or "absent"
+    sm_age = collected.get("server_metrics_age_sec")
+    sm_fresh = sm_status == "fresh"
 
     def _pick(sm_key: str, ps_key: str | None = None) -> Any:
         k = ps_key or sm_key
-        v = sm.get(sm_key)
-        if v is not None:
-            return v
+        if sm_fresh:
+            v = sm.get(sm_key)
+            if v is not None:
+                return v
         return ps.get(k)
 
     cpu = _pick("cpu_percent")
@@ -786,7 +859,7 @@ async def diagnose_resource_usage(*, debug: bool = False) -> dict[str, Any]:
     proc_cpu = ps.get("process_cpu_percent")
 
     source_parts: list[str] = []
-    if sm and any(
+    if sm_fresh and sm and any(
         sm.get(k) is not None for k in ("cpu_percent", "ram_percent", "ram_used_mb", "ram_total_mb", "disk_percent")
     ):
         source_parts.append("server_metrics")
@@ -805,6 +878,8 @@ async def diagnose_resource_usage(*, debug: bool = False) -> dict[str, Any]:
         "what": "resource_usage",
         "collected_at": collected_at,
         "source_used": source_used,
+        "server_metrics_status": sm_status,
+        "server_metrics_age_sec": sm_age,
         "cpu_percent": cpu,
         "process_cpu_percent": proc_cpu,
         "ram_percent": ram_p,
@@ -835,7 +910,9 @@ def _ener_log_dir_access() -> str:
     return "no_log_access"
 
 
-def format_resource_diagnosis_thai(data: dict[str, Any]) -> str:
+def format_resource_diagnosis_thai(
+    data: dict[str, Any], *, verbose_provenance: bool = False
+) -> str:
     lines = [
         "🖥️ **ตรวจสอบ Resource Ener-AI**",
         "",
@@ -853,7 +930,9 @@ def format_resource_diagnosis_thai(data: dict[str, Any]) -> str:
         lines.append("- CPU ระบบ: **ไม่มีข้อมูล**")
     pcpu = data.get("process_cpu_percent")
     if pcpu is not None:
-        lines.append(f"- CPU โปรเซสบอท (psutil Process): **{pcpu:.1f}%**")
+        lines.append(
+            f"- CPU โปรเซสบอท (สุ่มตัวอย่างสั้น ๆ จาก psutil.Process, ไม่ใช่ค่าเฉลี่ยยาว): **{pcpu:.1f}%**"
+        )
 
     if ram_p is not None and ram_u is not None and ram_t is not None:
         lines.append(f"- RAM: **{ram_u}MB / {ram_t}MB** (**{ram_p:.1f}%**)")
@@ -875,11 +954,20 @@ def format_resource_diagnosis_thai(data: dict[str, Any]) -> str:
             f"- `collected_at`: **{data.get('collected_at', '')}**",
         ]
     )
+    sm_st = data.get("server_metrics_status")
+    sm_age = data.get("server_metrics_age_sec")
+    if sm_st:
+        age_s = f"{sm_age:.0f}s" if isinstance(sm_age, (int, float)) else "n/a"
+        lines.append(
+            f"- `server_metrics`: **{sm_st}**"
+            + (f" (อายุแถวล่าสุด ~{age_s})" if sm_st != "absent" else "")
+        )
 
     sm = data.get("server_metrics_row")
     if sm:
+        stale_note = " — **ไม่ใช้เป็นค่าหลัก** เพราะ stale" if sm_st == "stale" else ""
         lines.append(
-            f"- `server_metrics` ล่าสุด (DB): recorded_at={sm.get('recorded_at')} "
+            f"- `server_metrics` ล่าสุด (DB){stale_note}: recorded_at={sm.get('recorded_at')} "
             f"cpu={sm.get('cpu_percent')}% ram={sm.get('ram_percent')}% disk={sm.get('disk_percent')}%"
         )
 
@@ -904,7 +992,7 @@ def format_resource_diagnosis_thai(data: dict[str, Any]) -> str:
     lines.append("")
     lines.append(f"- **log file:** `{log_st}`" + (" (ไม่พบ `/var/log/ener-ai` หรืออ่านไม่ได้)" if log_st != "ok" else ""))
 
-    body = "\n".join(lines)[:3600] + _diag_provenance_footer()
+    body = "\n".join(lines)[:3600] + _diag_provenance_footer(verbose=verbose_provenance)
     return sanitize_diagnostic_text(body[:3900])
 
 

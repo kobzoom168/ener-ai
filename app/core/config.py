@@ -21,8 +21,9 @@ class Settings(BaseSettings):
 
     database_path: str = "./data/ener.db"
 
-    # Optional: container name for `docker stats` in resource diagnostics (empty = skip docker)
-    docker_stats_container: str = "ener-ai"
+    # Optional: container name for `docker stats` in resource diagnostics (empty = skip docker).
+    # Set DOCKER_STATS_CONTAINER=ener-ai (or your service name) in `.env` to enable.
+    docker_stats_container: str = ""
 
     class Config:
         env_file = ".env"
