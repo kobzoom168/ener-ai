@@ -9,6 +9,9 @@ Manual QA checklist (mirror of database._migrate_hospital_schema docstring):
   Migration DB when seeded data present.
 - Date fields: UI uses input type=date; DB stores YYYY-MM-DD; report shows 13-May-2026;
   legacy 13-May-2026 in DB still loads in pickers via toDateInputValue.
+- Manual UX: add open issue e.g. "ระบบช้า" → appears in Daily Report section 1; add task
+  with due_date = today → appears under "สิ่งที่ต้องทำวันนี้"; soft-delete task → gone
+  from table and report.
 """
 
 from __future__ import annotations
@@ -1012,7 +1015,7 @@ def build_hospital_work_html() -> str:
   .btn-primary{background:#14532d;color:#bbf7d0;border-color:#166534}
   .btn-primary:hover{background:#166534;color:#fff}
   .btn-danger{background:#450a0a;color:#fecaca;border-color:#7f1d1d}
-  .container{max-width:1200px;margin:24px auto;padding:0 24px 48px}
+  .container{max-width:1320px;margin:24px auto;padding:0 24px 48px}
   section{background:#111;border:1px solid #222;border-radius:10px;padding:16px 18px;margin-bottom:20px}
   section h2{font-size:1rem;color:#93c5fd;margin-bottom:12px}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
@@ -1031,7 +1034,25 @@ def build_hospital_work_html() -> str:
   .row-actions{display:flex;gap:6px;flex-wrap:wrap}
   .err{color:#f87171;font-size:0.85rem;margin-top:8px}
   .subpanel{margin-top:12px;padding:12px;background:#0d0d0d;border:1px solid #262626;border-radius:8px}
-  .subpanel h3{font-size:0.9rem;color:#93c5fd;margin-bottom:10px}
+  .subpanel h3{font-size:0.95rem;color:#93c5fd;margin-bottom:12px}
+  .page-nav{display:flex;flex-wrap:wrap;gap:8px;padding:12px 0 14px;margin-bottom:4px;border-bottom:1px solid #222}
+  .page-nav a{color:#93c5fd;text-decoration:none;font-size:0.82rem;padding:6px 12px;border-radius:8px;background:#1e293b;border:1px solid #334}
+  .page-nav a:hover{background:#273449;color:#e2e8f0}
+  section[id^="sec-"]{scroll-margin-top:72px}
+  table.proj-table{table-layout:fixed;width:100%}
+  .proj-table .col-code{width:10%;vertical-align:top}
+  .proj-table .col-name{min-width:200px;width:34%;word-break:break-word;line-height:1.4;vertical-align:top}
+  .proj-table .col-pct{width:76px;vertical-align:top}
+  .proj-table .col-st{width:120px;vertical-align:top}
+  .proj-table .col-cs{min-width:140px;vertical-align:top}
+  .proj-table .col-actions{width:1%;white-space:nowrap;vertical-align:top}
+  .proj-table input[type=text],.proj-table input[type=number]{min-width:0;max-width:100%}
+  .field-group{margin-top:14px;padding-top:14px;border-top:1px solid #333}
+  .field-group:first-of-type{margin-top:0;padding-top:0;border-top:none}
+  .field-group h4{font-size:0.72rem;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px;font-weight:600}
+  #report-preview{font-family:ui-monospace,monospace;font-size:0.8rem;line-height:1.5;min-height:360px;max-height:min(70vh,520px);resize:vertical;overflow-y:auto}
+  .report-meta{display:flex;flex-wrap:wrap;gap:12px 20px;margin-bottom:12px;font-size:0.85rem;color:#9ca3af}
+  .report-toolbar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;align-items:center}
 </style>
 </head>
 <body>
@@ -1042,11 +1063,22 @@ def build_hospital_work_html() -> str:
   <button type="button" class="btn btn-primary" id="btn-refresh">รีเฟรช</button>
 </header>
 <div class="container">
-  <p class="muted" style="margin-bottom:16px">CRUD จาก DB — ลบงาน/Issue/Other = soft delete (is_active=0)</p>
-  <p class="muted" style="margin-bottom:14px;font-size:0.8rem">วันที่ (Start / End / Due): ใช้ตัวเลือกปฏิทิน — ระบบเก็บเป็น YYYY-MM-DD และแสดงใน Daily Report เป็นรูปแบบ 13-May-2026 • Implementation date ยังเป็นข้อความ (เดือน/ปี)</p>
+  <nav class="page-nav" aria-label="Hospital Work sections">
+    <a href="#sec-overview">ภาพรวม</a>
+    <a href="#sec-projects">โครงการ</a>
+    <a href="#sec-tasks">งานในโครงการ</a>
+    <a href="#sec-issues">Issues</a>
+    <a href="#sec-other">Other Tasks</a>
+    <a href="#sec-report">Daily Report</a>
+    <a href="#sec-ai">AI Review</a>
+  </nav>
 
-  <div class="grid2">
-    <section>
+  <div id="sec-overview">
+    <p class="muted" style="margin-bottom:12px">CRUD จาก DB — ลบงาน/Issue/Other = soft delete (is_active=0)</p>
+    <p class="muted" style="margin-bottom:8px;font-size:0.8rem">วันที่ (Start / End / Due): ใช้ตัวเลือกปฏิทิน — ระบบเก็บเป็น YYYY-MM-DD และแสดงใน Daily Report เป็นรูปแบบ 13-May-2026 • Implementation date ยังเป็นข้อความ (เดือน/ปี)</p>
+  </div>
+
+  <section id="sec-projects">
       <h2>โครงการ</h2>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
         <div><label>ชื่อ</label><input id="np-name" placeholder="ชื่อโครงการ"></div>
@@ -1060,36 +1092,48 @@ def build_hospital_work_html() -> str:
       <div style="margin-bottom:10px"><label>description</label><textarea id="np-desc" placeholder="รายละเอียดโครงการ"></textarea></div>
       <button type="button" class="btn btn-primary" id="btn-add-project">เพิ่มโครงการ</button>
       <div class="err" id="err-projects"></div>
-      <div style="overflow-x:auto;margin-top:12px">
-        <table><thead><tr><th>รหัส</th><th>ชื่อ</th><th>%</th><th>สถานะโครงการ</th><th>สถานะปัจจุบัน</th><th></th></tr></thead>
+      <div class="proj-wrap" style="overflow-x:auto;margin-top:14px">
+        <table class="proj-table"><thead><tr><th class="col-code">รหัส</th><th class="col-name">ชื่อโครงการ</th><th class="col-pct">%</th><th class="col-st">สถานะ</th><th class="col-cs">สถานะปัจจุบัน</th><th class="col-actions"></th></tr></thead>
         <tbody id="tb-projects"></tbody></table>
       </div>
-      <div id="project-extra" class="subpanel" style="display:none">
-        <h3>ฟิลด์เพิ่มเติม (โครงการ #<span id="pe-id"></span>)</h3>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-          <div><label>implementation_date</label><input id="pe-impl"></div>
-          <div><label>priority</label><select id="pe-priority"><option>High</option><option>Medium</option><option>Low</option></select></div>
+      <div id="project-extra" class="subpanel" style="display:none;margin-top:16px">
+        <h3>รายละเอียดโครงการ #<span id="pe-id"></span></h3>
+        <div class="field-group">
+          <h4>Basic</h4>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <div><label>Implementation (ข้อความ)</label><input id="pe-impl" placeholder="เช่น กรกฎาคม 2569"></div>
+            <div><label>priority</label><select id="pe-priority"><option>High</option><option>Medium</option><option>Low</option></select></div>
+          </div>
+          <div style="margin-top:8px"><label>next_step</label><input id="pe-next"></div>
+          <div style="margin-top:8px"><label>description</label><textarea id="pe-desc"></textarea></div>
         </div>
-        <div style="margin-top:8px"><label>next_step</label><input id="pe-next"></div>
-        <div style="margin-top:8px"><label>description</label><textarea id="pe-desc"></textarea></div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
-          <div><label>vendor</label><input id="pe-vendor"></div>
-          <div><label>owner</label><input id="pe-owner"></div>
+        <div class="field-group">
+          <h4>Dates</h4>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+            <div><label>Start date</label><input id="pe-sd" type="date"></div>
+            <div><label>End date</label><input id="pe-ed" type="date"></div>
+            <div><label>Due date</label><input id="pe-dd" type="date"></div>
+          </div>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px">
-          <div><label>Start date</label><input id="pe-sd" type="date"></div>
-          <div><label>End date</label><input id="pe-ed" type="date"></div>
-          <div><label>Due date</label><input id="pe-dd" type="date"></div>
+        <div class="field-group">
+          <h4>Vendor</h4>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <div><label>vendor</label><input id="pe-vendor"></div>
+            <div><label>owner</label><input id="pe-owner"></div>
+          </div>
         </div>
-        <div style="margin-top:8px"><label>notes</label><textarea id="pe-notes"></textarea></div>
-        <button type="button" class="btn btn-primary" style="margin-top:10px" id="btn-save-project-extra">บันทึกฟิลด์เพิ่มเติม</button>
+        <div class="field-group">
+          <h4>Notes</h4>
+          <div><label>notes</label><textarea id="pe-notes"></textarea></div>
+        </div>
+        <button type="button" class="btn btn-primary" style="margin-top:14px" id="btn-save-project-extra">บันทึกรายละเอียด</button>
         <div class="err" id="err-pe"></div>
       </div>
-    </section>
+  </section>
 
-    <section>
+  <section id="sec-tasks">
       <h2>งานในโครงการ <span class="muted" id="task-project-label"></span></h2>
-      <p class="muted" id="task-hint">เลือกโครงการจากตารางซ้าย</p>
+      <p class="muted" id="task-hint">เลือกโครงการจากตารางด้านบน แล้วเพิ่มหรือแก้งานด้านล่าง</p>
       <div id="task-editor" style="display:none">
         <div style="margin-bottom:8px"><label>หัวข้อ</label><input id="nt-title"></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
@@ -1113,11 +1157,10 @@ def build_hospital_work_html() -> str:
           <tbody id="tb-tasks"></tbody></table>
         </div>
       </div>
-    </section>
-  </div>
+  </section>
 
   <div class="grid2">
-    <section>
+    <section id="sec-issues">
       <h2>Issues</h2>
       <div style="display:grid;grid-template-columns:1fr 120px;gap:8px;margin-bottom:8px">
         <div><label>หัวข้อ</label><input id="ni-title"></div>
@@ -1152,7 +1195,7 @@ def build_hospital_work_html() -> str:
       </div>
     </section>
 
-    <section>
+    <section id="sec-other">
       <h2>งานอื่น (นอกโครงการ)</h2>
       <div style="margin-bottom:8px"><label>หัวข้อ</label><input id="no-title"></div>
       <div style="margin-bottom:8px"><label>details</label><textarea id="no-details"></textarea></div>
@@ -1176,13 +1219,21 @@ def build_hospital_work_html() -> str:
     </section>
   </div>
 
-  <section>
+  <section id="sec-report">
     <h2>Daily Report Preview <span class="muted">(อ่านจาก DB)</span></h2>
-    <button type="button" class="btn" id="btn-copy-report" style="margin-bottom:10px">คัดลอกข้อความ</button>
-    <textarea id="report-preview" readonly style="min-height:280px"></textarea>
+    <p class="muted" style="font-size:0.78rem;margin-bottom:10px">ระบบเก็บวันที่เป็น YYYY-MM-DD — ในรายงานจะแสดงเป็นรูปแบบ 13-May-2026</p>
+    <div class="report-meta">
+      <span id="report-date-label"></span>
+      <span id="report-generated-at"></span>
+    </div>
+    <div class="report-toolbar">
+      <button type="button" class="btn btn-primary" id="btn-copy-report">คัดลอกทั้งหมด</button>
+      <button type="button" class="btn" id="btn-report-scroll-top">เลื่อนขึ้นบนสุด</button>
+    </div>
+    <textarea id="report-preview" readonly spellcheck="false"></textarea>
   </section>
 
-  <section>
+  <section id="sec-ai">
     <h2>AI Review <span class="pill">Phase 1 placeholder</span></h2>
     <div class="ai-box" id="ai-review-box">กำลังโหลด…</div>
   </section>
@@ -1259,6 +1310,7 @@ function openProjectExtra(pid) {
   sel('pe-notes').value = p.notes || '';
   const pr = sel('pe-priority');
   pr.value = (p.priority && ['High','Medium','Low'].includes(p.priority)) ? p.priority : 'Medium';
+  requestAnimationFrame(() => document.getElementById('project-extra')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
 }
 
 async function loadAll() {
@@ -1271,15 +1323,15 @@ async function loadAll() {
   _projectsCache = projects;
   const tb = sel('tb-projects');
   tb.innerHTML = projects.map(p => `<tr data-id="${p.id}">
-    <td><code>${esc(p.code)}</code></td>
-    <td>${esc(p.name)}</td>
-    <td><input type="number" class="p-pct" min="0" max="100" style="width:56px" value="${p.percent_complete}"></td>
-    <td><input type="text" class="p-st" style="width:110px" value="${attr(p.status)}"></td>
-    <td><input type="text" class="p-cs" style="width:160px" placeholder="รายละเอียด" value="${attr(p.current_status||'')}"></td>
-    <td class="row-actions">
+    <td class="col-code"><code>${esc(p.code)}</code></td>
+    <td class="col-name">${esc(p.name)}</td>
+    <td class="col-pct"><input type="number" class="p-pct" min="0" max="100" style="width:100%;max-width:64px" value="${p.percent_complete}"></td>
+    <td class="col-st"><input type="text" class="p-st" style="width:100%" value="${attr(p.status)}"></td>
+    <td class="col-cs"><input type="text" class="p-cs" style="width:100%" placeholder="สถานะปัจจุบัน" value="${attr(p.current_status||'')}"></td>
+    <td class="col-actions row-actions">
       <button type="button" class="btn btn-primary save-proj" data-id="${p.id}">บันทึก</button>
       <button type="button" class="btn select-proj" data-id="${p.id}">งาน</button>
-      <button type="button" class="btn extra-proj" data-id="${p.id}">เพิ่มเติม</button>
+      <button type="button" class="btn extra-proj" data-id="${p.id}">รายละเอียด</button>
       <button type="button" class="btn btn-danger del-proj" data-id="${p.id}">ปิด</button>
     </td></tr>`).join('');
 
@@ -1298,7 +1350,22 @@ async function loadAll() {
     <td><button type="button" class="btn btn-danger del-other" data-id="${o.id}">ลบ</button></td>
     </tr>`).join('');
 
-  sel('report-preview').value = preview.report_text || '';
+  const taRep = sel('report-preview');
+  const fullReport = preview.report_text || '';
+  taRep.value = fullReport;
+  taRep.scrollTop = 0;
+  const rdl = sel('report-date-label');
+  const rga = sel('report-generated-at');
+  if (rdl) rdl.textContent = preview.date_label ? ('รายงานวันที่: ' + preview.date_label) : '';
+  if (rga) {
+    if (preview.generated_at) {
+      try {
+        rga.textContent = 'สร้างเมื่อ: ' + new Date(preview.generated_at).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' });
+      } catch (e) {
+        rga.textContent = 'สร้างเมื่อ: ' + preview.generated_at;
+      }
+    } else rga.textContent = '';
+  }
   const ar = preview.ai_review || {};
   const ev = ar.evidence_row_counts || {};
   sel('ai-review-box').innerHTML =
@@ -1326,6 +1393,7 @@ async function loadAll() {
     sel('task-hint').style.display='none';
     sel('task-editor').style.display='block';
     await loadTasks();
+    document.getElementById('sec-tasks')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }));
   document.querySelectorAll('.del-proj').forEach(b => b.addEventListener('click', async () => {
     if (!confirm('ปิดโครงการนี้ (soft delete)?')) return;
@@ -1471,10 +1539,22 @@ sel('btn-add-other').addEventListener('click', async () => {
     await loadAll();
   } catch(e) { sel('err-other').textContent = e.message; }
 });
-sel('btn-copy-report').addEventListener('click', () => {
+sel('btn-copy-report').addEventListener('click', async () => {
   const t = sel('report-preview');
-  t.select();
-  document.execCommand('copy');
+  const full = t.value || '';
+  try {
+    await navigator.clipboard.writeText(full);
+  } catch (e) {
+    t.focus();
+    t.select();
+    t.setSelectionRange(0, full.length);
+    document.execCommand('copy');
+  }
+});
+sel('btn-report-scroll-top').addEventListener('click', () => {
+  const t = sel('report-preview');
+  t.scrollTop = 0;
+  t.focus({ preventScroll: true });
 });
 loadAll().catch(e => alert(e.message));
 </script>
