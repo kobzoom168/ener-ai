@@ -32,8 +32,61 @@ async def _hospital_add_column_if_missing(
         )
 
 
+async def _hospital_create_index_if_columns_exist(
+    db: aiosqlite.Connection,
+    index_name: str,
+    table: str,
+    columns: tuple[str, ...],
+    sql: str,
+) -> None:
+    """CREATE INDEX only when every column exists (post-ALTER). Never raises."""
+    try:
+        cur = await db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+            (table,),
+        )
+        if not await cur.fetchone():
+            logger.warning(
+                "hospital migration skip index %s: table %s does not exist",
+                index_name,
+                table,
+            )
+            return
+    except Exception as exc:
+        logger.warning(
+            "hospital migration skip index %s: could not verify table %s (%s)",
+            index_name,
+            table,
+            exc,
+        )
+        return
+
+    colset = await _hospital_column_names(db, table)
+    missing = [c for c in columns if c not in colset]
+    if missing:
+        logger.warning(
+            "hospital migration skip index %s on %s: missing columns %s",
+            index_name,
+            table,
+            missing,
+        )
+        return
+    try:
+        await db.execute(sql)
+    except Exception as exc:
+        logger.warning(
+            "hospital migration CREATE INDEX failed %s: %s",
+            index_name,
+            exc,
+            exc_info=True,
+        )
+
+
 async def _migrate_hospital_schema(db: aiosqlite.Connection) -> None:
     """Apply additive hospital_* schema for existing DBs.
+
+    All hospital_* CREATE INDEX runs here after ALTER, never in the main
+    executescript, so old DBs without new columns do not fail startup.
 
     Manual QA checklist (Hospital Work):
     - init_db on DB that already had pre-57d2c5c hospital_* tables: migration runs,
@@ -90,22 +143,59 @@ async def _migrate_hospital_schema(db: aiosqlite.Connection) -> None:
     for table, column, ddl in migrations:
         await _hospital_add_column_if_missing(db, table, column, ddl)
 
-    index_stmts = [
-        "CREATE INDEX IF NOT EXISTS idx_hospital_projects_active_sort ON hospital_projects(is_active, sort_order)",
-        "CREATE INDEX IF NOT EXISTS idx_hospital_tasks_pid_active_sort ON hospital_project_tasks(project_id, is_active, sort_order)",
-        "CREATE INDEX IF NOT EXISTS idx_hospital_issues_active_status_prio_due ON hospital_issues(is_active, status, priority, due_date)",
-        "CREATE INDEX IF NOT EXISTS idx_hospital_other_active_status_due ON hospital_other_tasks(is_active, status, due_date)",
+    index_defs: list[tuple[str, str, tuple[str, ...], str]] = [
+        (
+            "idx_hospital_project_tasks_pid",
+            "hospital_project_tasks",
+            ("project_id", "sort_order"),
+            "CREATE INDEX IF NOT EXISTS idx_hospital_project_tasks_pid "
+            "ON hospital_project_tasks(project_id, sort_order)",
+        ),
+        (
+            "idx_hospital_issues_pid",
+            "hospital_issues",
+            ("project_id", "status"),
+            "CREATE INDEX IF NOT EXISTS idx_hospital_issues_pid "
+            "ON hospital_issues(project_id, status)",
+        ),
+        (
+            "idx_hospital_other_sort",
+            "hospital_other_tasks",
+            ("sort_order",),
+            "CREATE INDEX IF NOT EXISTS idx_hospital_other_sort "
+            "ON hospital_other_tasks(sort_order)",
+        ),
+        (
+            "idx_hospital_projects_active_sort",
+            "hospital_projects",
+            ("is_active", "sort_order"),
+            "CREATE INDEX IF NOT EXISTS idx_hospital_projects_active_sort "
+            "ON hospital_projects(is_active, sort_order)",
+        ),
+        (
+            "idx_hospital_tasks_pid_active_sort",
+            "hospital_project_tasks",
+            ("project_id", "is_active", "sort_order"),
+            "CREATE INDEX IF NOT EXISTS idx_hospital_tasks_pid_active_sort "
+            "ON hospital_project_tasks(project_id, is_active, sort_order)",
+        ),
+        (
+            "idx_hospital_issues_active_status_prio_due",
+            "hospital_issues",
+            ("is_active", "status", "priority", "due_date"),
+            "CREATE INDEX IF NOT EXISTS idx_hospital_issues_active_status_prio_due "
+            "ON hospital_issues(is_active, status, priority, due_date)",
+        ),
+        (
+            "idx_hospital_other_active_status_due",
+            "hospital_other_tasks",
+            ("is_active", "status", "due_date"),
+            "CREATE INDEX IF NOT EXISTS idx_hospital_other_active_status_due "
+            "ON hospital_other_tasks(is_active, status, due_date)",
+        ),
     ]
-    for stmt in index_stmts:
-        try:
-            await db.execute(stmt)
-        except Exception as exc:
-            logger.warning(
-                "hospital migration CREATE INDEX failed: %s — %s",
-                stmt,
-                exc,
-                exc_info=True,
-            )
+    for index_name, table, cols, sql in index_defs:
+        await _hospital_create_index_if_columns_exist(db, index_name, table, cols, sql)
 
 
 async def _seed_hospital_work_phase1(db: aiosqlite.Connection) -> None:
@@ -719,21 +809,6 @@ async def init_db():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (related_project_id) REFERENCES hospital_projects(id) ON DELETE SET NULL
             );
-
-            CREATE INDEX IF NOT EXISTS idx_hospital_project_tasks_pid
-                ON hospital_project_tasks(project_id, sort_order);
-            CREATE INDEX IF NOT EXISTS idx_hospital_issues_pid
-                ON hospital_issues(project_id, status);
-            CREATE INDEX IF NOT EXISTS idx_hospital_other_sort
-                ON hospital_other_tasks(sort_order);
-            CREATE INDEX IF NOT EXISTS idx_hospital_projects_active_sort
-                ON hospital_projects(is_active, sort_order);
-            CREATE INDEX IF NOT EXISTS idx_hospital_tasks_pid_active_sort
-                ON hospital_project_tasks(project_id, is_active, sort_order);
-            CREATE INDEX IF NOT EXISTS idx_hospital_issues_active_status_prio_due
-                ON hospital_issues(is_active, status, priority, due_date);
-            CREATE INDEX IF NOT EXISTS idx_hospital_other_active_status_due
-                ON hospital_other_tasks(is_active, status, due_date);
 
             CREATE INDEX IF NOT EXISTS idx_agent_events_agent
                 ON agent_events(agent_name, result, created_at);
