@@ -21,8 +21,23 @@ class TestMultiIntentRouter(unittest.TestCase):
 
     def test_server_only(self):
         self.assertEqual(
-            classify_message_intents("เช็ค CPU ของระบบ Ener AI"),
+            classify_message_intents("เช็ค server ของระบบ Ener AI"),
             ["system_server"],
+        )
+
+    def test_diag_resource_thai_cpu(self):
+        self.assertEqual(
+            classify_message_intents("ซีพียูเท่าไหร่ตอนนี้"),
+            ["diag_resource"],
+        )
+
+    def test_diag_resource_ram_polite(self):
+        self.assertEqual(classify_message_intents("Ram ละ"), ["diag_resource"])
+
+    def test_diag_resource_drops_parallel_system_server(self):
+        self.assertEqual(
+            classify_message_intents("เช็ค CPU ของระบบ Ener AI"),
+            ["diag_resource"],
         )
 
     def test_communication_only(self):

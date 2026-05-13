@@ -6,7 +6,7 @@ from __future__ import annotations
 import re
 from typing import Iterable
 
-from app.core.diagnostics import list_stakeholder_no_response_phrases
+from app.core.diagnostics import list_stakeholder_no_response_phrases, resource_diagnostic_intent_position
 
 _MAX_INTENTS = 4
 
@@ -267,6 +267,7 @@ def _intents_ordered_for_line(line: str) -> list[str]:
     add(_pos_diag_agent(line), "diag_agent")
     add(_pos_system_errors(line), "system_errors")
     add(_pos_system_logs(line), "system_logs")
+    add(resource_diagnostic_intent_position(line), "diag_resource")
     add(_pos_system_server(line), "system_server")
     add(_pos_system_status(line), "system_status")
 
@@ -303,7 +304,11 @@ def classify_message_intents(text: str) -> list[str]:
             seen.add(intent)
             ordered.append(intent)
             if len(ordered) >= _MAX_INTENTS:
-                return ordered
+                break
+        if len(ordered) >= _MAX_INTENTS:
+            break
+    if "diag_resource" in ordered:
+        ordered = [i for i in ordered if i != "system_server"]
     return ordered
 
 
@@ -313,6 +318,7 @@ def classify_system_tool_intent(text: str) -> str | None:
     """
     mapping = {
         "system_server": "server",
+        "diag_resource": "server",
         "system_status": "status",
         "system_logs": "logs",
         "system_errors": "errors",

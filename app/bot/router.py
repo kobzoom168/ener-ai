@@ -974,9 +974,12 @@ async def cmd_diag(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     from app.core import diagnostics as diag
 
     chat_id = str(update.effective_chat.id) if update.effective_chat else ""
+    intent_tag = ""
+    if sub in ("resource", "cpu", "ram", "mem"):
+        intent_tag = " intent=resource"
     await diag.log_diagnostic_audit(
         "DIAG_REQUEST",
-        f"cmd=diag sub={sub or 'full'} chat_id={chat_id}",
+        f"cmd=diag sub={sub or 'full'}{intent_tag} chat_id={chat_id}",
     )
     try:
         if not sub:
@@ -995,24 +998,64 @@ async def cmd_diag(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         elif sub in ("bot", "telegram", "webhook"):
             d = await diag.diagnose_bot_unresponsive()
             txt = diag.format_bot_diagnosis_thai(d)
+        elif sub in ("resource", "cpu", "ram", "mem"):
+            d = await diag.diagnose_resource_usage()
+            txt = diag.format_resource_diagnosis_thai(d)
         else:
-            txt = "ใช้: `/diag` หรือ `/diag otp` · `/diag memory` · `/diag bot`"
+            txt = (
+                "ใช้: `/diag` หรือ `/diag otp` · `/diag memory` · `/diag bot` · `/diag resource`"
+            )
 
         for chunk in diag.split_telegram_chunks(txt):
             await _reply_smart(update, chunk)
         await diag.log_diagnostic_audit(
             "DIAG_SUCCESS",
-            f"cmd=diag sub={sub or 'full'} chat_id={chat_id}",
+            f"cmd=diag sub={sub or 'full'}{intent_tag} chat_id={chat_id}",
         )
     except Exception as exc:
         await diag.log_diagnostic_audit(
             "DIAG_FAILED",
-            f"cmd=diag sub={sub or 'full'} chat_id={chat_id} err={type(exc).__name__}:{exc!s}"[:1900],
+            f"cmd=diag sub={sub or 'full'}{intent_tag} chat_id={chat_id} err={type(exc).__name__}:{exc!s}"[
+                :1900
+            ],
         )
         logger.warning("cmd_diag failed: %s", exc, exc_info=True)
         await _reply_smart(
             update,
             f"รวบรวม diagnostic ไม่สำเร็จ ({type(exc).__name__}) — ตรวจ audit_logs DIAG_FAILED",
+        )
+
+
+async def cmd_resource_debug(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+    from app.core import diagnostics as diag
+
+    chat_id = str(update.effective_chat.id) if update.effective_chat else ""
+    await diag.log_diagnostic_audit(
+        "DIAG_REQUEST",
+        f"cmd=resource_debug intent=resource chat_id={chat_id}",
+    )
+    try:
+        d = await diag.diagnose_resource_usage(debug=True)
+        txt = diag.format_resource_diagnosis_thai(d) + diag.format_resource_debug_appendix(d)
+        for chunk in diag.split_telegram_chunks(txt):
+            await _reply_smart(update, chunk)
+        await diag.log_diagnostic_audit(
+            "DIAG_SUCCESS",
+            f"cmd=resource_debug intent=resource chat_id={chat_id}",
+        )
+    except Exception as exc:
+        await diag.log_diagnostic_audit(
+            "DIAG_FAILED",
+            f"cmd=resource_debug intent=resource chat_id={chat_id} err={type(exc).__name__}:{exc!s}"[
+                :1900
+            ],
+        )
+        logger.warning("cmd_resource_debug failed: %s", exc, exc_info=True)
+        await _reply_smart(
+            update,
+            f"รวบรวม resource diagnostic ไม่สำเร็จ ({type(exc).__name__})",
         )
 
 
@@ -1063,6 +1106,25 @@ async def _run_nl_intent_section(intent: str, text: str, chat_id: str) -> tuple[
     if intent == "system_server":
         stats = get_server_stats()
         return "### เครื่อง / ทรัพยากร", format_nl_resource_report(stats)
+    if intent == "diag_resource":
+        await diag.log_diagnostic_audit(
+            "DIAG_REQUEST",
+            f"intent=resource nl=1 chat_id={chat_id}",
+        )
+        try:
+            d = await diag.diagnose_resource_usage()
+            body = diag.format_resource_diagnosis_thai(d)
+            await diag.log_diagnostic_audit(
+                "DIAG_SUCCESS",
+                f"intent=resource nl=1 chat_id={chat_id}",
+            )
+        except Exception as exc:
+            await diag.log_diagnostic_audit(
+                "DIAG_FAILED",
+                f"intent=resource nl=1 chat_id={chat_id} err={type(exc).__name__}:{exc!s}"[:1900],
+            )
+            raise
+        return "### Resource (หลักฐานจริง)", body
     if intent == "diag_otp":
         d = await diag.diagnose_otp_loop()
         return "### OTP", diag.format_otp_diagnosis_thai(d)
@@ -1098,6 +1160,19 @@ async def msg_fallback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             parts.append(f"{heading}\n{body}")
         out = "\n\n".join(parts)
         for chunk in diag.split_telegram_chunks(out):
+            await _reply_smart(update, chunk)
+        return
+
+    nl_diag = diag.classify_diagnostic_intent(text)
+    if nl_diag:
+        chat_id = str(update.effective_chat.id)
+        try:
+            reply = await diag.diagnose_user_message(text, chat_id)
+        except Exception as exc:
+            logger.warning("diagnose_user_message failed: %s", exc, exc_info=True)
+            await _reply_smart(update, f"diagnostic error: `{type(exc).__name__}`")
+            return
+        for chunk in diag.split_telegram_chunks(reply):
             await _reply_smart(update, chunk)
         return
 
@@ -1139,6 +1214,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("health", cmd_health))
     app.add_handler(CommandHandler("diag", cmd_diag))
     app.add_handler(CommandHandler("otp_debug", cmd_otp_debug))
+    app.add_handler(CommandHandler("resource_debug", cmd_resource_debug))
     app.add_handler(CommandHandler("sys_debug", cmd_sys_debug))
     app.add_handler(CommandHandler("logs", handle_logs))
     app.add_handler(CommandHandler("errors", handle_errors))

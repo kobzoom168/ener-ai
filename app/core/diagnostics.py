@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import psutil
 
 from app.core.config import settings
 from app.core.database import get_db
@@ -75,6 +76,18 @@ def sanitize_diagnostic_text(text: str | None) -> str:
     # Long numeric ids (e.g. Telegram chat_id)
     s = re.sub(r"\b-?\d{12,}\b", "[CHAT_ID]", s)
     return s
+
+
+DIAGNOSTIC_PROVENANCE_RULE_TH = (
+    "\n\n**หลักฐาน / provenance:** รายงานนี้อิงเฉพาะข้อมูลที่ collector ดึงได้จริง — "
+    "**ห้าม** แสดงคำสั่ง shell เป็นถึง `output:` ถ้าไม่ได้ execute จริง "
+    "ถ้าไม่มีสิทธิ์หรือไม่พบ docker socket จะระบุ `docker_stats: no_access` ชัดเจน "
+    "(ยังไม่ได้รัน command นี้ เพราะ collector ไม่มีสิทธิ์/ไม่พบ docker socket)"
+)
+
+
+def _diag_provenance_footer() -> str:
+    return DIAGNOSTIC_PROVENANCE_RULE_TH
 
 
 def _mask_ip(ip: str) -> str:
@@ -614,6 +627,300 @@ def communication_followup_reply_thai(text: str) -> str:
     )
 
 
+_RESOURCE_SUBSTRINGS_TH = (
+    "ซีพียู",
+    "ซีพิ",
+    "แรม",
+    "docker stats",
+    "container หนัก",
+    "เครื่องหนัก",
+    "ใช้ resource",
+    "ทรัพยากร",
+)
+_RESOURCE_WORD_RE = re.compile(
+    r"\b(cpu|ram|mem|memory|resource)\b",
+    re.I,
+)
+
+
+def matches_resource_diagnostic_intent(text: str) -> bool:
+    """CPU/RAM/memory/resource questions (natural language)."""
+    raw = text or ""
+    t = raw.lower()
+    if any(s in raw for s in _RESOURCE_SUBSTRINGS_TH):
+        return True
+    if _RESOURCE_WORD_RE.search(t):
+        return True
+    if "ram" in t and any(x in raw for x in ("ละ", "ไหน", "เท่า", "เท่าไร", "เท่าไหร่", "เท่าไร่")):
+        return True
+    return False
+
+
+def resource_diagnostic_intent_position(text: str) -> int | None:
+    """Earliest char index for resource diagnostic keywords, for NL routing order."""
+    if not matches_resource_diagnostic_intent(text):
+        return None
+    raw = text or ""
+    t = raw.lower()
+    positions: list[int] = []
+    for s in _RESOURCE_SUBSTRINGS_TH:
+        i = raw.find(s)
+        if i >= 0:
+            positions.append(i)
+    for m in _RESOURCE_WORD_RE.finditer(t):
+        positions.append(m.start())
+    if "ram" in t:
+        ri = t.find("ram")
+        if ri >= 0 and any(x in raw for x in ("ละ", "ไหน", "เท่า", "เท่าไร", "เท่าไหร่", "เท่าไร่")):
+            positions.append(ri)
+    return min(positions) if positions else 0
+
+
+async def collect_resource_usage() -> dict[str, Any]:
+    """Gather metrics from DB snapshot, live psutil, and optional docker stats (real exec only)."""
+    out: dict[str, Any] = {
+        "server_metrics": None,
+        "psutil": None,
+        "docker_stats": None,
+        "docker_status": "skipped",
+        "docker_reason": "",
+        "errors": [],
+    }
+
+    try:
+        async with get_db() as db:
+            cur = await db.execute(
+                """
+                SELECT cpu_percent, ram_percent, ram_used_mb, ram_total_mb, disk_percent,
+                       net_in_bytes, net_out_bytes, recorded_at
+                FROM server_metrics
+                ORDER BY datetime(recorded_at) DESC, id DESC
+                LIMIT 1
+                """
+            )
+            row = await cur.fetchone()
+            if row:
+                out["server_metrics"] = dict(row)
+    except Exception as exc:
+        out["errors"].append(f"server_metrics:{exc}")
+
+    try:
+        vm = psutil.virtual_memory()
+        du = psutil.disk_usage("/")
+        proc_cpu: float | None = None
+        try:
+            proc_cpu = float(psutil.Process().cpu_percent(interval=0.2))
+        except Exception:
+            proc_cpu = None
+        out["psutil"] = {
+            "cpu_percent": float(psutil.cpu_percent(interval=0.25)),
+            "process_cpu_percent": proc_cpu,
+            "ram_percent": float(vm.percent),
+            "ram_used_mb": int(vm.used // (1024 * 1024)),
+            "ram_total_mb": int(vm.total // (1024 * 1024)),
+            "disk_percent": float(du.percent),
+        }
+    except Exception as exc:
+        out["errors"].append(f"psutil:{exc}")
+
+    container = (getattr(settings, "docker_stats_container", None) or "").strip()
+    if not container:
+        out["docker_status"] = "skipped"
+        out["docker_reason"] = "docker_stats_container empty (disabled in config)"
+        return out
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "docker",
+            "stats",
+            "--no-stream",
+            "--format",
+            "{{json .}}",
+            container,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=5.0)
+        out_txt = (stdout or b"").decode("utf-8", errors="replace").strip()
+        err_txt = (stderr or b"").decode("utf-8", errors="replace").strip()
+        if proc.returncode == 0 and out_txt:
+            out["docker_stats"] = out_txt[:4000]
+            out["docker_status"] = "ok"
+        else:
+            out["docker_status"] = "no_access"
+            out["docker_reason"] = err_txt[:500] or f"exit_code={proc.returncode}"
+    except FileNotFoundError:
+        out["docker_status"] = "no_access"
+        out["docker_reason"] = "docker CLI not found in PATH"
+    except asyncio.TimeoutError:
+        out["docker_status"] = "no_access"
+        out["docker_reason"] = "docker stats timed out (5s)"
+    except Exception as exc:
+        out["docker_status"] = "no_access"
+        out["docker_reason"] = str(exc)[:500]
+
+    return out
+
+
+async def diagnose_resource_usage(*, debug: bool = False) -> dict[str, Any]:
+    """Structured resource diagnostic with provenance (no fabricated command output)."""
+    collected = await collect_resource_usage()
+    collected_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    errors = list(collected.get("errors") or [])
+
+    sm = collected.get("server_metrics") or {}
+    ps = collected.get("psutil") or {}
+
+    def _pick(sm_key: str, ps_key: str | None = None) -> Any:
+        k = ps_key or sm_key
+        v = sm.get(sm_key)
+        if v is not None:
+            return v
+        return ps.get(k)
+
+    cpu = _pick("cpu_percent")
+    ram_p = _pick("ram_percent")
+    ram_u = _pick("ram_used_mb")
+    ram_t = _pick("ram_total_mb")
+    disk = _pick("disk_percent")
+    proc_cpu = ps.get("process_cpu_percent")
+
+    source_parts: list[str] = []
+    if sm and any(
+        sm.get(k) is not None for k in ("cpu_percent", "ram_percent", "ram_used_mb", "ram_total_mb", "disk_percent")
+    ):
+        source_parts.append("server_metrics")
+    if ps:
+        source_parts.append("psutil")
+    docker_raw = collected.get("docker_stats") if collected.get("docker_status") == "ok" else None
+    if collected.get("docker_status") == "ok" and docker_raw:
+        source_parts.append("docker_stats")
+
+    if cpu is None and ram_p is None and disk is None:
+        source_used = "no_access"
+    else:
+        source_used = "+".join(dict.fromkeys(source_parts)) if source_parts else "no_access"
+
+    out: dict[str, Any] = {
+        "what": "resource_usage",
+        "collected_at": collected_at,
+        "source_used": source_used,
+        "cpu_percent": cpu,
+        "process_cpu_percent": proc_cpu,
+        "ram_percent": ram_p,
+        "ram_used_mb": ram_u,
+        "ram_total_mb": ram_t,
+        "disk_percent": disk,
+        "docker_raw": docker_raw,
+        "docker_status": collected.get("docker_status"),
+        "docker_reason": collected.get("docker_reason") or "",
+        "server_metrics_row": collected.get("server_metrics"),
+        "psutil_row": collected.get("psutil"),
+        "errors": errors,
+    }
+    if debug:
+        out["debug_collect"] = collected
+    return out
+
+
+def _ener_log_dir_access() -> str:
+    try:
+        if _LOG_DIR.is_dir():
+            next(_LOG_DIR.iterdir())
+            return "ok"
+    except OSError:
+        return "no_log_access"
+    except Exception:
+        return "no_log_access"
+    return "no_log_access"
+
+
+def format_resource_diagnosis_thai(data: dict[str, Any]) -> str:
+    lines = [
+        "🖥️ **ตรวจสอบ Resource Ener-AI**",
+        "",
+        "**สรุป:**",
+    ]
+    cpu = data.get("cpu_percent")
+    ram_p = data.get("ram_percent")
+    ram_u = data.get("ram_used_mb")
+    ram_t = data.get("ram_total_mb")
+    disk = data.get("disk_percent")
+
+    if cpu is not None:
+        lines.append(f"- CPU ระบบ (host/container view): **{cpu:.1f}%**")
+    else:
+        lines.append("- CPU ระบบ: **ไม่มีข้อมูล**")
+    pcpu = data.get("process_cpu_percent")
+    if pcpu is not None:
+        lines.append(f"- CPU โปรเซสบอท (psutil Process): **{pcpu:.1f}%**")
+
+    if ram_p is not None and ram_u is not None and ram_t is not None:
+        lines.append(f"- RAM: **{ram_u}MB / {ram_t}MB** (**{ram_p:.1f}%**)")
+    elif ram_p is not None:
+        lines.append(f"- RAM: **{ram_p:.1f}%**")
+    else:
+        lines.append("- RAM: **ไม่มีข้อมูล**")
+
+    if disk is not None:
+        lines.append(f"- Disk: **{disk:.1f}%**")
+    else:
+        lines.append("- Disk: **ไม่มีข้อมูล**")
+
+    lines.extend(
+        [
+            "",
+            "**หลักฐาน (provenance):**",
+            f"- `source_used`: **{data.get('source_used', 'unknown')}**",
+            f"- `collected_at`: **{data.get('collected_at', '')}**",
+        ]
+    )
+
+    sm = data.get("server_metrics_row")
+    if sm:
+        lines.append(
+            f"- `server_metrics` ล่าสุด (DB): recorded_at={sm.get('recorded_at')} "
+            f"cpu={sm.get('cpu_percent')}% ram={sm.get('ram_percent')}% disk={sm.get('disk_percent')}%"
+        )
+
+    dstatus = data.get("docker_status")
+    lines.append(f"- `docker_stats`: **{dstatus}**")
+    if dstatus == "no_access" and data.get("docker_reason"):
+        lines.append(f"  - reason: {sanitize_diagnostic_text(str(data.get('docker_reason')))[:400]}")
+
+    dr = data.get("docker_raw")
+    if dr:
+        lines.append("- `docker` raw (รันจริงแล้ว):")
+        lines.append(f"```\n{sanitize_diagnostic_text(str(dr)[:1800])}\n```")
+    else:
+        lines.append("- `docker` raw: **ไม่มี** (ไม่แสดง `output:` ปลอม)")
+
+    errs = data.get("errors") or []
+    if errs:
+        lines.append("")
+        lines.append("**ข้อจำกัด collector:** " + "; ".join(sanitize_diagnostic_text(str(e))[:200] for e in errs[:4]))
+
+    log_st = _ener_log_dir_access()
+    lines.append("")
+    lines.append(f"- **log file:** `{log_st}`" + (" (ไม่พบ `/var/log/ener-ai` หรืออ่านไม่ได้)" if log_st != "ok" else ""))
+
+    body = "\n".join(lines)[:3600] + _diag_provenance_footer()
+    return sanitize_diagnostic_text(body[:3900])
+
+
+def format_resource_debug_appendix(data: dict[str, Any]) -> str:
+    """Extra sanitized raw collector payload for /resource_debug only."""
+    raw = data.get("debug_collect")
+    if not raw:
+        return ""
+    try:
+        js = json.dumps(raw, ensure_ascii=False)
+    except TypeError:
+        js = str(raw)
+    js = sanitize_diagnostic_text(js)[:2800]
+    return f"\n\n**debug_collect (sanitize):**\n```\n{js}\n```"
+
+
 def classify_diagnostic_intent(text: str) -> str | None:
     if is_communication_followup_intent(text):
         return None
@@ -645,6 +952,8 @@ def classify_diagnostic_intent(text: str) -> str | None:
     ]
     if any(k in t for k in agent_kw):
         return "agent"
+    if matches_resource_diagnostic_intent(th):
+        return "resource"
     return None
 
 
@@ -656,7 +965,7 @@ def _confidence_label(evidence_sufficient: bool, loop_flag: bool) -> str:
     return "ต่ำ"
 
 
-def format_otp_diagnosis_thai(data: dict[str, Any]) -> str:
+def format_otp_diagnosis_thai(data: dict[str, Any], *, include_provenance_footer: bool = True) -> str:
     ev = data.get("evidence") or {}
     st = ev.get("otp_state") or {}
     an = ev.get("analysis") or {}
@@ -753,10 +1062,13 @@ def format_otp_diagnosis_thai(data: dict[str, Any]) -> str:
         lines.append(
             "ผมยังเข้าถึงบางแหล่งไม่ได้ครบ — **จะไม่อ้างว่า “รันแล้ว” โดยไม่มีผลลัพธ์จริง**"
         )
-    return sanitize_diagnostic_text("\n".join(lines)[:3900])
+    body = "\n".join(lines)[:3600]
+    if include_provenance_footer:
+        body = (body + _diag_provenance_footer())[:3900]
+    return sanitize_diagnostic_text(body)
 
 
-def format_agent_diagnosis_thai(data: dict[str, Any]) -> str:
+def format_agent_diagnosis_thai(data: dict[str, Any], *, include_provenance_footer: bool = True) -> str:
     ev = data.get("evidence") or {}
     lines = ["🔎 **ตรวจสอบ Agent / Memory**", ""]
     rows = ev.get("memory_agent_events") or []
@@ -783,10 +1095,13 @@ def format_agent_diagnosis_thai(data: dict[str, Any]) -> str:
         )
     else:
         lines.append("**ความมั่นใจ:** กลาง — อิงจากตาราง DB เท่านั้น ไม่เดา")
-    return sanitize_diagnostic_text("\n".join(lines)[:3900])
+    body = "\n".join(lines)[:3600]
+    if include_provenance_footer:
+        body = (body + _diag_provenance_footer())[:3900]
+    return sanitize_diagnostic_text(body)
 
 
-def format_bot_diagnosis_thai(data: dict[str, Any]) -> str:
+def format_bot_diagnosis_thai(data: dict[str, Any], *, include_provenance_footer: bool = True) -> str:
     ev = data.get("evidence") or {}
     lines = ["🔎 **ตรวจสอบ Bot / Webhook**", ""]
     wh = ev.get("webhook_result") or {}
@@ -806,7 +1121,10 @@ def format_bot_diagnosis_thai(data: dict[str, Any]) -> str:
             + "; ".join(sanitize_diagnostic_text(str(x)) for x in data["errors"])
         )
         lines.append("ถ้าไม่มีสิทธิ์หรือ token ไม่ครบ จะไม่อ้างว่าเช็คครบแล้ว")
-    return sanitize_diagnostic_text("\n".join(lines)[:3900])
+    body = "\n".join(lines)[:3600]
+    if include_provenance_footer:
+        body = (body + _diag_provenance_footer())[:3900]
+    return sanitize_diagnostic_text(body)
 
 
 def format_system_diagnosis_thai(otp_d: dict, agent_d: dict, bot_d: dict) -> str:
@@ -814,15 +1132,17 @@ def format_system_diagnosis_thai(otp_d: dict, agent_d: dict, bot_d: dict) -> str
         "🔎 **สรุปสุขภาพระบบ (จากหลักฐาน)**",
         "",
         "### OTP",
-        format_otp_diagnosis_thai(otp_d)[:1800],
+        format_otp_diagnosis_thai(otp_d, include_provenance_footer=False)[:1800],
         "",
         "### Agents",
-        format_agent_diagnosis_thai(agent_d)[:1200],
+        format_agent_diagnosis_thai(agent_d, include_provenance_footer=False)[:1200],
         "",
         "### Bot",
-        format_bot_diagnosis_thai(bot_d)[:1200],
+        format_bot_diagnosis_thai(bot_d, include_provenance_footer=False)[:1200],
     ]
-    return sanitize_diagnostic_text("\n".join(parts)[:3900])
+    return sanitize_diagnostic_text(
+        ("\n".join(parts)[:3600] + _diag_provenance_footer())[:3900]
+    )
 
 
 async def diagnose_user_message(message_text: str, chat_id: str) -> str:
@@ -834,7 +1154,10 @@ async def diagnose_user_message(message_text: str, chat_id: str) -> str:
             "ผมยังจัดประเภทข้อความนี้เป็น diagnostic ไม่ได้ — "
             "ลองพิมพ์คำถามให้ชัด เช่น “ทำไม OTP ส่งตลอด” หรือใช้ `/otp_debug`"
         )
-    await log_diagnostic_audit("DIAG_REQUEST", f"natural intent={intent} chat_id={cid} preview={preview}")
+    await log_diagnostic_audit(
+        "DIAG_REQUEST",
+        f"intent={intent} natural=1 chat_id={cid} preview={preview}",
+    )
     try:
         if intent == "otp":
             d = await diagnose_otp_loop()
@@ -845,17 +1168,20 @@ async def diagnose_user_message(message_text: str, chat_id: str) -> str:
         elif intent == "agent":
             d = await diagnose_agent_health()
             out = format_agent_diagnosis_thai(d)
+        elif intent == "resource":
+            d = await diagnose_resource_usage()
+            out = format_resource_diagnosis_thai(d)
         else:
             return (
                 "ผมยังจัดประเภทข้อความนี้เป็น diagnostic ไม่ได้ — "
                 "ลองพิมพ์คำถามให้ชัด เช่น “ทำไม OTP ส่งตลอด” หรือใช้ `/otp_debug`"
             )
-        await log_diagnostic_audit("DIAG_SUCCESS", f"natural intent={intent} chat_id={cid}")
+        await log_diagnostic_audit("DIAG_SUCCESS", f"intent={intent} natural=1 chat_id={cid}")
         return out
     except Exception as exc:
         await log_diagnostic_audit(
             "DIAG_FAILED",
-            f"natural intent={intent} chat_id={cid} err={type(exc).__name__}:{exc!s}"[:1900],
+            f"intent={intent} natural=1 chat_id={cid} err={type(exc).__name__}:{exc!s}"[:1900],
         )
         _log.warning("DIAGNOSE_USER_MESSAGE_FAILED intent=%s err=%s", intent, exc)
         return (

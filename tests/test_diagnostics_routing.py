@@ -27,6 +27,12 @@ class TestDiagnosticRouting(unittest.TestCase):
     def test_otp_diagnostic(self):
         self.assertEqual(classify_diagnostic_intent("ทำไม otp ส่งตลอด"), "otp")
 
+    def test_resource_diagnostic_intents(self):
+        self.assertEqual(classify_diagnostic_intent("ซีพียูเท่าไหร่ตอนนี้"), "resource")
+        self.assertEqual(classify_diagnostic_intent("Ram ละ"), "resource")
+        self.assertEqual(classify_diagnostic_intent("ใช้ mem เท่าไหร่"), "resource")
+        self.assertEqual(classify_diagnostic_intent("container หนักไหม"), "resource")
+
     def test_mixed_customer_and_tech_goes_diagnostic(self):
         self.assertEqual(classify_diagnostic_intent("ลูกค้าไม่ตอบ webhook เพี้ยน"), "bot")
 
