@@ -1088,7 +1088,45 @@ async def cmd_sys_debug(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await cmd_diag(update, ctx)
 
 
-async def _run_nl_intent_section(intent: str, text: str, chat_id: str) -> tuple[str, str]:
+async def _nl_prefetch_diagnosis_cache(intents: list[str], chat_id: str, diag) -> dict[str, dict]:
+    """Run diagnose_* once per intent for compact multi-intent replies (with audits for resource)."""
+    cache: dict[str, dict] = {}
+    for intent in intents:
+        if intent == "diag_resource":
+            await diag.log_diagnostic_audit(
+                "DIAG_REQUEST",
+                f"intent=resource nl=multi chat_id={chat_id}",
+            )
+            try:
+                d = await diag.diagnose_resource_usage()
+                cache["diag_resource"] = d
+                await diag.log_diagnostic_audit(
+                    "DIAG_SUCCESS",
+                    f"intent=resource nl=multi chat_id={chat_id}",
+                )
+            except Exception as exc:
+                await diag.log_diagnostic_audit(
+                    "DIAG_FAILED",
+                    f"intent=resource nl=multi chat_id={chat_id} err={type(exc).__name__}:{exc!s}"[:1900],
+                )
+                raise
+        elif intent == "diag_otp":
+            cache["diag_otp"] = await diag.diagnose_otp_loop()
+        elif intent == "diag_bot":
+            cache["diag_bot"] = await diag.diagnose_bot_unresponsive()
+        elif intent == "diag_agent":
+            cache["diag_agent"] = await diag.diagnose_agent_health()
+    return cache
+
+
+async def _run_nl_intent_section(
+    intent: str,
+    text: str,
+    chat_id: str,
+    *,
+    diagnosis_cache: dict[str, dict] | None = None,
+    compact_diag: bool = False,
+) -> tuple[str, str]:
     """Build one markdown section for multi-intent NL routing (real tools / diagnostics)."""
     from app.core import diagnostics as diag
 
@@ -1107,33 +1145,56 @@ async def _run_nl_intent_section(intent: str, text: str, chat_id: str) -> tuple[
         stats = get_server_stats()
         return "### เครื่อง / ทรัพยากร", format_nl_resource_report(stats)
     if intent == "diag_resource":
-        await diag.log_diagnostic_audit(
-            "DIAG_REQUEST",
-            f"intent=resource nl=1 chat_id={chat_id}",
-        )
-        try:
-            d = await diag.diagnose_resource_usage()
-            body = diag.format_resource_diagnosis_thai(d)
+        if diagnosis_cache is not None and "diag_resource" in diagnosis_cache:
+            d = diagnosis_cache["diag_resource"]
+        else:
             await diag.log_diagnostic_audit(
-                "DIAG_SUCCESS",
+                "DIAG_REQUEST",
                 f"intent=resource nl=1 chat_id={chat_id}",
             )
-        except Exception as exc:
-            await diag.log_diagnostic_audit(
-                "DIAG_FAILED",
-                f"intent=resource nl=1 chat_id={chat_id} err={type(exc).__name__}:{exc!s}"[:1900],
-            )
-            raise
+            try:
+                d = await diag.diagnose_resource_usage()
+                await diag.log_diagnostic_audit(
+                    "DIAG_SUCCESS",
+                    f"intent=resource nl=1 chat_id={chat_id}",
+                )
+            except Exception as exc:
+                await diag.log_diagnostic_audit(
+                    "DIAG_FAILED",
+                    f"intent=resource nl=1 chat_id={chat_id} err={type(exc).__name__}:{exc!s}"[:1900],
+                )
+                raise
+        body = diag.format_resource_diagnosis_thai(
+            d,
+            include_provenance_footer=not compact_diag,
+        )
         return "### Resource (หลักฐานจริง)", body
     if intent == "diag_otp":
-        d = await diag.diagnose_otp_loop()
-        return "### OTP", diag.format_otp_diagnosis_thai(d)
+        if diagnosis_cache is not None and "diag_otp" in diagnosis_cache:
+            d = diagnosis_cache["diag_otp"]
+        else:
+            d = await diag.diagnose_otp_loop()
+        body = diag.format_otp_diagnosis_thai(d, include_provenance_footer=not compact_diag)
+        return "### OTP", body
     if intent == "diag_bot":
-        d = await diag.diagnose_bot_unresponsive()
-        return "### Bot / Telegram", diag.format_bot_diagnosis_thai(d)
+        if diagnosis_cache is not None and "diag_bot" in diagnosis_cache:
+            d = diagnosis_cache["diag_bot"]
+        else:
+            d = await diag.diagnose_bot_unresponsive()
+        body = diag.format_bot_diagnosis_thai(d, include_provenance_footer=not compact_diag)
+        return "### Bot / Telegram", body
     if intent == "diag_agent":
-        d = await diag.diagnose_agent_health()
-        return "### Agent / Memory", diag.format_agent_diagnosis_thai(d)
+        if diagnosis_cache is not None and "diag_agent" in diagnosis_cache:
+            d = diagnosis_cache["diag_agent"]
+        else:
+            d = await diag.diagnose_agent_health()
+        max_ev = 5 if compact_diag else 8
+        body = diag.format_agent_diagnosis_thai(
+            d,
+            include_provenance_footer=not compact_diag,
+            max_events=max_ev,
+        )
+        return "### Agent / Memory", body
     return "### อื่น ๆ", "ไม่รองรับ intent นี้"
 
 
@@ -1155,10 +1216,28 @@ async def msg_fallback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if intents:
         parts: list[str] = []
         chat_id = str(update.effective_chat.id)
+        diag_hit = [i for i in intents if i in diag.NL_MULTI_INTENT_DIAGNOSTIC]
+        use_compact = len(intents) >= 2 and bool(diag_hit)
+        diagnosis_cache: dict[str, dict] | None = None
+        if use_compact:
+            diagnosis_cache = await _nl_prefetch_diagnosis_cache(intents, chat_id, diag)
+        if use_compact and diagnosis_cache:
+            summary = diag.format_multi_intent_quick_summary_bullets(intents, diagnosis_cache)
+            if summary.strip():
+                parts.append("**สรุปเร็ว:**\n" + summary)
         for intent in intents:
-            heading, body = await _run_nl_intent_section(intent, text, chat_id)
+            compact = bool(use_compact and diagnosis_cache and intent in diag.NL_MULTI_INTENT_DIAGNOSTIC)
+            heading, body = await _run_nl_intent_section(
+                intent,
+                text,
+                chat_id,
+                diagnosis_cache=diagnosis_cache,
+                compact_diag=compact,
+            )
             parts.append(f"{heading}\n{body}")
         out = "\n\n".join(parts)
+        if use_compact and diagnosis_cache and any(i in diag.NL_MULTI_INTENT_DIAGNOSTIC for i in intents):
+            out += diag._diag_provenance_footer(verbose=False)
         for chunk in diag.split_telegram_chunks(out):
             await _reply_smart(update, chunk)
         return

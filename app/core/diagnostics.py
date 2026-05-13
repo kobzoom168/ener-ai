@@ -911,7 +911,10 @@ def _ener_log_dir_access() -> str:
 
 
 def format_resource_diagnosis_thai(
-    data: dict[str, Any], *, verbose_provenance: bool = False
+    data: dict[str, Any],
+    *,
+    verbose_provenance: bool = False,
+    include_provenance_footer: bool = True,
 ) -> str:
     lines = [
         "🖥️ **ตรวจสอบ Resource Ener-AI**",
@@ -992,7 +995,9 @@ def format_resource_diagnosis_thai(
     lines.append("")
     lines.append(f"- **log file:** `{log_st}`" + (" (ไม่พบ `/var/log/ener-ai` หรืออ่านไม่ได้)" if log_st != "ok" else ""))
 
-    body = "\n".join(lines)[:3600] + _diag_provenance_footer(verbose=verbose_provenance)
+    body = "\n".join(lines)[:3600]
+    if include_provenance_footer:
+        body = (body + _diag_provenance_footer(verbose=verbose_provenance))[:3900]
     return sanitize_diagnostic_text(body[:3900])
 
 
@@ -1007,6 +1012,99 @@ def format_resource_debug_appendix(data: dict[str, Any]) -> str:
         js = str(raw)
     js = sanitize_diagnostic_text(js)[:2800]
     return f"\n\n**debug_collect (sanitize):**\n```\n{js}\n```"
+
+
+NL_MULTI_INTENT_DIAGNOSTIC = frozenset({"diag_otp", "diag_bot", "diag_agent", "diag_resource"})
+
+
+def _quick_resource_summary_thai(d: dict[str, Any]) -> str:
+    cpu, ram_p, disk = d.get("cpu_percent"), d.get("ram_percent"), d.get("disk_percent")
+    if cpu is None and ram_p is None and disk is None:
+        return "ดึง metric ครบถ้วนไม่ได้ — ดูรายละเอียดในหัวข้อด้านล่าง"
+    ok = (
+        (cpu is None or cpu < 85)
+        and (ram_p is None or ram_p < 90)
+        and (disk is None or disk < 90)
+    )
+    if ok:
+        return "CPU/RAM/Disk อยู่ในเกณฑ์ปกติ (จาก collector)"
+    return "มีค่าที่ควรจับตา (CPU/RAM/Disk — ดูตัวเลขในหัวข้อด้านล่าง)"
+
+
+def _quick_agent_summary_thai(d: dict[str, Any]) -> str:
+    ev = d.get("evidence") or {}
+    fails = ev.get("failed_ai_runs") or []
+    rows = ev.get("memory_agent_events") or []
+    mem_tokens = ("memorykeeper", "memory curator", "memorycurator")
+
+    def _is_fail_result(val: Any) -> bool:
+        if val is None:
+            return False
+        if val in (0, "0", False, "fail", "failed", "error"):
+            return True
+        return str(val).lower() in ("0", "false", "fail", "failed")
+
+    for f in fails:
+        ag = str(f.get("agent") or "").lower()
+        if any(t in ag for t in mem_tokens):
+            return "พบ MemoryKeeper/MemoryCurator fail ล่าสุด — ดูรายละเอียดด้านล่าง"
+    if fails:
+        return "พบ ai_runs ที่ success=0 — ดูรายละเอียดด้านล่าง"
+    for r in rows[:20]:
+        ag = str(r.get("agent_name") or "").lower()
+        if any(t in ag for t in mem_tokens) and _is_fail_result(r.get("result")):
+            return "พบ MemoryKeeper/MemoryCurator fail ล่าสุด — ดูรายละเอียดด้านล่าง"
+    if any(_is_fail_result(r.get("result")) for r in rows):
+        return "พบ agent_events ที่ result ไม่สำเร็จ — ดูรายละเอียดด้านล่าง"
+    if rows:
+        return "มี agent_events ล่าสุด ไม่พบ fail เด่นในช่วงที่ดึงมา"
+    return "ไม่พบ event memory ล่าสุดใน DB"
+
+
+def _quick_otp_summary_thai(d: dict[str, Any]) -> str:
+    ev = d.get("evidence") or {}
+    events = ev.get("otp_events") or []
+    an = ev.get("analysis") or {}
+    st = ev.get("otp_state") or {}
+    if an.get("repeated_5min_otp_loop"):
+        return "พบ pattern ใกล้เคียง OTP loop ~5 นาที — ดูรายละเอียดด้านล่าง"
+    if not events:
+        la = st.get("seconds_since_last_admin_otp_sent")
+        if isinstance(la, (int, float)) and la > 3600:
+            return (
+                "ตอนนี้ไม่พบ OTP loop ใหม่จาก audit; ส่งล่าสุดนานแล้ว — "
+                "incident เก่าอาจไม่มีใน forensic log"
+            )
+        return "ยังไม่มี audit ในช่วงที่ดึง — ดู state ด้านล่าง"
+    return "มี event ใน audit — ดูกลไกด้านล่าง"
+
+
+def _quick_bot_summary_thai(d: dict[str, Any]) -> str:
+    ev = d.get("evidence") or {}
+    wh = ev.get("webhook_result") or {}
+    if d.get("errors"):
+        return "มีข้อจำกัดการเช็ค webhook — ดูรายละเอียดด้านล่าง"
+    if wh and isinstance(wh, dict) and wh.get("ok") is False:
+        return "getWebhookInfo ไม่ปกติ — ดูรายละเอียดด้านล่าง"
+    return "Webhook/ข้อความพื้นฐานโอเคตามที่ดึงได้"
+
+
+def format_multi_intent_quick_summary_bullets(intents: list[str], cache: dict[str, dict]) -> str:
+    """One-line bullets (Thai) for the top of a combined NL diagnostic reply."""
+    lines: list[str] = []
+    for intent in intents:
+        if intent not in NL_MULTI_INTENT_DIAGNOSTIC:
+            continue
+        d = cache.get(intent) or {}
+        if intent == "diag_resource":
+            lines.append("- **Resource:** " + _quick_resource_summary_thai(d))
+        elif intent == "diag_agent":
+            lines.append("- **Memory:** " + _quick_agent_summary_thai(d))
+        elif intent == "diag_otp":
+            lines.append("- **OTP:** " + _quick_otp_summary_thai(d))
+        elif intent == "diag_bot":
+            lines.append("- **Bot:** " + _quick_bot_summary_thai(d))
+    return "\n".join(lines)
 
 
 def classify_diagnostic_intent(text: str) -> str | None:
@@ -1068,11 +1166,25 @@ def format_otp_diagnosis_thai(data: dict[str, Any], *, include_provenance_footer
     conf = _confidence_label(bool(sufficient), loop_flag)
 
     lines.append("สรุป:")
+    la = st.get("seconds_since_last_admin_otp_sent")
     if not events:
-        lines.append(
-            "ตอนนี้ยังไม่มี forensic log ใน `otp_audit_logs` (หรือยังไม่มี event ในช่วง 6 ชม.) "
-            "จึงบอก pattern จาก state/log file เท่าที่อ่านได้เท่านั้น — **ห้ามอ้างว่า “รันแล้ว” โดยไม่มีหลักฐาน**"
-        )
+        if isinstance(la, (int, float)) and la > 3600:
+            hours = la / 3600.0
+            lines.append("- **ตอนนี้ไม่พบว่า OTP ยังวนอยู่** (จาก audit/state ในช่วงที่ดึงมา)")
+            lines.append(f"- **ส่งล่าสุดประมาณ {hours:.1f} ชม. ที่แล้ว** (ประมาณจาก state ไม่ใช่รหัส OTP)")
+            lines.append(
+                "- **incident เก่าอาจไม่มีใน `otp_audit_logs`** เพราะเกิดก่อนเปิด forensic log หรือหลุด retention"
+            )
+            lines.append("")
+            lines.append(
+                "ตอนนี้ยังไม่มีแถว forensic ใน `otp_audit_logs` ในช่วงที่ดึงมา (หรือยังไม่มี event ในช่วง 6 ชม.) "
+                "— ข้อความด้านบนอธิบายจาก **state ล่าสุด** เท่านั้น"
+            )
+        else:
+            lines.append(
+                "ตอนนี้ยังไม่มี forensic log ใน `otp_audit_logs` (หรือยังไม่มี event ในช่วง 6 ชม.) "
+                "จึงบอก pattern จาก state/log file เท่าที่อ่านได้เท่านั้น — **ห้ามอ้างว่า “รันแล้ว” โดยไม่มีหลักฐาน**"
+            )
     else:
         n_sent = an.get("admin_otp_sent_count", 0)
         lines.append(f"- พบ event ที่เกี่ยวกับการส่ง OTP (ประเภท SENT) จำนวน **{n_sent}** ครั้งในช่วงที่ดึงมา")
@@ -1082,7 +1194,6 @@ def format_otp_diagnosis_thai(data: dict[str, Any], *, include_provenance_footer
 
     lines.append("หลักฐาน (state ปัจจุบัน — ไม่มีรหัส OTP):")
     lines.append(f"- has_admin_otp: **{st.get('has_admin_otp')}** · หมดอายุใน ~{st.get('admin_otp_expires_in')}s")
-    la = st.get("seconds_since_last_admin_otp_sent")
     lines.append(f"- ครั้งล่าสุดที่บันทึกว่าส่ง admin OTP: **{la}s** ที่แล้ว (ถ้ามี)")
     lines.append(f"- has_terminal_otp: **{st.get('has_terminal_otp')}**")
     lines.append("")
@@ -1156,17 +1267,27 @@ def format_otp_diagnosis_thai(data: dict[str, Any], *, include_provenance_footer
     return sanitize_diagnostic_text(body)
 
 
-def format_agent_diagnosis_thai(data: dict[str, Any], *, include_provenance_footer: bool = True) -> str:
+def format_agent_diagnosis_thai(
+    data: dict[str, Any],
+    *,
+    include_provenance_footer: bool = True,
+    max_events: int = 8,
+) -> str:
     ev = data.get("evidence") or {}
     lines = ["🔎 **ตรวจสอบ Agent / Memory**", ""]
     rows = ev.get("memory_agent_events") or []
     if rows:
         lines.append("**agent_events (memory ล่าสุด):**")
-        for r in rows[:8]:
+        for r in rows[:max_events]:
             sm = sanitize_diagnostic_text((r.get("summary") or "")[:120])
             lines.append(
                 f"- {r.get('created_at')} `{r.get('agent_name')}` result={r.get('result')} — {sm}"
             )
+        if len(rows) > max_events:
+            lines.append(f"- _(แสดง {max_events} รายการล่าสุดจากทั้งหมด {len(rows)} รายการ)_")
+        if max_events <= 5:
+            lines.append("")
+            lines.append("รายละเอียดเต็ม: `/diag memory`")
     else:
         lines.append("ไม่พบ agent_events ที่ match memory ในช่วงล่าสุด")
     fails = ev.get("failed_ai_runs") or []
