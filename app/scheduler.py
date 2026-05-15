@@ -84,11 +84,25 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=_BANGKOK)
 
     async def send_morning_briefing():
+        news_message = ""
         try:
-            await news.fetch_and_summarize(force=True, _agent_triggered_by="scheduler")
-        except Exception:
-            pass
-        message = await briefing_agent.generate_morning_briefing(_agent_triggered_by="scheduler")
+            news_message = await news.fetch_and_summarize(
+                force=True,
+                _agent_triggered_by="scheduler",
+            )
+        except Exception as exc:
+            news_message = f"⚠️ ดึงข่าวไม่สำเร็จ: {exc}"
+
+        if news_message:
+            await _send_scheduled_message(
+                bot,
+                news_message,
+                "scheduled_news_sent",
+            )
+
+        message = await briefing_agent.generate_morning_briefing(
+            _agent_triggered_by="scheduler"
+        )
         await _send_scheduled_message(bot, message, "scheduled_morning_briefing_sent")
 
     async def send_daily_summary():

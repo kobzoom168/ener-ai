@@ -138,10 +138,13 @@ _MODEL_PANEL_ROWS = [
 ]
 _SCHEDULER_JOB_META = [
     {
-        "id": "daily_news",
-        "name": "08:00 Daily News",
+        "id": "morning_briefing",
+        "name": "08:00 Morning Briefing + News",
         "schedule": "Daily 08:00",
-        "success_actions": ["scheduled_news_sent"],
+        "success_actions": [
+            "scheduled_news_sent",
+            "scheduled_morning_briefing_sent",
+        ],
         "failure_actions": [],
     },
     {
