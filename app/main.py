@@ -23,6 +23,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 from telegram import Update
 
 from app.admin.trace_pages import build_ai_traces_html
+from app.admin.ener_scan_business_pages import build_ener_scan_business_html
 from app.bot.router import build_application
 from app.core.ai import get_active_model, get_model_availability, get_model_label
 from app.core.agents import COMMAND_AGENT_MAP, SCHEDULER_AGENTS
@@ -2467,6 +2468,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       <a class="nav-link" href="/admin/metrics">Metrics</a>
       <a class="nav-link" href="/admin/pipeline">⚡ Pipeline</a>
       <a class="nav-link" href="/admin/ai-traces">Trace</a>
+      <a class="nav-link" href="/admin/ener-scan-business">Ener Scan</a>
       <a class="nav-link" href="/admin/logs">Logs</a>
       <a class="nav-link" href="/admin/config">⚙️ Config</a>
       <a class="nav-link" href="/admin/routing">🔀 Routing</a>
@@ -8173,6 +8175,12 @@ async def admin_ai_traces_page(request: Request):
     return build_ai_traces_html()
 
 
+@app.get("/admin/ener-scan-business")
+async def admin_ener_scan_business_page(request: Request):
+    await _require_admin(request)
+    return build_ener_scan_business_html()
+
+
 @app.get("/admin/config")
 async def admin_config_page(request: Request):
     await _verify_admin_session(request)
@@ -10286,3 +10294,12 @@ async def admin_api_artifacts_coverage(
 
     coverage = await get_artifact_coverage(project_slug=project_slug)
     return JSONResponse(coverage)
+
+
+@app.get("/admin/api/business/ener-scan/summary")
+async def admin_api_ener_scan_business_summary(request: Request, range: str = "7d"):
+    await _require_admin(request)
+    from app.core.ener_scan_business import get_ener_scan_business_summary
+
+    summary = await get_ener_scan_business_summary(range_value=range)
+    return JSONResponse(summary)

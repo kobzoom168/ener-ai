@@ -324,7 +324,10 @@ def build_ai_traces_html() -> HTMLResponse:
     <div class="event-card">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
         <h3 style="margin:0;font-size:0.95rem;">Recent Artifacts</h3>
-        <span class="muted">/admin/api/artifacts/recent?project_slug=ener-scan</span>
+        <span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <a class="btn" href="/admin/ener-scan-business" style="font-size:0.82rem;">Open Ener Scan Business Dashboard</a>
+          <span class="muted">/admin/api/artifacts/recent?project_slug=ener-scan</span>
+        </span>
       </div>
       <div id="artifactCoverage" class="muted" style="margin-bottom:8px;font-size:0.85rem;">Coverage: loading…</div>
       <div style="margin-bottom:8px;">
