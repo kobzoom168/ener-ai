@@ -1,7 +1,10 @@
 from datetime import date
+import json
 from pathlib import Path
+import time
 
 from app.core.database import get_db
+from app.core.trace_context import get_trace_context
 
 TOOLS = [
     {
@@ -339,7 +342,103 @@ def _make_maps_links(places: list[str]) -> str:
     return "\n".join(lines)
 
 
+def _redact_sensitive(value):
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            key = str(k).lower()
+            if any(s in key for s in ("token", "api_key", "password", "secret", "authorization")):
+                out[str(k)] = "[redacted]"
+            else:
+                out[str(k)] = _redact_sensitive(v)
+        return out
+    if isinstance(value, list):
+        return [_redact_sensitive(v) for v in value]
+    return value
+
+
+def _to_json_preview(value, limit: int) -> str:
+    try:
+        text = json.dumps(_redact_sensitive(value), ensure_ascii=False)
+    except Exception:
+        text = str(value)
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3].rstrip() + "..."
+
+
+async def _log_tool_run(
+    *,
+    trace_id: str,
+    conversation_id: str | None,
+    tool_name: str,
+    tool_input: dict,
+    tool_output_preview: str,
+    success: int,
+    error: str | None,
+    duration_ms: int,
+) -> None:
+    async with get_db() as db:
+        await db.execute(
+            """
+            INSERT INTO tool_runs (
+                trace_id, conversation_id, tool_name, tool_input_json,
+                tool_output_preview, success, error, duration_ms
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                trace_id,
+                conversation_id,
+                tool_name,
+                _to_json_preview(tool_input, 4000),
+                _to_json_preview(tool_output_preview, 1000),
+                int(success),
+                _to_json_preview(error or "", 800) if error else None,
+                int(duration_ms),
+            ),
+        )
+        await db.commit()
+
+
 async def execute_tool(tool_name: str, tool_input: dict) -> str:
+    started = time.time()
+    ctx = get_trace_context()
+    trace_id = str(ctx.get("trace_id") or "").strip()
+    conversation_id = str(ctx.get("conversation_id") or "").strip() or None
+    try:
+        result = await _execute_tool_inner(tool_name, tool_input)
+        if trace_id:
+            await _log_tool_run(
+                trace_id=trace_id,
+                conversation_id=conversation_id,
+                tool_name=tool_name,
+                tool_input=tool_input or {},
+                tool_output_preview=str(result),
+                success=1,
+                error=None,
+                duration_ms=int((time.time() - started) * 1000),
+            )
+        return result
+    except Exception as exc:
+        if trace_id:
+            try:
+                await _log_tool_run(
+                    trace_id=trace_id,
+                    conversation_id=conversation_id,
+                    tool_name=tool_name,
+                    tool_input=tool_input or {},
+                    tool_output_preview="",
+                    success=0,
+                    error=str(exc),
+                    duration_ms=int((time.time() - started) * 1000),
+                )
+            except Exception:
+                pass
+        raise
+
+
+async def _execute_tool_inner(tool_name: str, tool_input: dict) -> str:
     from app.agents import brainstorm, content_agent, ener_agent
     from app.agents.github_agent import list_prs, list_repo_files, list_repos, read_file
     from app.agents.tarot_agent import read_cards

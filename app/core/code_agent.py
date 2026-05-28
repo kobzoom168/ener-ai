@@ -7,6 +7,9 @@ import random
 import string
 import tempfile
 from pathlib import Path
+import time
+from app.core.database import get_db
+from app.core.trace_context import get_trace_context
 
 PROJECT_ROOT = Path("/root/ener-ai").resolve()
 ALLOWED_WRITE_PATHS = ["app/", "tests/"]
@@ -14,6 +17,58 @@ ALLOWED_TOP_FILES = {"Dockerfile", "docker-compose.yml", "requirements.txt"}
 DENIED_PARTS = {".git", ".env", "data", "backups", "__pycache__"}
 
 _apply_lock = asyncio.Lock()
+
+
+def _truncate(value, limit: int = 1000) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3].rstrip() + "..."
+
+
+def _safe_json(value, limit: int = 2000) -> str | None:
+    if value is None:
+        return None
+    try:
+        raw = json.dumps(value, ensure_ascii=False)
+    except Exception:
+        raw = str(value)
+    return _truncate(raw, limit)
+
+
+async def log_code_run(
+    *,
+    action: str,
+    status: str,
+    request_id: str | None = None,
+    files: list | None = None,
+    tests: dict | None = None,
+    deploy: dict | None = None,
+    error: str | None = None,
+):
+    ctx = get_trace_context()
+    trace_id = str(ctx.get("trace_id") or "").strip() or None
+    async with get_db() as db:
+        await db.execute(
+            """
+            INSERT INTO code_runs (
+                trace_id, request_id, action, status, files_json, tests_json,
+                deploy_json, error, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (
+                trace_id,
+                request_id,
+                str(action or "").strip(),
+                str(status or "").strip(),
+                _safe_json(files, 2000),
+                _safe_json(tests, 2000),
+                _safe_json(deploy, 2000),
+                _truncate(error, 1000) if error else None,
+            ),
+        )
+        await db.commit()
 
 
 def generate_token(n: int = 8) -> str:
@@ -196,6 +251,12 @@ async def create_code_change_request(feature_request: str, patches: list[dict]) 
              plan_summary, full_diff, files_json, token, base_commit),
         )
         await db.commit()
+    await log_code_run(
+        action="propose",
+        status="pending_approval",
+        request_id=request_id,
+        files=[{"path": f["path"]} for f in files_to_write],
+    )
 
     return {
         "request_id": request_id,
@@ -230,6 +291,11 @@ async def apply_code_change(request_id: str) -> dict:
         await update_code_request_status(
             request_id, "applying",
             attempt_count=req["attempt_count"] + 1,
+        )
+        await log_code_run(
+            action="apply",
+            status="applying",
+            request_id=request_id,
         )
 
         base_commit = req["base_commit"]
@@ -268,10 +334,18 @@ async def apply_code_change(request_id: str) -> dict:
             await run_git(["push", "origin", "main"])
 
             # 7. Auto deploy
-            deploy_result = await deploy_after_apply()
+            deploy_result = await deploy_after_apply(request_id=request_id)
             deploy_msg = "🚀 Deploy สำเร็จ!" if deploy_result["ok"] else "⚠️ Deploy ล้มเหลว รัน deploy เองได้"
 
             await update_code_request_status(request_id, "success", work_branch=branch)
+            await log_code_run(
+                action="apply",
+                status="success",
+                request_id=request_id,
+                files=written,
+                tests={"ok": check.get("ok", False), "output_preview": _truncate(check.get("output", ""), 400)},
+                deploy={"ok": deploy_result.get("ok", False), "output_preview": _truncate(deploy_result.get("output", ""), 400)},
+            )
 
             return {
                 "ok": True,
@@ -287,15 +361,23 @@ async def apply_code_change(request_id: str) -> dict:
                 request_id, "failed",
                 last_error=str(exc)[:500],
             )
+            await log_code_run(
+                action="apply",
+                status="failed",
+                request_id=request_id,
+                files=written,
+                error=str(exc),
+            )
             return {"ok": False, "error": str(exc), "rolled_back": True}
 
 
-async def deploy_after_apply() -> dict:
+async def deploy_after_apply(request_id: str | None = None) -> dict:
     """Run docker compose up --build -d after successful apply."""
     env = {
         "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         "HOME": "/root",
     }
+    started = time.time()
     proc = await asyncio.create_subprocess_exec(
         "docker", "compose", "up", "-d", "--build",
         cwd="/root/ener-ai",
@@ -307,7 +389,27 @@ async def deploy_after_apply() -> dict:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
     except asyncio.TimeoutError:
         proc.kill()
-        return {"ok": False, "output": "Deploy timeout after 300s"}
+        out = {"ok": False, "output": "Deploy timeout after 300s"}
+        await log_code_run(
+            action="deploy",
+            status="failed",
+            request_id=request_id,
+            deploy={"ok": False, "duration_ms": int((time.time() - started) * 1000), "output_preview": out["output"]},
+            error="timeout",
+        )
+        return out
     out = stdout.decode("utf-8", errors="replace")
     err = stderr.decode("utf-8", errors="replace")
-    return {"ok": proc.returncode == 0, "output": out or err}
+    result = {"ok": proc.returncode == 0, "output": out or err}
+    await log_code_run(
+        action="deploy",
+        status="success" if result["ok"] else "failed",
+        request_id=request_id,
+        deploy={
+            "ok": result["ok"],
+            "duration_ms": int((time.time() - started) * 1000),
+            "output_preview": _truncate(result["output"], 500),
+        },
+        error=None if result["ok"] else _truncate(result["output"], 500),
+    )
+    return result

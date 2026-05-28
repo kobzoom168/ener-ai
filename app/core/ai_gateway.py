@@ -10,6 +10,7 @@ from app.core.database import get_db
 from app.core.event_log import log_event
 from app.core.policy import BASE_SYSTEM_PROMPT
 from app.core.reasoning_pipeline import get_routing_config, route_fast, run_pipeline
+from app.core.trace_context import reset_trace_context, set_trace_context
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +178,12 @@ async def run_ai(
     context_summary = str(context.get("summary") or "")
     enhanced_system = (system_prompt or BASE_SYSTEM_PROMPT) + "\n\n" + context_text
 
+    tokens = set_trace_context(
+        trace_id=trace_id,
+        conversation_id=conversation_id,
+        source=source,
+        project_id=project_id,
+    )
     try:
         reply, pipeline_meta = await run_pipeline(text, history, enhanced_system)
     except Exception as exc:
@@ -200,6 +207,8 @@ async def run_ai(
         except Exception:
             logger.exception("failed to log run_ai failure")
         raise
+    finally:
+        reset_trace_context(tokens)
 
     model_used = str(pipeline_meta.get("model_used") or route_model)
     snapshot = _preview(context_summary or context_text, 1200)
@@ -302,6 +311,57 @@ async def get_recent_ai_traces(limit: int = 50) -> list[dict]:
         )
         rows = await cur.fetchall()
 
+    trace_ids = [str(row["trace_id"] or "") for row in rows if row["trace_id"]]
+    tool_runs_map: dict[str, list] = {}
+    code_runs_map: dict[str, list] = {}
+    if trace_ids:
+        placeholders = ",".join(["?"] * len(trace_ids))
+        async with get_db() as db:
+            cur_tools = await db.execute(
+                f"""
+                SELECT trace_id, tool_name, success, error, duration_ms, created_at, tool_output_preview
+                FROM tool_runs
+                WHERE trace_id IN ({placeholders})
+                ORDER BY id DESC
+                """,
+                tuple(trace_ids),
+            )
+            tool_rows = await cur_tools.fetchall()
+            for row in tool_rows:
+                tid = str(row["trace_id"] or "")
+                tool_runs_map.setdefault(tid, []).append(
+                    {
+                        "tool_name": str(row["tool_name"] or ""),
+                        "success": int(row["success"] or 0),
+                        "error": _preview(row["error"], 180),
+                        "duration_ms": int(row["duration_ms"] or 0),
+                        "created_at": str(row["created_at"] or ""),
+                        "output_preview": _preview(row["tool_output_preview"], 180),
+                    }
+                )
+            cur_code = await db.execute(
+                f"""
+                SELECT trace_id, request_id, action, status, error, created_at, updated_at
+                FROM code_runs
+                WHERE trace_id IN ({placeholders})
+                ORDER BY id DESC
+                """,
+                tuple(trace_ids),
+            )
+            code_rows = await cur_code.fetchall()
+            for row in code_rows:
+                tid = str(row["trace_id"] or "")
+                code_runs_map.setdefault(tid, []).append(
+                    {
+                        "request_id": str(row["request_id"] or ""),
+                        "action": str(row["action"] or ""),
+                        "status": str(row["status"] or ""),
+                        "error": _preview(row["error"], 180),
+                        "created_at": str(row["created_at"] or ""),
+                        "updated_at": str(row["updated_at"] or ""),
+                    }
+                )
+
     traces = []
     for row in rows:
         route_json = row["route_json"]
@@ -322,6 +382,8 @@ async def get_recent_ai_traces(limit: int = 50) -> list[dict]:
                 "model_used": str(row["model_used"] or ""),
                 "context_snapshot": _preview(row["context_snapshot"], 220),
                 "route_json": route,
+                "tool_runs": tool_runs_map.get(str(row["trace_id"] or ""), [])[:20],
+                "code_runs": code_runs_map.get(str(row["trace_id"] or ""), [])[:20],
             }
         )
     return traces
