@@ -268,55 +268,78 @@ async def run_ai(
 async def get_recent_ai_traces(limit: int = 50) -> list[dict]:
     lim = max(1, min(200, int(limit)))
     async with get_db() as db:
-        cur = await db.execute(
+        trace_cur = await db.execute(
             """
-            SELECT
-                t.trace_id,
-                t.conversation_id,
-                t.source,
-                t.chat_id,
-                t.created_at,
-                t.intent,
-                t.model_used,
-                t.context_snapshot,
-                t.route_json,
-                u.content AS user_content,
-                a.content AS assistant_content
+            SELECT trace_id, MAX(sort_id) AS last_sort_id
             FROM (
                 SELECT
-                    trace_id,
-                    MAX(conversation_id) AS conversation_id,
-                    MAX(source) AS source,
-                    MAX(chat_id) AS chat_id,
-                    MAX(created_at) AS created_at,
-                    MAX(intent) AS intent,
-                    MAX(model_used) AS model_used,
-                    MAX(context_snapshot) AS context_snapshot,
-                    MAX(route_json) AS route_json
+                    trace_id, id AS sort_id
                 FROM messages
                 WHERE trace_id IS NOT NULL AND TRIM(trace_id) <> ''
-                GROUP BY trace_id
-                ORDER BY MAX(id) DESC
-                LIMIT ?
-            ) t
-            LEFT JOIN messages u
-                ON u.trace_id = t.trace_id AND u.role = 'user'
-                AND u.id = (SELECT MAX(id) FROM messages WHERE trace_id = t.trace_id AND role = 'user')
-            LEFT JOIN messages a
-                ON a.trace_id = t.trace_id AND a.role = 'assistant'
-                AND a.id = (SELECT MAX(id) FROM messages WHERE trace_id = t.trace_id AND role = 'assistant')
-            ORDER BY t.created_at DESC
+                UNION ALL
+                SELECT trace_id, id AS sort_id
+                FROM tool_runs
+                WHERE trace_id IS NOT NULL AND TRIM(trace_id) <> ''
+                UNION ALL
+                SELECT trace_id, id AS sort_id
+                FROM code_runs
+                WHERE trace_id IS NOT NULL AND TRIM(trace_id) <> ''
+            )
+            GROUP BY trace_id
+            ORDER BY last_sort_id DESC
+            LIMIT ?
             """,
             (lim,),
         )
-        rows = await cur.fetchall()
+        trace_rows = await trace_cur.fetchall()
 
-    trace_ids = [str(row["trace_id"] or "") for row in rows if row["trace_id"]]
+    trace_ids = [str(row["trace_id"] or "") for row in trace_rows if row["trace_id"]]
     tool_runs_map: dict[str, list] = {}
     code_runs_map: dict[str, list] = {}
+    message_meta: dict[str, dict] = {}
     if trace_ids:
         placeholders = ",".join(["?"] * len(trace_ids))
         async with get_db() as db:
+            cur_msg = await db.execute(
+                f"""
+                SELECT
+                    t.trace_id,
+                    t.conversation_id,
+                    t.source,
+                    t.chat_id,
+                    t.created_at,
+                    t.intent,
+                    t.model_used,
+                    t.context_snapshot,
+                    t.route_json,
+                    u.content AS user_content,
+                    a.content AS assistant_content
+                FROM (
+                    SELECT
+                        trace_id,
+                        MAX(conversation_id) AS conversation_id,
+                        MAX(source) AS source,
+                        MAX(chat_id) AS chat_id,
+                        MAX(created_at) AS created_at,
+                        MAX(intent) AS intent,
+                        MAX(model_used) AS model_used,
+                        MAX(context_snapshot) AS context_snapshot,
+                        MAX(route_json) AS route_json
+                    FROM messages
+                    WHERE trace_id IN ({placeholders})
+                    GROUP BY trace_id
+                ) t
+                LEFT JOIN messages u
+                    ON u.trace_id = t.trace_id AND u.role = 'user'
+                    AND u.id = (SELECT MAX(id) FROM messages WHERE trace_id = t.trace_id AND role = 'user')
+                LEFT JOIN messages a
+                    ON a.trace_id = t.trace_id AND a.role = 'assistant'
+                    AND a.id = (SELECT MAX(id) FROM messages WHERE trace_id = t.trace_id AND role = 'assistant')
+                """,
+                tuple(trace_ids),
+            )
+            for row in await cur_msg.fetchall():
+                message_meta[str(row["trace_id"] or "")] = dict(row)
             cur_tools = await db.execute(
                 f"""
                 SELECT trace_id, tool_name, success, error, duration_ms, created_at, tool_output_preview
@@ -363,27 +386,28 @@ async def get_recent_ai_traces(limit: int = 50) -> list[dict]:
                 )
 
     traces = []
-    for row in rows:
-        route_json = row["route_json"]
+    for trace_id in trace_ids:
+        row = message_meta.get(trace_id, {})
+        route_json = row.get("route_json")
         try:
             route = json.loads(route_json) if route_json else {}
         except Exception:
-            route = {"raw": route_json}
+            route = {"raw_preview": _preview(route_json, 200)}
         traces.append(
             {
-                "trace_id": str(row["trace_id"] or ""),
-                "conversation_id": str(row["conversation_id"] or ""),
-                "source": str(row["source"] or ""),
-                "chat_id": str(row["chat_id"] or ""),
-                "created_at": str(row["created_at"] or ""),
-                "user_preview": _preview(row["user_content"], 180),
-                "assistant_preview": _preview(row["assistant_content"], 180),
-                "intent": str(row["intent"] or ""),
-                "model_used": str(row["model_used"] or ""),
-                "context_snapshot": _preview(row["context_snapshot"], 220),
+                "trace_id": trace_id,
+                "conversation_id": str(row.get("conversation_id") or ""),
+                "source": str(row.get("source") or ""),
+                "chat_id": str(row.get("chat_id") or ""),
+                "created_at": str(row.get("created_at") or ""),
+                "user_preview": _preview(row.get("user_content"), 180),
+                "assistant_preview": _preview(row.get("assistant_content"), 180),
+                "intent": str(row.get("intent") or ""),
+                "model_used": str(row.get("model_used") or ""),
+                "context_snapshot": _preview(row.get("context_snapshot"), 220),
                 "route_json": route,
-                "tool_runs": tool_runs_map.get(str(row["trace_id"] or ""), [])[:20],
-                "code_runs": code_runs_map.get(str(row["trace_id"] or ""), [])[:20],
+                "tool_runs": tool_runs_map.get(trace_id, [])[:20],
+                "code_runs": code_runs_map.get(trace_id, [])[:20],
             }
         )
     return traces
