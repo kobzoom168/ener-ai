@@ -916,6 +916,31 @@ async def init_db():
             CREATE INDEX IF NOT EXISTS idx_conversations_source_external ON conversations(source, external_chat_id);
             CREATE INDEX IF NOT EXISTS idx_tool_runs_trace_id ON tool_runs(trace_id);
             CREATE INDEX IF NOT EXISTS idx_code_runs_trace_id ON code_runs(trace_id);
+
+            CREATE TABLE IF NOT EXISTS project_artifacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER,
+                project_slug TEXT,
+                source TEXT NOT NULL,
+                external_id TEXT,
+                artifact_type TEXT NOT NULL,
+                title TEXT DEFAULT '',
+                summary TEXT DEFAULT '',
+                payload_json TEXT,
+                tags TEXT DEFAULT '[]',
+                event_id INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_project_artifacts_project_slug_created
+                ON project_artifacts(project_slug, created_at);
+            CREATE INDEX IF NOT EXISTS idx_project_artifacts_source_external
+                ON project_artifacts(source, external_id);
+            CREATE INDEX IF NOT EXISTS idx_project_artifacts_type_created
+                ON project_artifacts(artifact_type, created_at);
+            CREATE INDEX IF NOT EXISTS idx_project_artifacts_event_id
+                ON project_artifacts(event_id);
         """)
         try:
             await db.execute("""

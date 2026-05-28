@@ -320,12 +320,22 @@ def build_ai_traces_html() -> HTMLResponse:
       <div id="eventsBody"></div>
       <div id="eventsEmpty" class="empty" style="display:none">No external events</div>
     </div>
+
+    <div class="event-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+        <h3 style="margin:0;font-size:0.95rem;">Recent Artifacts</h3>
+        <span class="muted">/admin/api/artifacts/recent?project_slug=ener-scan</span>
+      </div>
+      <div id="artifactsBody"></div>
+      <div id="artifactsEmpty" class="empty" style="display:none">No artifacts</div>
+    </div>
   </div>
 
   <script>
     let allTraces = [];
     let visibleTraces = [];
     let recentEvents = [];
+    let recentArtifacts = [];
     let refreshTimer = null;
 
     const refs = {
@@ -347,6 +357,8 @@ def build_ai_traces_html() -> HTMLResponse:
       sumExecOnly: document.getElementById('sumExecOnly'),
       eventsBody: document.getElementById('eventsBody'),
       eventsEmpty: document.getElementById('eventsEmpty'),
+      artifactsBody: document.getElementById('artifactsBody'),
+      artifactsEmpty: document.getElementById('artifactsEmpty'),
     };
 
     function safeText(v) {
@@ -678,13 +690,49 @@ def build_ai_traces_html() -> HTMLResponse:
       renderEvents();
     }
 
+    function renderArtifacts() {
+      refs.artifactsBody.innerHTML = '';
+      refs.artifactsEmpty.style.display = recentArtifacts.length ? 'none' : 'block';
+      if (!recentArtifacts.length) return;
+      for (const art of recentArtifacts) {
+        const div = document.createElement('div');
+        div.className = 'event-item';
+        const tags = Array.isArray(art.tags) ? art.tags : [];
+        div.innerHTML = `
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+            <span class="pill mono">#${escapeHtml(art.id || '')}</span>
+            <span class="pill">${escapeHtml(art.artifact_type || '-')}</span>
+            <span class="pill">${escapeHtml(art.source || '-')}</span>
+            <span class="pill">${escapeHtml(art.created_at || '')}</span>
+            ${art.event_id ? `<span class="pill mono">event:${escapeHtml(art.event_id)}</span>` : ''}
+          </div>
+          <div style="margin-top:6px;font-weight:600;">${escapeHtml(short(art.title || '', 160))}</div>
+          <div class="muted" style="margin-top:4px;">${escapeHtml(short(art.summary || '', 240))}</div>
+          <div style="margin-top:6px;">${tags.map(t => `<span class="pill mono">${escapeHtml(t)}</span>`).join('')}</div>
+          ${art.external_id ? `<div class="mono muted" style="margin-top:6px;">external_id: ${escapeHtml(art.external_id)}</div>` : ''}
+        `;
+        refs.artifactsBody.appendChild(div);
+      }
+    }
+
+    async function loadRecentArtifacts() {
+      const res = await fetch('/admin/api/artifacts/recent?project_slug=ener-scan&limit=20', {
+        credentials: 'same-origin',
+        cache: 'no-store'
+      });
+      if (res.status === 401) return;
+      const data = await res.json();
+      recentArtifacts = Array.isArray(data?.artifacts) ? data.artifacts : [];
+      renderArtifacts();
+    }
+
     function setupAutoRefresh() {
       if (refreshTimer) clearInterval(refreshTimer);
       const ms = Number(refs.auto.value || 0);
       if (ms > 0) refreshTimer = setInterval(loadTraces, ms);
     }
 
-    refs.refreshBtn.addEventListener('click', () => { loadTraces(); loadRecentEvents(); });
+    refs.refreshBtn.addEventListener('click', () => { loadTraces(); loadRecentEvents(); loadRecentArtifacts(); });
     refs.auto.addEventListener('change', setupAutoRefresh);
     refs.limit.addEventListener('change', loadTraces);
     refs.source.addEventListener('change', applyFilters);
@@ -695,6 +743,7 @@ def build_ai_traces_html() -> HTMLResponse:
 
     loadTraces();
     loadRecentEvents();
+    loadRecentArtifacts();
     setupAutoRefresh();
   </script>
 </body>

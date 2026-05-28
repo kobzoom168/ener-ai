@@ -1,6 +1,7 @@
 """Build grounded local context before AI call."""
 from __future__ import annotations
 
+from app.core.artifact_memory import get_recent_project_artifacts
 from app.core.database import get_db
 
 _CONTEXT_LIMIT_CHARS = 6000
@@ -18,6 +19,31 @@ def _route_hints(route: dict) -> str:
         str(route.get(k, "")).strip().lower()
         for k in ("domain", "reason", "complexity", "intent")
     ).strip()
+
+
+def _should_include_project_artifacts(text: str, route: dict) -> bool:
+    route_hint = _route_hints(route)
+    if any(
+        k in route_hint
+        for k in ("ener_scan", "business", "analysis", "content", "strategy")
+    ):
+        return True
+    lowered = str(text or "").lower()
+    return any(
+        k in lowered
+        for k in (
+            "scan",
+            "report",
+            "payment",
+            "ener scan",
+            "ener-scan",
+            "artifact",
+            "event",
+            "สแกน",
+            "รายงาน",
+            "ชำระ",
+        )
+    )
 
 
 def _extract_keywords(text: str) -> list[str]:
@@ -177,6 +203,28 @@ async def build_context_v2(
                     lines.append(f"- {preview}")
                     sources.append({"type": "project", "id": str(row["id"]), "preview": _clip(preview, 120)})
                 sections.append("## โครงการโรงพยาบาล/วิเคราะห์ที่เกี่ยวข้อง\n" + "\n".join(lines))
+
+        if _should_include_project_artifacts(text, route):
+            artifacts = await get_recent_project_artifacts(
+                project_slug="ener-scan",
+                limit=5,
+            )
+            if artifacts:
+                lines = []
+                for art in artifacts:
+                    preview = _clip(
+                        f"[{art.get('artifact_type')}] {art.get('title')}: {art.get('summary')}",
+                        220,
+                    )
+                    lines.append(f"- {preview}")
+                    sources.append(
+                        {
+                            "type": "project_artifact",
+                            "id": str(art.get("id")),
+                            "preview": _clip(preview, 120),
+                        }
+                    )
+                sections.append("## เหตุการณ์ Ener Scan ล่าสุด\n" + "\n".join(lines))
 
     if not sections:
         sections.append("## บริบทท้องถิ่น\n- ยังไม่พบข้อมูลเฉพาะในฐานข้อมูลสำหรับข้อความนี้")

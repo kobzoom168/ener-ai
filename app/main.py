@@ -7303,7 +7303,7 @@ async def ai_event(request: Request):
         tags.append(project_slug)
     tags.append(event_type)
 
-    await log_event(
+    event_id = await log_event(
         agent_name="AIGatewayEvent",
         event_type=event_type,
         triggered_by=source or "ener_scan",
@@ -7312,7 +7312,37 @@ async def ai_event(request: Request):
         context=context_json,
         result="success",
     )
-    return JSONResponse({"ok": True, "event_type": event_type, "source": source, "saved": True})
+
+    from app.core.artifact_memory import store_external_event_artifact
+
+    artifact_result = await store_external_event_artifact(
+        {
+            "event_id": event_id,
+            "source": source,
+            "event_type": event_type,
+            "project_slug": project_slug or "external",
+            "summary": summary,
+            "external_user_id": external_user_id,
+            "external_object_id": external_object_id,
+            "payload": payload,
+        }
+    )
+
+    response = {
+        "ok": True,
+        "event_type": event_type,
+        "source": source,
+        "saved": True,
+        "event_id": event_id,
+    }
+    if artifact_result.get("ok") and artifact_result.get("artifact_id"):
+        response["artifact_saved"] = True
+        response["artifact_id"] = artifact_result["artifact_id"]
+    else:
+        response["artifact_saved"] = False
+        if artifact_result.get("error"):
+            response["artifact_warning"] = str(artifact_result["error"])[:200]
+    return JSONResponse(response)
 
 
 @app.get("/workspace")
@@ -10210,3 +10240,17 @@ async def admin_api_events_recent(request: Request, source: str = "ener_scan", l
         events.append(item)
 
     return JSONResponse({"ok": True, "events": events})
+
+
+@app.get("/admin/api/artifacts/recent")
+async def admin_api_artifacts_recent(
+    request: Request, project_slug: str = "ener-scan", limit: int = 50
+):
+    await _require_admin(request)
+    from app.core.artifact_memory import get_recent_project_artifacts
+
+    artifacts = await get_recent_project_artifacts(
+        project_slug=project_slug,
+        limit=limit,
+    )
+    return JSONResponse({"ok": True, "artifacts": artifacts})
