@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     # Optional: container name for `docker stats` in resource diagnostics (empty = skip docker).
     # Set DOCKER_STATS_CONTAINER=ener-ai (or your service name) in `.env` to enable.
     docker_stats_container: str = ""
+    ener_ai_event_token: str = ""
 
     class Config:
         env_file = ".env"

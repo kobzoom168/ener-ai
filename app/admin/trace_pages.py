@@ -217,6 +217,21 @@ def build_ai_traces_html() -> HTMLResponse:
       text-align: center;
       padding: 18px;
     }
+    .event-card {
+      margin-top: 12px;
+      background: var(--card2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px;
+    }
+    .event-item {
+      border: 1px solid #2a2f3e;
+      border-radius: 8px;
+      background: #10141f;
+      padding: 8px;
+      margin-bottom: 8px;
+    }
+    .event-item:last-child { margin-bottom: 0; }
     @media (max-width: 1200px) {
       .cards { grid-template-columns: repeat(3, minmax(130px, 1fr)); }
       .filters { grid-template-columns: repeat(3, minmax(110px, 1fr)); }
@@ -296,11 +311,21 @@ def build_ai_traces_html() -> HTMLResponse:
       </div>
       <div id="emptyState" class="empty" style="display:none">No trace data</div>
     </div>
+
+    <div class="event-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+        <h3 style="margin:0;font-size:0.95rem;">Recent External Events (Ener Scan)</h3>
+        <span class="muted">/admin/api/events/recent?source=ener_scan</span>
+      </div>
+      <div id="eventsBody"></div>
+      <div id="eventsEmpty" class="empty" style="display:none">No external events</div>
+    </div>
   </div>
 
   <script>
     let allTraces = [];
     let visibleTraces = [];
+    let recentEvents = [];
     let refreshTimer = null;
 
     const refs = {
@@ -320,6 +345,8 @@ def build_ai_traces_html() -> HTMLResponse:
       sumToolFail: document.getElementById('sumToolFail'),
       sumCodeFail: document.getElementById('sumCodeFail'),
       sumExecOnly: document.getElementById('sumExecOnly'),
+      eventsBody: document.getElementById('eventsBody'),
+      eventsEmpty: document.getElementById('eventsEmpty'),
     };
 
     function safeText(v) {
@@ -598,6 +625,29 @@ def build_ai_traces_html() -> HTMLResponse:
       });
     }
 
+    function renderEvents() {
+      refs.eventsBody.innerHTML = '';
+      refs.eventsEmpty.style.display = recentEvents.length ? 'none' : 'block';
+      if (!recentEvents.length) return;
+      for (const ev of recentEvents) {
+        const div = document.createElement('div');
+        div.className = 'event-item';
+        const tags = Array.isArray(ev.tags) ? ev.tags : [];
+        div.innerHTML = `
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+            <span class="pill mono">#${escapeHtml(ev.id || '')}</span>
+            <span class="pill">${escapeHtml(ev.event_type || 'external_event')}</span>
+            <span class="pill">${escapeHtml(ev.created_at || '')}</span>
+            <span class="pill ${safeText(ev.result).toLowerCase() === 'success' ? 'ok' : 'err'}">${escapeHtml(ev.result || 'unknown')}</span>
+          </div>
+          <div style="margin-top:6px;">${escapeHtml(short(ev.summary || '', 240))}</div>
+          <div style="margin-top:6px;">${tags.map(t => `<span class="pill mono">${escapeHtml(t)}</span>`).join('')}</div>
+          <pre class="mono" style="margin-top:6px;">${escapeHtml(ev.context_preview || '')}</pre>
+        `;
+        refs.eventsBody.appendChild(div);
+      }
+    }
+
     async function loadTraces() {
       const limit = Number(refs.limit.value || 50);
       const res = await fetch(`/admin/api/ai-traces/recent?limit=${limit}`, {
@@ -617,13 +667,24 @@ def build_ai_traces_html() -> HTMLResponse:
       applyFilters();
     }
 
+    async function loadRecentEvents() {
+      const res = await fetch('/admin/api/events/recent?source=ener_scan&limit=20', {
+        credentials: 'same-origin',
+        cache: 'no-store'
+      });
+      if (res.status === 401) return;
+      const data = await res.json();
+      recentEvents = Array.isArray(data?.events) ? data.events : [];
+      renderEvents();
+    }
+
     function setupAutoRefresh() {
       if (refreshTimer) clearInterval(refreshTimer);
       const ms = Number(refs.auto.value || 0);
       if (ms > 0) refreshTimer = setInterval(loadTraces, ms);
     }
 
-    refs.refreshBtn.addEventListener('click', loadTraces);
+    refs.refreshBtn.addEventListener('click', () => { loadTraces(); loadRecentEvents(); });
     refs.auto.addEventListener('change', setupAutoRefresh);
     refs.limit.addEventListener('change', loadTraces);
     refs.source.addEventListener('change', applyFilters);
@@ -633,6 +694,7 @@ def build_ai_traces_html() -> HTMLResponse:
     refs.search.addEventListener('input', applyFilters);
 
     loadTraces();
+    loadRecentEvents();
     setupAutoRefresh();
   </script>
 </body>

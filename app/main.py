@@ -7249,31 +7249,70 @@ async def ai_run(request: Request):
 
 @app.post("/ai/event")
 async def ai_event(request: Request):
-    body = await request.json()
-    source = str(body.get("source", "unknown") or "unknown").strip() or "unknown"
-    event_type = str(body.get("event_type", "event") or "event").strip() or "event"
+    configured_token = str(getattr(settings, "ener_ai_event_token", "") or "").strip()
+    if configured_token:
+        provided_token = str(request.headers.get("X-Ener-AI-Event-Token", "") or "").strip()
+        if provided_token != configured_token:
+            raise HTTPException(status_code=401, detail="invalid event token")
+
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            body = {"payload": body}
+    except Exception:
+        body = {"payload": {}}
+
+    source = str(body.get("source", "external") or "external").strip() or "external"
+    event_type = str(body.get("event_type", "external_event") or "external_event").strip() or "external_event"
     project_slug = str(body.get("project_slug", "") or "").strip()
-    summary = str(body.get("summary", "")).strip() or event_type
-    payload = body.get("payload", {})
-    tags = [source]
-    if project_slug:
-        tags.append(project_slug)
-    await log_event(
-        agent_name="AIGatewayEvent",
-        event_type=event_type,
-        summary=summary,
-        tags=tags,
-        context=json.dumps(
+    summary = str(body.get("summary", "") or "").strip() or event_type
+    external_user_id = str(body.get("external_user_id", "") or "").strip() or None
+    external_object_id = str(body.get("external_object_id", "") or "").strip() or None
+    payload = body.get("payload")
+    if payload is None:
+        payload = {}
+
+    context_obj = {
+        "source": source,
+        "project_slug": project_slug,
+        "event_type": event_type,
+        "summary": summary,
+        "external_user_id": external_user_id,
+        "external_object_id": external_object_id,
+        "payload": payload,
+    }
+    try:
+        context_json = json.dumps(context_obj, ensure_ascii=False, default=str)
+    except Exception:
+        context_json = json.dumps(
             {
                 "source": source,
                 "project_slug": project_slug,
-                "payload": payload,
+                "event_type": event_type,
+                "summary": summary,
+                "external_user_id": external_user_id,
+                "external_object_id": external_object_id,
+                "payload": str(payload)[:500],
             },
             ensure_ascii=False,
-        ),
+        )
+    context_json = context_json[:4000]
+
+    tags = [source]
+    if project_slug:
+        tags.append(project_slug)
+    tags.append(event_type)
+
+    await log_event(
+        agent_name="AIGatewayEvent",
+        event_type=event_type,
+        triggered_by=source or "ener_scan",
+        summary=summary,
+        tags=tags,
+        context=context_json,
         result="success",
     )
-    return JSONResponse({"ok": True})
+    return JSONResponse({"ok": True, "event_type": event_type, "source": source, "saved": True})
 
 
 @app.get("/workspace")
@@ -10105,3 +10144,69 @@ async def admin_api_ai_traces_recent(request: Request, limit: int = 50):
     await _require_admin(request)
     traces = await get_recent_ai_traces(limit=limit)
     return JSONResponse({"ok": True, "traces": traces})
+
+
+@app.get("/admin/api/events/recent")
+async def admin_api_events_recent(request: Request, source: str = "ener_scan", limit: int = 50):
+    await _require_admin(request)
+    safe_limit = max(1, min(int(limit), 200))
+    safe_source = str(source or "").strip().lower()
+    async with get_db() as db:
+        if safe_source:
+            cursor = await db.execute(
+                """
+                SELECT
+                    id,
+                    datetime(created_at, '+7 hours') AS created_at,
+                    event_type,
+                    agent_name,
+                    summary,
+                    tags,
+                    context,
+                    result
+                FROM agent_events
+                WHERE agent_name = 'AIGatewayEvent'
+                  AND (triggered_by = ? OR tags LIKE ?)
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (safe_source, f'%"{safe_source}"%', safe_limit),
+            )
+        else:
+            cursor = await db.execute(
+                """
+                SELECT
+                    id,
+                    datetime(created_at, '+7 hours') AS created_at,
+                    event_type,
+                    agent_name,
+                    summary,
+                    tags,
+                    context,
+                    result
+                FROM agent_events
+                WHERE agent_name = 'AIGatewayEvent'
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (safe_limit,),
+            )
+        rows = await cursor.fetchall()
+
+    events = []
+    for row in rows:
+        item = dict(row)
+        try:
+            parsed_tags = json.loads(item.get("tags") or "[]")
+            if not isinstance(parsed_tags, list):
+                parsed_tags = []
+        except Exception:
+            parsed_tags = []
+        context_preview = str(item.get("context") or "").strip()
+        if len(context_preview) > 600:
+            context_preview = context_preview[:597].rstrip() + "..."
+        item["tags"] = parsed_tags
+        item["context_preview"] = context_preview
+        events.append(item)
+
+    return JSONResponse({"ok": True, "events": events})
