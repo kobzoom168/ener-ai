@@ -22,6 +22,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, Response, Uploa
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from telegram import Update
 
+from app.admin.trace_pages import build_ai_traces_html
 from app.bot.router import build_application
 from app.core.ai import get_active_model, get_model_availability, get_model_label
 from app.core.agents import COMMAND_AGENT_MAP, SCHEDULER_AGENTS
@@ -2465,6 +2466,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       <a class="nav-link active" href="/admin">Overview</a>
       <a class="nav-link" href="/admin/metrics">Metrics</a>
       <a class="nav-link" href="/admin/pipeline">⚡ Pipeline</a>
+      <a class="nav-link" href="/admin/ai-traces">Trace</a>
       <a class="nav-link" href="/admin/logs">Logs</a>
       <a class="nav-link" href="/admin/config">⚙️ Config</a>
       <a class="nav-link" href="/admin/routing">🔀 Routing</a>
@@ -8092,6 +8094,12 @@ async def workspace_projects_delete(project_id: int, request: Request):
 async def admin_dashboard(request: Request):
     await _require_admin(request)
     return build_admin_html(await _load_admin_overview())
+
+
+@app.get("/admin/ai-traces")
+async def admin_ai_traces_page(request: Request):
+    await _require_admin(request)
+    return build_ai_traces_html()
 
 
 @app.get("/admin/config")
