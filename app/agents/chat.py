@@ -1,4 +1,5 @@
 from app.core.agents import log_agent_run
+from app.core.ai_gateway import run_ai
 from app.core.database import get_db
 from app.core.diagnostics import user_message_touches_engineering_topics
 from app.core.event_log import get_agent_context, log_event
@@ -9,7 +10,6 @@ from app.core.memory import (
     get_time_context,
 )
 from app.core.policy import build_system_prompt
-from app.core.reasoning_pipeline import run_pipeline
 
 SAVE_KEYWORDS = ["บันทึก", "จำไว้", "save นี่", "จดไว้", "อย่าลืมว่า"]
 
@@ -179,10 +179,26 @@ async def _save_messages(chat_id: str, text: str, reply: str) -> None:
 
 @log_agent_run("MainChatAgent")
 async def run_chat(chat_id: str, text: str) -> str:
-    history = await _get_history(chat_id)
     system_prompt = await _build_system_prompt(text)
     try:
-        reply, pipeline_meta = await run_pipeline(text, history, system_prompt)
+        gateway_result = await run_ai(
+            source="telegram",
+            external_chat_id=str(chat_id),
+            text=text,
+            system_prompt=system_prompt,
+        )
+        reply = str(gateway_result.get("reply", "")).strip() or "ยังไม่มีคำตอบตอนนี้"
+        route = gateway_result.get("route") or {}
+        pipeline_meta = {
+            "complexity": route.get("complexity", "simple"),
+            "domain": route.get("domain", "chat"),
+            "model_used": gateway_result.get("model_used", route.get("model", "groq")),
+            "was_fixed": False,
+            "elapsed_ms": int(gateway_result.get("elapsed_ms", 0) or 0),
+            "trace_id": gateway_result.get("trace_id", ""),
+            "conversation_id": gateway_result.get("conversation_id", ""),
+            "context_summary": gateway_result.get("context_summary", ""),
+        }
     except Exception as exc:
         try:
             await log_event(
@@ -225,6 +241,8 @@ async def run_chat(chat_id: str, text: str) -> str:
             context=reply[:200],
             result="success",
             learned=(
+                    f"trace_id={pipeline_meta.get('trace_id', '')} "
+                    f"conversation_id={pipeline_meta.get('conversation_id', '')} "
                 f"pipeline={pipeline_meta.get('model_used', 'groq')} "
                 f"fixed={pipeline_meta.get('was_fixed', False)} "
                 f"elapsed_ms={pipeline_meta.get('elapsed_ms', 0)}"

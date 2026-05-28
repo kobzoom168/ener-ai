@@ -25,9 +25,11 @@ from telegram import Update
 from app.bot.router import build_application
 from app.core.ai import get_active_model, get_model_availability, get_model_label
 from app.core.agents import COMMAND_AGENT_MAP, SCHEDULER_AGENTS
+from app.core.ai_gateway import get_recent_ai_traces, preview_context, run_ai
 from app.core.config import settings
 from app.core.database import get_all_config, get_config, get_db, init_db, set_config
 from app.core.diagnostics import log_otp_event
+from app.core.event_log import log_event
 from app.core.terminal import handle_terminal_ws
 from app.scheduler import build_scheduler
 
@@ -7219,6 +7221,59 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/ai/context-preview")
+async def ai_context_preview(text: str, source: str = "debug", chat_id: str = "debug"):
+    context = await preview_context(text=text, source=source, external_chat_id=chat_id)
+    return JSONResponse({"ok": True, "context": context})
+
+
+@app.post("/ai/run")
+async def ai_run(request: Request):
+    body = await request.json()
+    source = str(body.get("source", "api") or "api").strip() or "api"
+    external_chat_id = str(body.get("chat_id", "api") or "api").strip() or "api"
+    text = str(body.get("text", "")).strip()
+    project_id = _normalize_project_id(body.get("project_id"))
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+    result = await run_ai(
+        source=source,
+        external_chat_id=external_chat_id,
+        text=text,
+        project_id=project_id,
+    )
+    return JSONResponse({"ok": True, **result})
+
+
+@app.post("/ai/event")
+async def ai_event(request: Request):
+    body = await request.json()
+    source = str(body.get("source", "unknown") or "unknown").strip() or "unknown"
+    event_type = str(body.get("event_type", "event") or "event").strip() or "event"
+    project_slug = str(body.get("project_slug", "") or "").strip()
+    summary = str(body.get("summary", "")).strip() or event_type
+    payload = body.get("payload", {})
+    tags = [source]
+    if project_slug:
+        tags.append(project_slug)
+    await log_event(
+        agent_name="AIGatewayEvent",
+        event_type=event_type,
+        summary=summary,
+        tags=tags,
+        context=json.dumps(
+            {
+                "source": source,
+                "project_slug": project_slug,
+                "payload": payload,
+            },
+            ensure_ascii=False,
+        ),
+        result="success",
+    )
+    return JSONResponse({"ok": True})
+
+
 @app.get("/workspace")
 async def workspace_page(request: Request):
     await _require_admin(request)
@@ -10035,3 +10090,10 @@ async def admin_api_logs(request: Request):
             ],
         }
     )
+
+
+@app.get("/admin/api/ai-traces/recent")
+async def admin_api_ai_traces_recent(request: Request, limit: int = 50):
+    await _require_admin(request)
+    traces = await get_recent_ai_traces(limit=limit)
+    return JSONResponse({"ok": True, "traces": traces})

@@ -8,6 +8,30 @@ DB_PATH = Path(settings.database_path)
 logger = logging.getLogger(__name__)
 
 
+async def _column_names(db: aiosqlite.Connection, table: str) -> set[str]:
+    cur = await db.execute(f'PRAGMA table_info("{table}")')
+    return {str(r["name"]) for r in await cur.fetchall()}
+
+
+async def _add_column_if_missing(
+    db: aiosqlite.Connection, table: str, column: str, sql_type_default: str
+) -> None:
+    cols = await _column_names(db, table)
+    if column in cols:
+        return
+    sql = f'ALTER TABLE "{table}" ADD COLUMN "{column}" {sql_type_default}'
+    try:
+        await db.execute(sql)
+    except Exception as exc:
+        logger.warning(
+            "additive migration ALTER failed (table=%s column=%s): %s",
+            table,
+            column,
+            exc,
+            exc_info=True,
+        )
+
+
 async def _hospital_column_names(db: aiosqlite.Connection, table: str) -> set[str]:
     cur = await db.execute(f'PRAGMA table_info("{table}")')
     return {str(r["name"]) for r in await cur.fetchall()}
@@ -833,6 +857,79 @@ async def init_db():
             await db.execute("ALTER TABLE messages ADD COLUMN project_id INTEGER REFERENCES projects(id)")
         if "source" not in message_columns:
             await db.execute("ALTER TABLE messages ADD COLUMN source TEXT DEFAULT 'telegram'")
+        message_migrations: list[tuple[str, str]] = [
+            ("conversation_id", "TEXT"),
+            ("intent", "TEXT"),
+            ("model_used", "TEXT"),
+            ("route_json", "TEXT"),
+            ("context_snapshot", "TEXT"),
+            ("external_used", "INTEGER DEFAULT 0"),
+            ("trace_id", "TEXT"),
+            ("source", "TEXT DEFAULT 'telegram'"),
+            ("project_id", "INTEGER REFERENCES projects(id)"),
+        ]
+        for column, ddl in message_migrations:
+            await _add_column_if_missing(db, "messages", column, ddl)
+        await db.executescript("""
+            CREATE TABLE IF NOT EXISTS conversations (
+                id TEXT PRIMARY KEY,
+                source TEXT DEFAULT 'telegram',
+                external_chat_id TEXT,
+                project_id INTEGER,
+                title TEXT DEFAULT '',
+                last_intent TEXT DEFAULT '',
+                last_model TEXT DEFAULT '',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS tool_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                trace_id TEXT,
+                conversation_id TEXT,
+                tool_name TEXT NOT NULL,
+                tool_input_json TEXT,
+                tool_output_preview TEXT,
+                success INTEGER DEFAULT 1,
+                error TEXT,
+                duration_ms INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS code_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                trace_id TEXT,
+                request_id TEXT,
+                action TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                files_json TEXT,
+                tests_json TEXT,
+                deploy_json TEXT,
+                error TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_messages_trace_id ON messages(trace_id);
+            CREATE INDEX IF NOT EXISTS idx_messages_conversation_created ON messages(conversation_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_messages_project_created ON messages(project_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_conversations_source_external ON conversations(source, external_chat_id);
+            CREATE INDEX IF NOT EXISTS idx_tool_runs_trace_id ON tool_runs(trace_id);
+            CREATE INDEX IF NOT EXISTS idx_code_runs_trace_id ON code_runs(trace_id);
+        """)
+        try:
+            await db.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS local_knowledge_fts USING fts5(
+                    source,
+                    source_id,
+                    title,
+                    content,
+                    tags,
+                    created_at
+                );
+            """)
+        except Exception as exc:
+            logger.warning("optional FTS5 table local_knowledge_fts not available: %s", exc)
         await db.executescript("""
             INSERT OR IGNORE INTO standup_projects
             (id, name, status, percent_complete, current_status, next_steps, due_date, today_tasks, sort_order)
