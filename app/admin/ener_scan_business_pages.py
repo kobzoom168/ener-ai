@@ -86,6 +86,18 @@ def build_ener_scan_business_html() -> HTMLResponse:
     }
     .muted { color: var(--muted); font-size: 0.8rem; }
     .err { color: #f87171; padding: 12px; }
+    .warn-box {
+      background: #1c1408; border: 1px solid #b4530955; border-left: 4px solid var(--amber);
+      border-radius: 10px; padding: 12px; margin-bottom: 12px; font-size: 0.85rem;
+    }
+    .warn-box h4 { margin: 0 0 8px; color: var(--amber); font-size: 0.9rem; }
+    .warn-box ul { margin: 8px 0 0 18px; padding: 0; }
+    .warn-box li { margin-bottom: 4px; }
+    .dq-ok {
+      background: #0f1a12; border: 1px solid #22c55e33; border-left: 4px solid var(--green);
+      border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; font-size: 0.85rem;
+      color: var(--muted);
+    }
     .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     @media (max-width: 960px) {
       .cards { grid-template-columns: repeat(2, 1fr); }
@@ -125,6 +137,7 @@ def build_ener_scan_business_html() -> HTMLResponse:
 
     <div id="sessionErr" class="err" style="display:none">Session expired — please log in to Admin again.</div>
     <div id="loadErr" class="err" style="display:none"></div>
+    <div id="dataQualityBox" style="display:none"></div>
 
     <div class="cards" id="kpiCards">
       <div class="card"><div class="k">Scan Completed</div><div class="v" id="kpiScan">0</div></div>
@@ -175,6 +188,7 @@ def build_ener_scan_business_html() -> HTMLResponse:
       auto: document.getElementById('autoRefresh'),
       sessionErr: document.getElementById('sessionErr'),
       loadErr: document.getElementById('loadErr'),
+      dataQualityBox: document.getElementById('dataQualityBox'),
       kpiScan: document.getElementById('kpiScan'),
       kpiReport: document.getElementById('kpiReport'),
       kpiPay: document.getElementById('kpiPay'),
@@ -210,6 +224,39 @@ def build_ener_scan_business_html() -> HTMLResponse:
     function fmtMoney(n) {
       const v = Number(n || 0);
       return '฿' + v.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+    }
+
+    function fmtFunnelRate(raw, capped) {
+      const r = Number(raw || 0);
+      const c = Number(capped ?? raw ?? 0);
+      if (r > 100) return r + '% raw · capped ' + c + '%';
+      return r + '%';
+    }
+
+    function renderDataQuality(dq, coverage) {
+      const box = refs.dataQualityBox;
+      if (!dq) {
+        box.style.display = 'none';
+        box.innerHTML = '';
+        return;
+      }
+      if (dq.status === 'warning') {
+        const items = (dq.warnings || []).map(w => '<li>' + escapeHtml(w) + '</li>').join('');
+        const note = 'ตัวเลข funnel ใช้ raw event counts; หาก event บางชนิดยังส่งไม่ครบ conversion อาจเกิน 100% ได้';
+        const cov = coverage ? (
+          '<div class="muted" style="margin-top:8px">coverage: scan_report=' +
+          escapeHtml(coverage.scan_report_balance || '-') +
+          ', payment_report=' + escapeHtml(coverage.payment_report_balance || '-') + '</div>'
+        ) : '';
+        box.className = 'warn-box';
+        box.innerHTML = '<h4>⚠ Data quality warning</h4><ul>' + items + '</ul>' +
+          '<div class="muted" style="margin-top:8px">' + escapeHtml(note) + '</div>' + cov;
+        box.style.display = 'block';
+        return;
+      }
+      box.className = 'dq-ok';
+      box.textContent = 'Data quality: OK — event coverage looks consistent for this range.';
+      box.style.display = 'block';
     }
 
     function badgeType(t) {
@@ -286,17 +333,27 @@ def build_ener_scan_business_html() -> HTMLResponse:
 
     function applyData(data) {
       const s = data.summary || {};
+      const dq = s.data_quality || {};
       refs.kpiScan.textContent = s.scan_completed ?? 0;
       refs.kpiReport.textContent = s.report_created ?? 0;
       refs.kpiPay.textContent = s.payment_approved ?? 0;
       refs.kpiUsers.textContent = s.unique_users ?? 0;
       refs.kpiRev.textContent = fmtMoney(s.estimated_revenue);
-      refs.kpiConv.textContent = (s.report_to_payment_rate ?? 0) + '%';
+      const payRaw = s.report_to_payment_rate_raw ?? s.report_to_payment_rate ?? 0;
+      const payCap = s.report_to_payment_rate_capped ?? payRaw;
+      refs.kpiConv.textContent = fmtFunnelRate(payRaw, payCap);
       refs.fnScan.textContent = s.scan_completed ?? 0;
       refs.fnReport.textContent = s.report_created ?? 0;
       refs.fnPay.textContent = s.payment_approved ?? 0;
-      refs.fnScanReport.textContent = 'scan→report ' + (s.scan_to_report_rate ?? 0) + '%';
-      refs.fnReportPay.textContent = 'report→pay ' + (s.report_to_payment_rate ?? 0) + '%';
+      const scanReportRaw = s.scan_to_report_rate_raw ?? s.scan_to_report_rate ?? 0;
+      const scanReportCap = s.scan_to_report_rate_capped ?? scanReportRaw;
+      const reportPayRaw = s.report_to_payment_rate_raw ?? s.report_to_payment_rate ?? 0;
+      const reportPayCap = s.report_to_payment_rate_capped ?? reportPayRaw;
+      refs.fnScanReport.textContent = 'scan→report ' + fmtFunnelRate(scanReportRaw, scanReportCap);
+      refs.fnScanReport.title = 'Raw rate from artifact counts; capped at 100% for funnel display';
+      refs.fnReportPay.textContent = 'report→pay ' + fmtFunnelRate(reportPayRaw, reportPayCap);
+      refs.fnReportPay.title = 'Raw rate from artifact counts; capped at 100% for funnel display';
+      renderDataQuality(dq, data.coverage || {});
       renderTrend(data.trend || [], data.range || '7d');
       renderRecent(data.recent || []);
       renderBreakdown(data.by_artifact_type || [], data.by_event_type || []);

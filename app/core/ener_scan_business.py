@@ -94,6 +94,88 @@ def safe_conversion_rate(numerator: int, denominator: int) -> float:
     return round((numerator / denominator) * 100.0, 2)
 
 
+def cap_conversion_rate(raw_rate: float) -> float:
+    try:
+        value = float(raw_rate)
+    except (TypeError, ValueError):
+        return 0.0
+    return round(min(value, 100.0), 2)
+
+
+def build_event_coverage(
+    scan_completed: int,
+    report_created: int,
+    payment_approved: int,
+) -> dict:
+    has_scan = scan_completed > 0
+    has_report = report_created > 0
+    has_payment = payment_approved > 0
+
+    if scan_completed == 0 and report_created == 0:
+        scan_report_balance = "empty"
+    elif scan_completed == 0 and report_created > 0:
+        scan_report_balance = "no_scan_events"
+    elif report_created > scan_completed:
+        scan_report_balance = "report_gt_scan"
+    else:
+        scan_report_balance = "ok"
+
+    if report_created == 0 and payment_approved == 0:
+        payment_report_balance = "empty"
+    elif report_created == 0 and payment_approved > 0:
+        payment_report_balance = "no_report_events"
+    elif payment_approved > report_created:
+        payment_report_balance = "payment_gt_report"
+    else:
+        payment_report_balance = "ok"
+
+    return {
+        "has_scan_events": has_scan,
+        "has_report_events": has_report,
+        "has_payment_events": has_payment,
+        "scan_report_balance": scan_report_balance,
+        "payment_report_balance": payment_report_balance,
+    }
+
+
+def build_data_quality(
+    scan_completed: int,
+    report_created: int,
+    payment_approved: int,
+) -> dict:
+    warnings: list[str] = []
+    notes: list[str] = []
+
+    if report_created > scan_completed and scan_completed > 0:
+        warnings.append(
+            "report_created exceeds scan_completed; funnel rate may be inflated "
+            "because scan_completed events may be incomplete."
+        )
+    if payment_approved > report_created and report_created > 0:
+        warnings.append(
+            "payment_approved exceeds report_created; report events may be incomplete."
+        )
+    if scan_completed == 0 and report_created > 0:
+        warnings.append(
+            "No scan_completed events found but report_created exists; "
+            "scan event coverage may be incomplete."
+        )
+    if report_created == 0 and payment_approved > 0:
+        warnings.append(
+            "No report_created events found but payment_approved exists; "
+            "report event coverage may be incomplete."
+        )
+
+    if warnings:
+        notes.append(
+            "Funnel rates use raw event counts; conversion may exceed 100% when "
+            "upstream events are missing or backfilled unevenly."
+        )
+
+    status = "warning" if warnings else "ok"
+    return {"status": status, "warnings": warnings, "notes": notes}
+
+
 def parse_amount_from_payload(payload_root: dict) -> float:
     """Extract numeric amount from payload; return 0 if missing/invalid."""
     candidates: list[Any] = []
@@ -219,6 +301,11 @@ def aggregate_artifacts(rows: list[dict], range_key: str) -> dict:
 
     total_artifacts = len(rows)
 
+    scan_to_report_raw = safe_conversion_rate(report_created, scan_completed)
+    report_to_payment_raw = safe_conversion_rate(payment_approved, report_created)
+    data_quality = build_data_quality(scan_completed, report_created, payment_approved)
+    coverage = build_event_coverage(scan_completed, report_created, payment_approved)
+
     return {
         "summary": {
             "total_artifacts": total_artifacts,
@@ -227,9 +314,15 @@ def aggregate_artifacts(rows: list[dict], range_key: str) -> dict:
             "payment_approved": payment_approved,
             "unique_users": len(unique_users),
             "estimated_revenue": round(estimated_revenue, 2),
-            "scan_to_report_rate": safe_conversion_rate(report_created, scan_completed),
-            "report_to_payment_rate": safe_conversion_rate(payment_approved, report_created),
+            "scan_to_report_rate": scan_to_report_raw,
+            "report_to_payment_rate": report_to_payment_raw,
+            "scan_to_report_rate_raw": scan_to_report_raw,
+            "report_to_payment_rate_raw": report_to_payment_raw,
+            "scan_to_report_rate_capped": cap_conversion_rate(scan_to_report_raw),
+            "report_to_payment_rate_capped": cap_conversion_rate(report_to_payment_raw),
+            "data_quality": data_quality,
         },
+        "coverage": coverage,
         "trend": trend,
         "by_artifact_type": by_artifact_list,
         "by_event_type": by_event_list,
