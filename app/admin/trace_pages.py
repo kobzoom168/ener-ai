@@ -326,6 +326,11 @@ def build_ai_traces_html() -> HTMLResponse:
         <h3 style="margin:0;font-size:0.95rem;">Recent Artifacts</h3>
         <span class="muted">/admin/api/artifacts/recent?project_slug=ener-scan</span>
       </div>
+      <div id="artifactCoverage" class="muted" style="margin-bottom:8px;font-size:0.85rem;">Coverage: loading…</div>
+      <div style="margin-bottom:8px;">
+        <button type="button" id="artifactBackfillBtn" class="btn" style="font-size:0.85rem;">Backfill Artifacts</button>
+        <span id="artifactBackfillResult" class="muted" style="margin-left:8px;font-size:0.85rem;"></span>
+      </div>
       <div id="artifactsBody"></div>
       <div id="artifactsEmpty" class="empty" style="display:none">No artifacts</div>
     </div>
@@ -359,6 +364,9 @@ def build_ai_traces_html() -> HTMLResponse:
       eventsEmpty: document.getElementById('eventsEmpty'),
       artifactsBody: document.getElementById('artifactsBody'),
       artifactsEmpty: document.getElementById('artifactsEmpty'),
+      artifactCoverage: document.getElementById('artifactCoverage'),
+      artifactBackfillBtn: document.getElementById('artifactBackfillBtn'),
+      artifactBackfillResult: document.getElementById('artifactBackfillResult'),
     };
 
     function safeText(v) {
@@ -715,6 +723,55 @@ def build_ai_traces_html() -> HTMLResponse:
       }
     }
 
+    async function loadArtifactCoverage() {
+      const res = await fetch('/admin/api/artifacts/coverage?project_slug=ener-scan', {
+        credentials: 'same-origin',
+        cache: 'no-store'
+      });
+      if (res.status === 401) return;
+      const data = await res.json();
+      if (!data?.ok) {
+        refs.artifactCoverage.textContent = 'Coverage: unavailable';
+        return;
+      }
+      const evTotal = data?.events?.total ?? 0;
+      const artTotal = data?.artifacts?.total ?? 0;
+      const lastEv = data?.last_event_at || '-';
+      const lastArt = data?.last_artifact_at || '-';
+      refs.artifactCoverage.textContent =
+        `Coverage: events ${evTotal} | artifacts ${artTotal} | last event ${lastEv} | last artifact ${lastArt}`;
+    }
+
+    async function runArtifactBackfill() {
+      refs.artifactBackfillBtn.disabled = true;
+      refs.artifactBackfillResult.textContent = 'Backfilling…';
+      try {
+        const res = await fetch('/admin/api/artifacts/backfill', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            source: 'ener_scan',
+            project_slug: 'ener-scan',
+            limit: 500
+          })
+        });
+        const data = await res.json();
+        if (!res.ok || !data?.ok) {
+          refs.artifactBackfillResult.textContent = 'Backfill failed';
+          return;
+        }
+        refs.artifactBackfillResult.textContent =
+          `created ${data.created || 0} | skipped ${data.skipped || 0} | failed ${data.failed || 0}`;
+        await loadArtifactCoverage();
+        await loadRecentArtifacts();
+      } catch (_) {
+        refs.artifactBackfillResult.textContent = 'Backfill error';
+      } finally {
+        refs.artifactBackfillBtn.disabled = false;
+      }
+    }
+
     async function loadRecentArtifacts() {
       const res = await fetch('/admin/api/artifacts/recent?project_slug=ener-scan&limit=20', {
         credentials: 'same-origin',
@@ -732,7 +789,13 @@ def build_ai_traces_html() -> HTMLResponse:
       if (ms > 0) refreshTimer = setInterval(loadTraces, ms);
     }
 
-    refs.refreshBtn.addEventListener('click', () => { loadTraces(); loadRecentEvents(); loadRecentArtifacts(); });
+    refs.refreshBtn.addEventListener('click', () => {
+      loadTraces();
+      loadRecentEvents();
+      loadArtifactCoverage();
+      loadRecentArtifacts();
+    });
+    refs.artifactBackfillBtn.addEventListener('click', runArtifactBackfill);
     refs.auto.addEventListener('change', setupAutoRefresh);
     refs.limit.addEventListener('change', loadTraces);
     refs.source.addEventListener('change', applyFilters);
@@ -743,6 +806,7 @@ def build_ai_traces_html() -> HTMLResponse:
 
     loadTraces();
     loadRecentEvents();
+    loadArtifactCoverage();
     loadRecentArtifacts();
     setupAutoRefresh();
   </script>

@@ -7338,6 +7338,8 @@ async def ai_event(request: Request):
     if artifact_result.get("ok") and artifact_result.get("artifact_id"):
         response["artifact_saved"] = True
         response["artifact_id"] = artifact_result["artifact_id"]
+        if artifact_result.get("existing"):
+            response["artifact_existing"] = True
     else:
         response["artifact_saved"] = False
         if artifact_result.get("error"):
@@ -10254,3 +10256,33 @@ async def admin_api_artifacts_recent(
         limit=limit,
     )
     return JSONResponse({"ok": True, "artifacts": artifacts})
+
+
+@app.post("/admin/api/artifacts/backfill")
+async def admin_api_artifacts_backfill(request: Request):
+    await _require_admin(request)
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            body = {}
+    except Exception:
+        body = {}
+    from app.core.artifact_memory import backfill_external_event_artifacts
+
+    result = await backfill_external_event_artifacts(
+        source=str(body.get("source", "") or "").strip() or None,
+        project_slug=str(body.get("project_slug", "") or "").strip() or None,
+        limit=int(body.get("limit", 500) or 500),
+    )
+    return JSONResponse(result)
+
+
+@app.get("/admin/api/artifacts/coverage")
+async def admin_api_artifacts_coverage(
+    request: Request, project_slug: str = "ener-scan"
+):
+    await _require_admin(request)
+    from app.core.artifact_memory import get_artifact_coverage
+
+    coverage = await get_artifact_coverage(project_slug=project_slug)
+    return JSONResponse(coverage)

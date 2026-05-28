@@ -943,6 +943,19 @@ async def init_db():
                 ON project_artifacts(event_id);
         """)
         try:
+            await db.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_project_artifacts_event_unique
+                ON project_artifacts(event_id)
+                WHERE event_id IS NOT NULL
+                """
+            )
+        except Exception as exc:
+            logger.warning(
+                "partial unique index idx_project_artifacts_event_unique not available: %s",
+                exc,
+            )
+        try:
             await db.execute("""
                 CREATE VIRTUAL TABLE IF NOT EXISTS local_knowledge_fts USING fts5(
                     source,

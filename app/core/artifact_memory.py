@@ -6,6 +6,8 @@ import logging
 import re
 from typing import Any
 
+import aiosqlite
+
 from app.core.database import get_db
 
 logger = logging.getLogger(__name__)
@@ -122,6 +124,94 @@ def _normalize_tags(
     return json.dumps(tags, ensure_ascii=False)
 
 
+def _parse_tags_json(tags_raw: Any) -> list[str]:
+    try:
+        parsed = json.loads(tags_raw or "[]")
+        return [str(t) for t in parsed] if isinstance(parsed, list) else []
+    except Exception:
+        return []
+
+
+def _parse_context_json(context_raw: Any) -> dict:
+    if isinstance(context_raw, dict):
+        return context_raw
+    try:
+        parsed = json.loads(context_raw or "{}")
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+
+async def _find_artifact_id_by_event_id(event_id: int) -> int | None:
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT id FROM project_artifacts WHERE event_id = ? LIMIT 1",
+            (event_id,),
+        )
+        row = await cursor.fetchone()
+    if not row:
+        return None
+    try:
+        return int(row["id"])
+    except (TypeError, ValueError):
+        return None
+
+
+def reconstruct_agent_event_payload(row: dict) -> dict:
+    """Build store_external_event_artifact input from an agent_events row."""
+    ctx = _parse_context_json(row.get("context"))
+    tags = _parse_tags_json(row.get("tags"))
+    source = str(ctx.get("source") or row.get("triggered_by") or "external").strip() or "external"
+    project_slug = str(ctx.get("project_slug") or "").strip()
+    if not project_slug:
+        for tag in tags:
+            low = str(tag).lower()
+            if low in {"ener-scan", "ener_scan"}:
+                project_slug = "ener-scan"
+                break
+    if not project_slug:
+        project_slug = "external"
+    payload = ctx.get("payload")
+    if not isinstance(payload, (dict, list)):
+        payload = {}
+    return {
+        "event_id": row.get("id"),
+        "event_type": row.get("event_type"),
+        "source": source,
+        "project_slug": project_slug,
+        "summary": row.get("summary"),
+        "external_user_id": ctx.get("external_user_id"),
+        "external_object_id": ctx.get("external_object_id"),
+        "payload": payload,
+        "context": ctx,
+    }
+
+
+def _event_matches_filters(
+    row: dict,
+    source: str | None,
+    project_slug: str | None,
+) -> bool:
+    if not source and not project_slug:
+        return True
+    tags = [str(t).lower() for t in _parse_tags_json(row.get("tags"))]
+    ctx = _parse_context_json(row.get("context"))
+    triggered = str(row.get("triggered_by") or "").lower()
+    ctx_source = str(ctx.get("source") or "").lower()
+    ctx_slug = str(ctx.get("project_slug") or "").lower()
+    context_text = str(row.get("context") or "").lower()
+
+    if source:
+        src = str(source).strip().lower()
+        if triggered != src and ctx_source != src and src not in tags:
+            return False
+    if project_slug:
+        slug = str(project_slug).strip().lower()
+        if ctx_slug != slug and slug not in tags and slug not in context_text:
+            return False
+    return True
+
+
 async def store_external_event_artifact(event_row_or_payload: dict) -> dict:
     """
     Persist external /ai/event data into project_artifacts.
@@ -167,32 +257,48 @@ async def store_external_event_artifact(event_row_or_payload: dict) -> dict:
             except (TypeError, ValueError):
                 project_id = None
 
-        async with get_db() as db:
-            cursor = await db.execute(
-                """
-                INSERT INTO project_artifacts (
-                    project_id, project_slug, source, external_id,
-                    artifact_type, title, summary, payload_json, tags, event_id
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    project_id,
-                    project_slug,
-                    source,
-                    external_id,
-                    artifact_type,
-                    title,
-                    summary,
-                    payload_json,
-                    tags_json,
-                    event_id,
-                ),
-            )
-            await db.commit()
-            artifact_id = int(cursor.lastrowid or 0)
+        if event_id is not None:
+            existing_id = await _find_artifact_id_by_event_id(event_id)
+            if existing_id:
+                return {"ok": True, "artifact_id": existing_id, "existing": True}
 
-        return {"ok": True, "artifact_id": artifact_id}
+        async with get_db() as db:
+            try:
+                cursor = await db.execute(
+                    """
+                    INSERT INTO project_artifacts (
+                        project_id, project_slug, source, external_id,
+                        artifact_type, title, summary, payload_json, tags, event_id
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        project_id,
+                        project_slug,
+                        source,
+                        external_id,
+                        artifact_type,
+                        title,
+                        summary,
+                        payload_json,
+                        tags_json,
+                        event_id,
+                    ),
+                )
+                await db.commit()
+                artifact_id = int(cursor.lastrowid or 0)
+            except aiosqlite.IntegrityError:
+                if event_id is not None:
+                    existing_id = await _find_artifact_id_by_event_id(event_id)
+                    if existing_id:
+                        return {
+                            "ok": True,
+                            "artifact_id": existing_id,
+                            "existing": True,
+                        }
+                raise
+
+        return {"ok": True, "artifact_id": artifact_id, "existing": False}
     except Exception as exc:
         logger.warning(
             "store_external_event_artifact failed: %s",
@@ -276,3 +382,178 @@ async def get_recent_project_artifacts(
             item["tags"] = []
         artifacts.append(item)
     return artifacts
+
+
+async def backfill_external_event_artifacts(
+    source: str | None = None,
+    project_slug: str | None = None,
+    limit: int = 500,
+) -> dict:
+    """Backfill project_artifacts from AIGatewayEvent agent_events rows."""
+    safe_limit = max(1, min(int(limit), 2000))
+    scanned = created = skipped = failed = 0
+    errors: list[str] = []
+
+    conditions = ["agent_name = 'AIGatewayEvent'"]
+    params: list[Any] = []
+    if source:
+        src = str(source).strip().lower()
+        conditions.append("(LOWER(triggered_by) = ? OR tags LIKE ?)")
+        params.extend([src, f'%"{src}"%'])
+    if project_slug:
+        slug = str(project_slug).strip().lower()
+        conditions.append("(tags LIKE ? OR LOWER(context) LIKE ?)")
+        params.extend([f'%"{slug}"%', f"%{slug}%"])
+    where = " AND ".join(conditions)
+    params.append(safe_limit)
+
+    async with get_db() as db:
+        cursor = await db.execute(
+            f"""
+            SELECT id, event_type, triggered_by, summary, tags, context
+            FROM agent_events
+            WHERE {where}
+            ORDER BY id ASC
+            LIMIT ?
+            """,
+            params,
+        )
+        rows = [dict(r) for r in await cursor.fetchall()]
+        cur_existing = await db.execute(
+            "SELECT event_id FROM project_artifacts WHERE event_id IS NOT NULL"
+        )
+        existing_event_ids = {
+            int(r["event_id"])
+            for r in await cur_existing.fetchall()
+            if r["event_id"] is not None
+        }
+
+    for row in rows:
+        if not _event_matches_filters(row, source, project_slug):
+            continue
+        scanned += 1
+        event_id = int(row["id"])
+        if event_id in existing_event_ids:
+            skipped += 1
+            continue
+        try:
+            payload = reconstruct_agent_event_payload(row)
+            result = await store_external_event_artifact(payload)
+            if result.get("ok") and result.get("artifact_id"):
+                if result.get("existing"):
+                    skipped += 1
+                else:
+                    created += 1
+                existing_event_ids.add(event_id)
+            else:
+                failed += 1
+                errors.append(
+                    f"event {event_id}: {str(result.get('error', 'unknown'))[:120]}"
+                )
+        except Exception as exc:
+            failed += 1
+            errors.append(f"event {event_id}: {str(exc)[:120]}")
+
+    return {
+        "ok": True,
+        "scanned": scanned,
+        "created": created,
+        "skipped": skipped,
+        "failed": failed,
+        "errors": errors[:20],
+    }
+
+
+async def get_artifact_coverage(project_slug: str | None = None) -> dict:
+    slug = str(project_slug or "").strip().lower() or "ener-scan"
+    slug_pattern = f'%"{slug}"%'
+    context_pattern = f"%{slug}%"
+
+    async with get_db() as db:
+        cur_events_total = await db.execute(
+            """
+            SELECT COUNT(*) AS cnt
+            FROM agent_events
+            WHERE agent_name = 'AIGatewayEvent'
+              AND (tags LIKE ? OR LOWER(context) LIKE ?)
+            """,
+            (slug_pattern, context_pattern),
+        )
+        events_total = int((await cur_events_total.fetchone())["cnt"])
+
+        cur_events_by_type = await db.execute(
+            """
+            SELECT event_type, COUNT(*) AS cnt
+            FROM agent_events
+            WHERE agent_name = 'AIGatewayEvent'
+              AND (tags LIKE ? OR LOWER(context) LIKE ?)
+            GROUP BY event_type
+            ORDER BY cnt DESC, event_type ASC
+            """,
+            (slug_pattern, context_pattern),
+        )
+        events_by_type = [
+            {"event_type": r["event_type"], "count": int(r["cnt"])}
+            for r in await cur_events_by_type.fetchall()
+        ]
+
+        cur_last_event = await db.execute(
+            """
+            SELECT datetime(created_at, '+7 hours') AS created_at
+            FROM agent_events
+            WHERE agent_name = 'AIGatewayEvent'
+              AND (tags LIKE ? OR LOWER(context) LIKE ?)
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (slug_pattern, context_pattern),
+        )
+        last_event_row = await cur_last_event.fetchone()
+        last_event_at = last_event_row["created_at"] if last_event_row else None
+
+        cur_artifacts_total = await db.execute(
+            """
+            SELECT COUNT(*) AS cnt
+            FROM project_artifacts
+            WHERE LOWER(project_slug) = ?
+            """,
+            (slug,),
+        )
+        artifacts_total = int((await cur_artifacts_total.fetchone())["cnt"])
+
+        cur_artifacts_by_type = await db.execute(
+            """
+            SELECT artifact_type, COUNT(*) AS cnt
+            FROM project_artifacts
+            WHERE LOWER(project_slug) = ?
+            GROUP BY artifact_type
+            ORDER BY cnt DESC, artifact_type ASC
+            """,
+            (slug,),
+        )
+        artifacts_by_type = [
+            {"artifact_type": r["artifact_type"], "count": int(r["cnt"])}
+            for r in await cur_artifacts_by_type.fetchall()
+        ]
+
+        cur_last_artifact = await db.execute(
+            """
+            SELECT datetime(created_at, '+7 hours') AS created_at
+            FROM project_artifacts
+            WHERE LOWER(project_slug) = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (slug,),
+        )
+        last_artifact_row = await cur_last_artifact.fetchone()
+        last_artifact_at = last_artifact_row["created_at"] if last_artifact_row else None
+
+    return {
+        "ok": True,
+        "project_slug": slug,
+        "events": {"total": events_total, "by_type": events_by_type},
+        "artifacts": {"total": artifacts_total, "by_type": artifacts_by_type},
+        "last_event_at": last_event_at,
+        "last_artifact_at": last_artifact_at,
+    }
