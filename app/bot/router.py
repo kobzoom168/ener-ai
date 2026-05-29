@@ -51,7 +51,6 @@ async def _gateway_reply(
     )
     return str(result.get("reply", "")).strip() or "ยังไม่มีคำตอบตอนนี้"
 
-
 logger = logging.getLogger(__name__)
 _media_group_cache: dict[str, list] = defaultdict(list)
 _media_group_tasks: dict[str, asyncio.Task] = {}
@@ -509,19 +508,36 @@ async def cmd_github(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await _reply(update, result)
         return
 
+    if subcommand in {"ask", "summary"}:
+        query = " ".join(args[1:]).strip() if len(args) > 1 else ""
+        if not query:
+            query = "สรุปสถานะ repo และ PR/Issue ที่ควรรู้"
+        result = await _gateway_reply(
+            str(update.effective_chat.id),
+            query,
+            intent="github",
+        )
+        await _reply(update, result)
+        return
+
     if subcommand == "read":
         if len(args) < 3:
             await _reply(update, "📌 ใช้แบบนี้: /github read <repo> <path>", enable_tts=False)
             return
         repo_name = str(args[1]).strip()
         file_path = " ".join(args[2:]).strip()
-        result = await github_agent.read_file(repo_name, file_path, _agent_triggered_by="user")
+        result = await _gateway_reply(
+            str(update.effective_chat.id),
+            f"อ่านไฟล์ GitHub repo={repo_name} path={file_path}",
+            intent="github",
+        )
         await _reply(update, result)
         return
 
     await _reply(
         update,
-        "📌 ใช้ /github, /github prs, /github issues, /github repos, หรือ /github read <repo> <path>",
+        "📌 ใช้ /github, /github prs, /github issues, /github repos, "
+        "/github read <repo> <path>, /github ask <คำถาม>",
         enable_tts=False,
     )
 
@@ -792,7 +808,41 @@ async def cmd_email(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await _reply_smart(update, result)
         return
 
-    await _reply(update, "📌 ใช้ /email, /email draft <id>, หรือ /email reply <id> <ข้อความ>", enable_tts=False)
+    if subcommand == "ask":
+        query = " ".join(ctx.args[1:]).strip() if len(ctx.args) > 1 else ""
+        result = await _gateway_reply(
+            str(update.effective_chat.id),
+            query or "สรุปอีเมลที่สำคัญและแนะนำสิ่งที่ควรทำ",
+            intent="gmail",
+        )
+        await _reply(update, result)
+        return
+
+    await _reply(
+        update,
+        "📌 ใช้ /email, /email ask <คำถาม>, /email draft <id>, หรือ /email reply <id> <ข้อความ>",
+        enable_tts=False,
+    )
+
+
+async def cmd_gmail(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Alias for /email (gateway ask + operational subcommands)."""
+    await cmd_email(update, ctx)
+
+
+async def cmd_hospital(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update):
+        return
+    text = " ".join(ctx.args) if ctx.args else ""
+    if not text:
+        await _reply(
+            update,
+            "📌 พิมพ์คำถามหลัง /hospital เช่น /hospital สรุปงานโรงพยาบาลวันนี้",
+            enable_tts=False,
+        )
+        return
+    result = await _gateway_reply(str(update.effective_chat.id), text, intent="hospital")
+    await _reply(update, result)
 
 
 async def cmd_tarot(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -1349,6 +1399,8 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("server", handle_server))
     app.add_handler(CommandHandler("status", handle_status))
     app.add_handler(CommandHandler("email", cmd_email))
+    app.add_handler(CommandHandler("gmail", cmd_gmail))
+    app.add_handler(CommandHandler("hospital", cmd_hospital))
     app.add_handler(CommandHandler("approve_source", handle_approve_source))
     app.add_handler(CommandHandler("pending_sources", handle_pending_sources))
     app.add_handler(CommandHandler("list_sources", handle_list_sources))
