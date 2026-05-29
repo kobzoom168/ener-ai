@@ -134,6 +134,14 @@ def build_ener_scan_business_html() -> HTMLResponse:
         </select>
       </div>
     </div>
+    <p class="muted" style="margin:0 0 10px;font-size:0.85rem;">
+      Business metrics exclude runtime/smoke diagnostics by default.
+      <label style="margin-left:10px;cursor:pointer;">
+        <input type="checkbox" id="includeDiagnostics" />
+        Include diagnostics / smoke events
+      </label>
+    </p>
+    <div id="diagnosticsNote" class="muted" style="display:none;margin:0 0 10px;font-size:0.85rem;"></div>
 
     <div id="sessionErr" class="err" style="display:none">Session expired — please log in to Admin again.</div>
     <div id="loadErr" class="err" style="display:none"></div>
@@ -205,6 +213,8 @@ def build_ener_scan_business_html() -> HTMLResponse:
       recentBody: document.getElementById('recentBody'),
       recentEmpty: document.getElementById('recentEmpty'),
       breakdownBody: document.getElementById('breakdownBody'),
+      includeDiagnostics: document.getElementById('includeDiagnostics'),
+      diagnosticsNote: document.getElementById('diagnosticsNote'),
     };
 
     function safeText(v) {
@@ -357,13 +367,27 @@ def build_ener_scan_business_html() -> HTMLResponse:
       renderTrend(data.trend || [], data.range || '7d');
       renderRecent(data.recent || []);
       renderBreakdown(data.by_artifact_type || [], data.by_event_type || []);
+      const diag = data.diagnostics || {};
+      const excluded = Number(diag.excluded || 0);
+      if (excluded > 0 && !diag.included) {
+        refs.diagnosticsNote.textContent =
+          'Excluded ' + excluded + ' diagnostic artifacts from business metrics.';
+        refs.diagnosticsNote.style.display = 'block';
+      } else {
+        refs.diagnosticsNote.style.display = 'none';
+        refs.diagnosticsNote.textContent = '';
+      }
     }
 
     async function loadSummary() {
       refs.loadErr.style.display = 'none';
       const range = refs.range.value || '7d';
+      const includeDiag = refs.includeDiagnostics.checked ? 'true' : 'false';
       try {
-        const res = await fetch('/admin/api/business/ener-scan/summary?range=' + encodeURIComponent(range), {
+        const res = await fetch(
+          '/admin/api/business/ener-scan/summary?range=' + encodeURIComponent(range) +
+          '&include_diagnostics=' + includeDiag,
+          {
           credentials: 'same-origin',
           cache: 'no-store'
         });
@@ -394,6 +418,7 @@ def build_ener_scan_business_html() -> HTMLResponse:
 
     refs.refreshBtn.addEventListener('click', loadSummary);
     refs.range.addEventListener('change', loadSummary);
+    refs.includeDiagnostics.addEventListener('change', loadSummary);
     refs.auto.addEventListener('change', setupAutoRefresh);
     loadSummary();
     setupAutoRefresh();

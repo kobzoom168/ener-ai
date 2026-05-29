@@ -10297,9 +10297,16 @@ async def admin_api_artifacts_coverage(
 
 
 @app.get("/admin/api/business/ener-scan/summary")
-async def admin_api_ener_scan_business_summary(request: Request, range: str = "7d"):
+async def admin_api_ener_scan_business_summary(
+    request: Request,
+    range: str = "7d",
+    include_diagnostics: bool = False,
+):
     await _require_admin(request)
     from app.core.ener_scan_business import get_ener_scan_business_summary
 
-    summary = await get_ener_scan_business_summary(range_value=range)
+    summary = await get_ener_scan_business_summary(
+        range_value=range,
+        include_diagnostics=include_diagnostics,
+    )
     return JSONResponse(summary)

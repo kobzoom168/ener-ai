@@ -8,6 +8,8 @@ from app.core.ener_scan_business import (
     build_event_coverage,
     build_recent_item,
     cap_conversion_rate,
+    filter_business_artifacts,
+    is_diagnostic_artifact,
     is_payment_approved,
     is_report_created,
     is_scan_completed,
@@ -157,6 +159,92 @@ class EnerScanBusinessTest(unittest.TestCase):
         self.assertEqual(s["scan_to_report_rate_capped"], 100.0)
         self.assertEqual(s["data_quality"]["status"], "warning")
         self.assertIn("coverage", agg)
+
+    def _row(self, artifact_type, event_type, **extra):
+        payload_extra = extra.pop("payload", {})
+        payload = {"event_type": event_type}
+        if isinstance(payload_extra, dict):
+            payload.update(payload_extra)
+        for key in ("scanMode", "mode", "check"):
+            if key in extra:
+                payload[key] = extra.pop(key)
+        return {
+            "artifact_type": artifact_type,
+            "payload_json": json.dumps(payload),
+            "created_at": "2026-05-28 10:00:00",
+            **extra,
+        }
+
+    def test_runtime_env_check_excluded_by_default(self):
+        row = self._row("external_event", "runtime_env_check", summary="Mini Batch runtime env check")
+        self.assertTrue(is_diagnostic_artifact(row))
+        kept, excluded = filter_business_artifacts([row], False)
+        self.assertEqual(len(kept), 0)
+        self.assertEqual(excluded, 1)
+
+    def test_runtime_service_check_excluded_by_default(self):
+        row = self._row(
+            "external_event",
+            "runtime_service_check",
+            summary="Mini Batch 6.3 service check",
+            check="service",
+        )
+        self.assertTrue(is_diagnostic_artifact(row))
+
+    def test_scan_completed_smoke_mode_excluded(self):
+        row = self._row("scan_activity", "scan_completed", scanMode="smoke")
+        self.assertTrue(is_diagnostic_artifact(row))
+
+    def test_real_scan_completed_included(self):
+        row = self._row(
+            "scan_activity",
+            "scan_completed",
+            summary="Scan completed (amulet)",
+            external_id="real-report-uuid",
+        )
+        self.assertFalse(is_diagnostic_artifact(row))
+
+    def test_include_diagnostics_true_keeps_all(self):
+        rows = [
+            self._row("external_event", "runtime_env_check"),
+            self._row("scan_activity", "scan_completed"),
+        ]
+        kept, excluded = filter_business_artifacts(rows, True)
+        self.assertEqual(len(kept), 2)
+        self.assertEqual(excluded, 0)
+
+    def test_diagnostics_excluded_count(self):
+        rows = [
+            self._row("external_event", "runtime_env_check"),
+            self._row("external_event", "runtime_service_check", check="service"),
+            self._row("scan_activity", "scan_completed"),
+            self._row("scan_report", "report_created"),
+        ]
+        kept, excluded = filter_business_artifacts(rows, False)
+        self.assertEqual(excluded, 2)
+        self.assertEqual(len(kept), 2)
+        agg = aggregate_artifacts(kept, "7d")
+        self.assertEqual(agg["summary"]["scan_completed"], 1)
+        self.assertEqual(agg["summary"]["report_created"], 1)
+
+    def test_real_payment_not_excluded(self):
+        row = self._row(
+            "payment_event",
+            "payment_approved",
+            payload={"amount": 199},
+            summary="Payment approved for package premium",
+            external_id="pay-real-001",
+        )
+        self.assertFalse(is_diagnostic_artifact(row))
+
+    def test_batch_smoke_payment_excluded(self):
+        row = self._row(
+            "payment_event",
+            "payment_approved",
+            summary="batch6 payment smoke",
+            external_id="batch6-pay",
+        )
+        self.assertTrue(is_diagnostic_artifact(row))
 
 
 if __name__ == "__main__":

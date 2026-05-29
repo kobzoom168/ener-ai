@@ -18,6 +18,20 @@ _USER_KEYS = (
     "user_id",
 )
 _BASE64_IMAGE_RE = re.compile(r"data:image/[^;]+;base64,", re.IGNORECASE)
+_DIAGNOSTIC_TEXT_RE = re.compile(
+    r"runtime env check|service check|mini batch|\bbatch\d{1,3}\b|\bbatch\s*\d",
+    re.IGNORECASE,
+)
+_DIAGNOSTIC_CHECK_VALUES = frozenset(
+    {
+        "ener-scan-runtime",
+        "worker-scan-runtime",
+        "service",
+        "container",
+    }
+)
+_SMOKE_EXTERNAL_PREFIXES = ("smoke-", "batch", "batch63-", "batch62-", "batch61-", "batch6")
+_SMOKE_USER_PREFIXES = ("smoke-", "smoke-user", "smoke-line")
 
 
 def normalize_range(range_value: str | None) -> str:
@@ -86,6 +100,131 @@ def is_payment_approved(artifact_type: str, event_type: str) -> bool:
     at = str(artifact_type or "").strip().lower()
     et = str(event_type or "").strip().lower()
     return at == "payment_event" or et == "payment_approved"
+
+
+def parse_include_diagnostics(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _payload_inner(payload_root: dict) -> dict:
+    inner = payload_root.get("payload")
+    return inner if isinstance(inner, dict) else {}
+
+
+def _scan_mode_from_payload(payload_root: dict) -> str:
+    mode = str(payload_root.get("scanMode") or payload_root.get("mode") or "").strip().lower()
+    if mode:
+        return mode
+    return str(_payload_inner(payload_root).get("scanMode") or "").strip().lower()
+
+
+def _check_marker_from_payload(payload_root: dict) -> str:
+    marker = str(payload_root.get("check") or "").strip().lower()
+    if marker:
+        return marker
+    return str(_payload_inner(payload_root).get("check") or "").strip().lower()
+
+
+def _is_smoke_external_ref(value: str) -> bool:
+    ref = str(value or "").strip().lower()
+    if not ref:
+        return False
+    return any(ref.startswith(prefix) for prefix in _SMOKE_EXTERNAL_PREFIXES)
+
+
+def _is_smoke_user_ref(value: str) -> bool:
+    ref = str(value or "").strip().lower()
+    if not ref:
+        return False
+    return any(ref.startswith(prefix) for prefix in _SMOKE_USER_PREFIXES)
+
+
+def _event_type_for_artifact(artifact: dict) -> str:
+    artifact_type = str(artifact.get("artifact_type") or "")
+    payload_root = _parse_payload_json(artifact.get("payload_json"))
+    event_type = _event_type_from_row(artifact_type, payload_root)
+    if not event_type and artifact.get("event_type"):
+        event_type = str(artifact.get("event_type") or "")
+    return str(event_type or "").strip().lower()
+
+
+def is_diagnostic_artifact(artifact: dict) -> bool:
+    """
+    True when artifact is runtime/smoke verification noise, not production business.
+    Conservative for real scan/report/payment unless explicit smoke markers exist.
+    """
+    artifact_type = str(artifact.get("artifact_type") or "").strip().lower()
+    payload_root = _parse_payload_json(artifact.get("payload_json"))
+    event_type = _event_type_for_artifact(artifact)
+
+    if event_type.startswith("runtime_"):
+        return True
+    if "check" in event_type and (
+        event_type.startswith("runtime_") or event_type.endswith("_check")
+    ):
+        return True
+
+    scan_mode = _scan_mode_from_payload(payload_root)
+    if scan_mode == "smoke":
+        return True
+
+    check_marker = _check_marker_from_payload(payload_root)
+    if check_marker in _DIAGNOSTIC_CHECK_VALUES:
+        return True
+
+    external_id = str(artifact.get("external_id") or "")
+    if _is_smoke_external_ref(external_id):
+        return True
+
+    user_id = extract_external_user_id(payload_root) or ""
+    if _is_smoke_user_ref(user_id):
+        return True
+
+    is_core = (
+        is_scan_completed(artifact_type, event_type)
+        or is_report_created(artifact_type, event_type)
+        or is_payment_approved(artifact_type, event_type)
+    )
+
+    title = str(artifact.get("title") or "")
+    summary = str(artifact.get("summary") or "")
+    text_blob = f"{title} {summary} {event_type}".lower()
+    if _DIAGNOSTIC_TEXT_RE.search(text_blob):
+        if is_core and scan_mode != "smoke" and not _is_smoke_external_ref(external_id):
+            return False
+        return True
+
+    if "smoke" in text_blob and (
+        _is_smoke_external_ref(external_id) or _is_smoke_user_ref(user_id) or scan_mode == "smoke"
+    ):
+        return True
+
+    if artifact_type == "external_event":
+        if not is_core or not event_type or event_type == "external_event":
+            return True
+        if event_type.startswith("runtime_") or event_type.endswith("_check"):
+            return True
+
+    return False
+
+
+def filter_business_artifacts(
+    rows: list[dict], include_diagnostics: bool = False
+) -> tuple[list[dict], int]:
+    if include_diagnostics:
+        return rows, 0
+    kept: list[dict] = []
+    excluded = 0
+    for row in rows:
+        if is_diagnostic_artifact(row):
+            excluded += 1
+        else:
+            kept.append(row)
+    return kept, excluded
 
 
 def safe_conversion_rate(numerator: int, denominator: int) -> float:
@@ -360,8 +499,12 @@ def _trend_day_count(range_key: str) -> int:
     return 7
 
 
-async def get_ener_scan_business_summary(range_value: str | None = "7d") -> dict:
+async def get_ener_scan_business_summary(
+    range_value: str | None = "7d",
+    include_diagnostics: bool = False,
+) -> dict:
     range_key = normalize_range(range_value)
+    include_diag = parse_include_diagnostics(include_diagnostics)
     range_sql = range_created_at_sql(range_key)
 
     async with get_db() as db:
@@ -387,8 +530,9 @@ async def get_ener_scan_business_summary(range_value: str | None = "7d") -> dict
         )
         rows = [dict(r) for r in await cursor.fetchall()]
 
-    agg = aggregate_artifacts(rows, range_key)
-    recent = [build_recent_item(r) for r in rows[:20]]
+    business_rows, excluded_count = filter_business_artifacts(rows, include_diag)
+    agg = aggregate_artifacts(business_rows, range_key)
+    recent = [build_recent_item(r) for r in business_rows[:20]]
 
     return {
         "ok": True,
@@ -396,4 +540,8 @@ async def get_ener_scan_business_summary(range_value: str | None = "7d") -> dict
         "range": range_key,
         **agg,
         "recent": recent,
+        "diagnostics": {
+            "excluded": excluded_count,
+            "included": include_diag,
+        },
     }
