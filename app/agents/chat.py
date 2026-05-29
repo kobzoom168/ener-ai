@@ -1,6 +1,5 @@
 from app.core.agents import log_agent_run
-from app.core.ai_gateway import run_ai
-from app.core.database import get_db
+from app.core.ai_gateway import get_recent_history, run_ai
 from app.core.diagnostics import user_message_touches_engineering_topics
 from app.core.event_log import get_agent_context, log_event
 from app.core.memory import (
@@ -14,23 +13,10 @@ from app.core.policy import build_system_prompt
 SAVE_KEYWORDS = ["บันทึก", "จำไว้", "save นี่", "จดไว้", "อย่าลืมว่า"]
 
 
-async def _get_history(chat_id: str) -> list[dict[str, str]]:
-    async with get_db() as db:
-        cursor = await db.execute(
-            """
-            SELECT role, content
-            FROM messages
-            WHERE chat_id = ?
-            ORDER BY id DESC
-            LIMIT 20
-            """,
-            (chat_id,),
-        )
-        rows = await cursor.fetchall()
-    return [
-        {"role": row["role"], "content": row["content"]}
-        for row in reversed(rows)
-    ]
+async def _get_history(conversation_id: str) -> list[dict[str, str]]:
+    if not str(conversation_id or "").strip():
+        return []
+    return await get_recent_history(conversation_id=conversation_id, limit=20)
 
 
 async def _get_model_handoff() -> str:
@@ -160,23 +146,6 @@ async def _build_system_prompt(current_user_message: str = "") -> str:
 """)
 
 
-async def _save_messages(chat_id: str, text: str, reply: str) -> None:
-    async with get_db() as db:
-        await db.execute(
-            "INSERT INTO messages (chat_id, role, content) VALUES (?, ?, ?)",
-            (chat_id, "user", text),
-        )
-        await db.execute(
-            "INSERT INTO messages (chat_id, role, content) VALUES (?, ?, ?)",
-            (chat_id, "assistant", reply),
-        )
-        await db.execute(
-            "INSERT INTO audit_logs (action, details) VALUES (?, ?)",
-            ("chat_message_saved", f"chat_id={chat_id}"),
-        )
-        await db.commit()
-
-
 @log_agent_run("MainChatAgent")
 async def run_chat(chat_id: str, text: str) -> str:
     system_prompt = await _build_system_prompt(text)
@@ -213,7 +182,6 @@ async def run_chat(chat_id: str, text: str) -> str:
             pass
         raise
 
-    await _save_messages(chat_id, text, reply)
     try:
         from app.core.database import get_db
 

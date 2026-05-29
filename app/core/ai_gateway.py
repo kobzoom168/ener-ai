@@ -98,6 +98,18 @@ async def get_recent_history(
     return [{"role": str(r["role"]), "content": str(r["content"])} for r in reversed(rows)]
 
 
+async def _log_chat_message_saved(external_chat_id: str, conversation_id: str) -> None:
+    async with get_db() as db:
+        await db.execute(
+            "INSERT INTO audit_logs (action, details) VALUES (?, ?)",
+            (
+                "chat_message_saved",
+                f"chat_id={external_chat_id} conversation_id={conversation_id}",
+            ),
+        )
+        await db.commit()
+
+
 async def save_gateway_message(
     *,
     external_chat_id: str,
@@ -241,6 +253,7 @@ async def run_ai(
         external_used=0,
         trace_id=trace_id,
     )
+    await _log_chat_message_saved(external_chat_id, conversation_id)
 
     async with get_db() as db:
         await db.execute(

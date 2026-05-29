@@ -317,7 +317,7 @@ def classify_message_intents(text: str) -> list[str]:
         if len(ordered) >= _MAX_INTENTS:
             break
     if "diag_resource" in ordered:
-        ordered = [i for i in ordered if i != "system_server"]
+        ordered = [i for i in ordered if i not in ("system_server", "system_status")]
     return ordered
 
 
