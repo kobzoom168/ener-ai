@@ -7,7 +7,7 @@ import uuid
 
 from app.core.ai import _VALID_MODELS, get_active_model
 from app.core.context_builder import build_context_v2
-from app.core.database import get_db
+from app.core.database import get_db, index_message_to_fts
 from app.core.event_log import log_event
 from app.core.policy import BASE_SYSTEM_PROMPT
 from app.core.reasoning_pipeline import get_routing_config, route_fast, run_pipeline
@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 
 # Domains that must keep router-selected model (capabilities / tool loops).
 _KEEP_ROUTER_MODEL = frozenset({"vision", "code_agent", "image_analysis"})
-
 
 def _intent_from_route(route: dict) -> str:
     for key in ("intent", "domain", "reason"):
@@ -128,9 +127,10 @@ async def save_gateway_message(
     context_snapshot: str,
     external_used: int,
     trace_id: str,
-) -> None:
+) -> int | None:
+    message_id: int | None = None
     async with get_db() as db:
-        await db.execute(
+        cur = await db.execute(
             """
             INSERT INTO messages (
                 chat_id, conversation_id, role, content, project_id, source, intent,
@@ -153,7 +153,18 @@ async def save_gateway_message(
                 str(trace_id),
             ),
         )
+        message_id = cur.lastrowid
         await db.commit()
+    if message_id:
+        await index_message_to_fts(
+            source_table="messages",
+            source_id=str(message_id),
+            project_id=project_id,
+            title="",
+            content=content,
+            tags=intent,
+        )
+    return message_id
 
 
 async def run_ai(
@@ -202,6 +213,7 @@ async def run_ai(
     )
     context_text = str(context.get("text") or "")
     context_summary = str(context.get("summary") or "")
+    external_used = 0
     enhanced_system = (system_prompt or BASE_SYSTEM_PROMPT) + "\n\n" + context_text
 
     tokens = set_trace_context(
@@ -252,7 +264,7 @@ async def run_ai(
         model_used=route_model,
         route=route,
         context_snapshot=snapshot,
-        external_used=0,
+        external_used=external_used,
         trace_id=trace_id,
     )
     await save_gateway_message(
@@ -266,7 +278,7 @@ async def run_ai(
         model_used=model_used,
         route=route,
         context_snapshot=snapshot,
-        external_used=0,
+        external_used=external_used,
         trace_id=trace_id,
     )
     await _log_chat_message_saved(external_chat_id, conversation_id)

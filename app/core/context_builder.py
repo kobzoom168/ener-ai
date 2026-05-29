@@ -57,6 +57,15 @@ def _extract_keywords(text: str) -> list[str]:
     return words
 
 
+def _build_fts_match_query(keywords: list[str]) -> str | None:
+    terms: list[str] = []
+    for kw in keywords:
+        safe = "".join(ch for ch in kw if ch.isalnum() or ch in ("_", "-"))
+        if len(safe) >= 2:
+            terms.append(f'"{safe}"')
+    return " OR ".join(terms) if terms else None
+
+
 async def build_context_v2(
     text: str,
     route: dict,
@@ -111,9 +120,45 @@ async def build_context_v2(
                 )
             sections.append("## บทสนทนาล่าสุด\n" + "\n".join(msg_lines))
 
-        # Long-term memories by keyword LIKE
+        # Local knowledge via FTS5 (messages + memories), fallback LIKE
         memory_rows = []
-        if keywords:
+        fts_query = _build_fts_match_query(keywords)
+        if fts_query:
+            try:
+                if project_id is not None:
+                    cur = await db.execute(
+                        """
+                        SELECT source, source_id, content
+                        FROM local_knowledge_fts
+                        WHERE local_knowledge_fts MATCH ?
+                          AND tags LIKE ?
+                        ORDER BY bm25(local_knowledge_fts)
+                        LIMIT ?
+                        """,
+                        (fts_query, f"%project_id:{project_id}%", 5),
+                    )
+                else:
+                    cur = await db.execute(
+                        """
+                        SELECT source, source_id, content
+                        FROM local_knowledge_fts
+                        WHERE local_knowledge_fts MATCH ?
+                        ORDER BY bm25(local_knowledge_fts)
+                        LIMIT ?
+                        """,
+                        (fts_query, 5),
+                    )
+                fts_rows = await cur.fetchall()
+                for row in fts_rows:
+                    memory_rows.append(
+                        {
+                            "id": f"{row['source']}:{row['source_id']}",
+                            "content": row["content"],
+                        }
+                    )
+            except Exception:
+                memory_rows = []
+        if not memory_rows and keywords:
             clauses = " OR ".join(["LOWER(content) LIKE ?"] * len(keywords))
             params = [f"%{k}%" for k in keywords]
             cur = await db.execute(

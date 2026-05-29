@@ -1051,6 +1051,118 @@ async def init_db():
         )
         await _seed_hospital_work_phase1(db)
         await db.commit()
+    await _ensure_fts_backfill()
+
+
+_FTS_BACKFILL_KEY = "fts_memories_backfilled"
+
+
+def _fts_tags(project_id: int | None, extra: str = "") -> str:
+    parts = [str(extra or "").strip()]
+    if project_id is not None:
+        parts.append(f"project_id:{project_id}")
+    return ";".join(p for p in parts if p)
+
+
+async def index_message_to_fts(
+    *,
+    source_table: str,
+    source_id: str,
+    project_id: int | None,
+    title: str,
+    content: str,
+    tags: str = "",
+) -> None:
+    """Index one row into local_knowledge_fts (no-op if FTS unavailable)."""
+    try:
+        async with get_db() as db:
+            await db.execute(
+                """
+                INSERT INTO local_knowledge_fts(
+                    source, source_id, title, content, tags, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (
+                    str(source_table or "")[:64],
+                    str(source_id or "")[:128],
+                    str(title or "")[:500],
+                    str(content or "")[:2000],
+                    _fts_tags(project_id, tags),
+                ),
+            )
+            await db.commit()
+    except Exception as exc:
+        logger.warning("index_message_to_fts skipped: %s", exc)
+
+
+async def populate_fts_from_memories(db: aiosqlite.Connection) -> int:
+    """Backfill FTS from long_term_memories (idempotent per row)."""
+    count = 0
+    try:
+        cur = await db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='local_knowledge_fts'"
+        )
+        if not await cur.fetchone():
+            return 0
+        await db.execute(
+            "DELETE FROM local_knowledge_fts WHERE source = 'long_term_memories'"
+        )
+        cur = await db.execute(
+            """
+            SELECT id, content, created_at
+            FROM long_term_memories
+            WHERE TRIM(content) <> ''
+            """
+        )
+        rows = await cur.fetchall()
+        for row in rows:
+            await db.execute(
+                """
+                INSERT INTO local_knowledge_fts(
+                    source, source_id, title, content, tags, created_at
+                )
+                VALUES (?, ?, '', ?, '', ?)
+                """,
+                (
+                    "long_term_memories",
+                    str(row["id"]),
+                    str(row["content"] or "")[:2000],
+                    str(row["created_at"] or ""),
+                ),
+            )
+            count += 1
+    except Exception as exc:
+        logger.warning("populate_fts_from_memories failed: %s", exc)
+        return 0
+    return count
+
+
+async def _ensure_fts_backfill() -> None:
+    try:
+        async with get_db() as db:
+            cur = await db.execute(
+                "SELECT value FROM memories WHERE key = ? LIMIT 1",
+                (_FTS_BACKFILL_KEY,),
+            )
+            row = await cur.fetchone()
+            if row and str(row["value"] or "").strip() == "1":
+                return
+            inserted = await populate_fts_from_memories(db)
+            await db.execute(
+                """
+                INSERT INTO memories (key, value, tag)
+                VALUES (?, ?, 'system')
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    tag = excluded.tag,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (_FTS_BACKFILL_KEY, str(inserted)),
+            )
+            await db.commit()
+    except Exception as exc:
+        logger.warning("fts backfill skipped: %s", exc)
 
 
 async def get_system_stats() -> dict:
