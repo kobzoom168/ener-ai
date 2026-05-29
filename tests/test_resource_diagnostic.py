@@ -36,7 +36,8 @@ class TestResourceDiagnostic(unittest.TestCase):
         self.assertIn("psutil", txt)
         self.assertIn("collected_at", txt)
         self.assertIn("2026-01-01", txt)
-        self.assertNotIn("output:", txt.lower())
+        # Allow disclaimer mentioning fake `output:` lines; forbid fake docker stats output blocks.
+        self.assertNotRegex(txt, r"(?i)docker\s+stats[^\n]*\n\s*output\s*:")
         self.assertIn("สุ่มตัวอย่างสั้น", txt)
         self.assertNotIn("ฉบับเต็ม", txt)
 
