@@ -36,6 +36,34 @@ def _safe_json(value, limit: int = 2000) -> str | None:
     return _truncate(raw, limit)
 
 
+async def update_code_run_lesson(*, request_id: str, lesson_learned: str) -> None:
+    lesson = str(lesson_learned or "").strip()
+    if not lesson or not request_id:
+        return
+    async with get_db() as db:
+        cur = await db.execute(
+            """
+            SELECT id FROM code_runs
+            WHERE request_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (request_id,),
+        )
+        row = await cur.fetchone()
+        if not row:
+            return
+        await db.execute(
+            """
+            UPDATE code_runs
+            SET lesson_learned = ?, status = 'done', updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (_truncate(lesson, 2000), int(row["id"])),
+        )
+        await db.commit()
+
+
 async def log_code_run(
     *,
     action: str,
@@ -345,6 +373,13 @@ async def apply_code_change(request_id: str) -> dict:
                 files=written,
                 tests={"ok": check.get("ok", False), "output_preview": _truncate(check.get("output", ""), 400)},
                 deploy={"ok": deploy_result.get("ok", False), "output_preview": _truncate(deploy_result.get("output", ""), 400)},
+            )
+            await update_code_run_lesson(
+                request_id=request_id,
+                lesson_learned=(
+                    f"Applied {len(written)} file(s) for: {req['feature_request'][:240]}. "
+                    f"Deploy: {'ok' if deploy_result.get('ok') else 'check logs'}."
+                ),
             )
 
             return {

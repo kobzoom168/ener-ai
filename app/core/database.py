@@ -1050,6 +1050,7 @@ async def init_db():
              "active", 4, 8192, 80, 16.49),
         )
         await _seed_hospital_work_phase1(db)
+        await _add_column_if_missing(db, "code_runs", "lesson_learned", "TEXT")
         await db.commit()
     await _ensure_fts_backfill()
 
