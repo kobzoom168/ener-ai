@@ -409,12 +409,14 @@ async def run_pipeline(
     text: str,
     history: list[dict],
     system_prompt: str,
+    route: dict | None = None,
 ) -> tuple[str, dict]:
     total_start = time.time()
 
     t1 = time.time()
-    routing = await get_routing_config()
-    route = route_fast(text, routing=routing)
+    if route is None:
+        routing = await get_routing_config()
+        route = route_fast(text, routing=routing)
     router_ms = int((time.time() - t1) * 1000)
 
     t2 = time.time()

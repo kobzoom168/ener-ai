@@ -5,6 +5,7 @@ import logging
 import time
 import uuid
 
+from app.core.ai import _VALID_MODELS, get_active_model
 from app.core.context_builder import build_context_v2
 from app.core.database import get_db
 from app.core.event_log import log_event
@@ -13,6 +14,9 @@ from app.core.reasoning_pipeline import get_routing_config, route_fast, run_pipe
 from app.core.trace_context import reset_trace_context, set_trace_context
 
 logger = logging.getLogger(__name__)
+
+# Domains that must keep router-selected model (capabilities / tool loops).
+_KEEP_ROUTER_MODEL = frozenset({"vision", "code_agent", "image_analysis"})
 
 
 def _intent_from_route(route: dict) -> str:
@@ -179,6 +183,16 @@ async def run_ai(
     intent = _intent_from_route(route)
     route_model = str(route.get("model", "groq") or "groq")
 
+    active_model = await get_active_model()
+    if (
+        active_model
+        and active_model != "auto"
+        and active_model in _VALID_MODELS
+        and intent not in _KEEP_ROUTER_MODEL
+    ):
+        route = {**route, "model": active_model}
+        route_model = active_model
+
     context = await build_context_v2(
         text=text,
         route=route,
@@ -197,7 +211,9 @@ async def run_ai(
         project_id=project_id,
     )
     try:
-        reply, pipeline_meta = await run_pipeline(text, history, enhanced_system)
+        reply, pipeline_meta = await run_pipeline(
+            text, history, enhanced_system, route=route
+        )
     except Exception as exc:
         try:
             await log_event(
