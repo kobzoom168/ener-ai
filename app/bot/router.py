@@ -34,6 +34,24 @@ from app.core.policy import ALLOWED_CHAT_IDS, OWNER_LOCATION
 from app.core.tts import text_to_audio_bytes, text_to_voice_bytes
 from app.agents.main_agent import MAIN_AGENT
 
+
+async def _gateway_reply(
+    chat_id: str,
+    text: str,
+    *,
+    intent: str | None = None,
+) -> str:
+    from app.core.ai_gateway import run_ai
+
+    result = await run_ai(
+        source="telegram",
+        external_chat_id=str(chat_id),
+        text=text,
+        intent=intent,
+    )
+    return str(result.get("reply", "")).strip() or "ยังไม่มีคำตอบตอนนี้"
+
+
 logger = logging.getLogger(__name__)
 _media_group_cache: dict[str, list] = defaultdict(list)
 _media_group_tasks: dict[str, asyncio.Task] = {}
@@ -551,11 +569,29 @@ async def cmd_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_code(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update):
         return
-    text = " ".join(ctx.args) if ctx.args else ""
-    if not text:
-        await _reply(update, "📌 พิมพ์โจทย์หลัง /code เช่น /code เขียน FastAPI health check", enable_tts=False)
+    raw = " ".join(ctx.args) if ctx.args else ""
+    chat_id = str(update.effective_chat.id)
+    if not raw:
+        await _reply(
+            update,
+            "📌 /code ask <คำถาม> — อธิบาย/review (ไม่แก้ไฟล์)\n"
+            "📌 /code change <เป้าหมาย> — แก้ไฟล์จริง (ต้อง approve)",
+            enable_tts=False,
+        )
         return
-    result = await MAIN_AGENT.handle("code", text, str(update.effective_chat.id))
+    lowered = raw.lower()
+    if lowered.startswith("change ") or lowered.startswith("แก้ไขจริง"):
+        goal = raw.split(" ", 1)[1].strip() if " " in raw else raw
+        if lowered.startswith("แก้ไขจริง"):
+            goal = raw.replace("แก้ไขจริง", "", 1).strip()
+        from app.agents import code_agent
+
+        result = await code_agent.run_code_change(chat_id, goal)
+    elif lowered.startswith(("ask ", "explain ")):
+        question = raw.split(" ", 1)[1].strip() if " " in raw else raw
+        result = await _gateway_reply(chat_id, question, intent="code_question")
+    else:
+        result = await _gateway_reply(chat_id, raw, intent="code_question")
     await _reply(update, result)
 
 
@@ -566,7 +602,7 @@ async def cmd_ener(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not text:
         await _reply(update, "📌 พิมพ์รายละเอียดหลัง /ener เช่น /ener วิเคราะห์พระสมเด็จรุ่นนี้", enable_tts=False)
         return
-    result = await MAIN_AGENT.handle("ener", text, str(update.effective_chat.id))
+    result = await _gateway_reply(str(update.effective_chat.id), text, intent="ener")
     await _reply(update, result)
 
 
@@ -577,7 +613,7 @@ async def cmd_content(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not text:
         await _reply(update, "📌 พิมพ์โจทย์หลัง /content เช่น /content เขียน caption ขายพระลง TikTok", enable_tts=False)
         return
-    result = await MAIN_AGENT.handle("content", text, str(update.effective_chat.id))
+    result = await _gateway_reply(str(update.effective_chat.id), text, intent="content")
     await _reply(update, result)
 
 

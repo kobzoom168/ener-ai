@@ -43,3 +43,17 @@ async def run(text: str) -> str:
         except Exception:
             pass
         raise
+
+
+async def run_code_change(chat_id: str, goal: str) -> str:
+    """Mode B: real file change via gateway + code_agent tools (approval token)."""
+    from app.core.ai_gateway import run_ai
+
+    prompt = (goal or "").strip() or "propose code change"
+    result = await run_ai(
+        source="telegram",
+        external_chat_id=str(chat_id),
+        text=f"แก้ไฟล์จริง: {prompt}",
+        intent="code_agent",
+    )
+    return str(result.get("reply", "")).strip() or "ยังไม่มีคำตอบตอนนี้"
