@@ -1,0 +1,76 @@
+<div class="bg-card border border-border rounded-sm p-4 card-glow" id="api-status-panel">
+  <div class="flex items-center justify-between mb-4">
+    <div class="flex items-center gap-2">
+      <span class="text-primary">⬡</span>
+      <span class="text-xs text-muted-foreground tracking-wider">&gt; API_STATUS</span>
+    </div>
+    <button type="button" onclick="refreshApiStatus()" class="p-1 hover:bg-secondary rounded-sm text-muted-foreground text-xs" title="Refresh">↻</button>
+  </div>
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-3" id="api-cards-grid">
+    {% for api in api_endpoints %}
+    <div class="bg-secondary/30 border border-border rounded-sm p-3 hover:border-primary/50 transition-all">
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-xs font-bold text-foreground">{{ api.name }}</span>
+        <div class="flex items-center gap-1 px-2 py-0.5 rounded-sm text-xs
+          {% if api.status == 'online' %}bg-primary/20 text-primary
+          {% elif api.status == 'degraded' %}bg-terminal-amber/20 text-terminal-amber
+          {% else %}bg-terminal-red/20 text-terminal-red{% endif %}">
+          {{ api.status_label }}
+        </div>
+      </div>
+      <div class="text-xs text-muted-foreground mb-2 font-mono truncate">{{ api.endpoint }}</div>
+      <div class="grid grid-cols-3 gap-2 text-xs">
+        <div>
+          <div class="text-muted-foreground">LATENCY</div>
+          <div class="font-mono text-primary">{{ api.latency_display }}</div>
+        </div>
+        <div>
+          <div class="text-muted-foreground">KEY</div>
+          <div class="font-mono text-foreground">{{ api.key_status }}</div>
+        </div>
+        <div>
+          <div class="text-muted-foreground">CHECK</div>
+          <div class="text-muted-foreground font-mono">{{ api.last_check }}</div>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="mt-4 pt-3 border-t border-border flex flex-wrap gap-4 text-xs" id="api-summary">
+    <span class="text-muted-foreground">SUMMARY:</span>
+    <span class="text-primary">{{ api_summary.online }} ONLINE</span>
+    <span class="text-terminal-amber">{{ api_summary.degraded }} DEGRADED</span>
+    <span class="text-terminal-red">{{ api_summary.offline }} OFFLINE</span>
+  </div>
+</div>
+
+<script>
+async function refreshApiStatus() {
+  const grid = document.getElementById('api-cards-grid');
+  if (!grid) return;
+  grid.style.opacity = '0.5';
+  try {
+    const res = await fetch('/admin/api/provider-status');
+    const d = await res.json();
+    const statusMap = { ok: 'online', error: 'offline', no_key: 'offline' };
+    const labelMap = { ok: 'ONLINE', error: 'ERROR', no_key: 'NO KEY' };
+    const bgMap = { ok: 'bg-primary/20 text-primary', error: 'bg-terminal-red/20 text-terminal-red', no_key: 'bg-terminal-red/20 text-terminal-red' };
+    let on = 0, off = 0;
+    grid.innerHTML = d.providers.map(p => {
+      const st = statusMap[p.status] || 'offline';
+      if (st === 'online') on++; else off++;
+      const lat = p.latency_ms > 0 ? p.latency_ms + 'ms' : '---';
+      return `<div class="bg-secondary/30 border border-border rounded-sm p-3">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs font-bold">${p.name}</span>
+          <span class="text-xs px-2 py-0.5 rounded-sm ${bgMap[p.status] || ''}">${labelMap[p.status] || p.status}</span>
+        </div>
+        <div class="text-xs text-muted-foreground font-mono">LATENCY ${lat}</div>
+      </div>`;
+    }).join('');
+    const sum = document.getElementById('api-summary');
+    if (sum) sum.innerHTML = `<span class="text-muted-foreground">LIVE:</span> <span class="text-primary">${on} ONLINE</span> <span class="text-terminal-red">${off} OFFLINE</span> <span class="text-muted-foreground">@ ${d.checked_at}</span>`;
+  } catch (e) { console.error(e); }
+  grid.style.opacity = '1';
+}
+</script>

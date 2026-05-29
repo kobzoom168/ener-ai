@@ -1,0 +1,36 @@
+{% extends "admin/base.html" %}
+{% block title %}ENER-AI // AI Operations Center{% endblock %}
+{% block breadcrumb %}dashboard{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+  <h1 class="text-2xl font-bold text-primary terminal-glow-bright">&gt; AI_OPERATIONS_CENTER</h1>
+  <p class="text-sm text-muted-foreground mt-1">Real-time monitoring and control interface // STATUS: OPERATIONAL</p>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+  <div class="space-y-6">
+  {% include "admin/partials/cost_stats.html" %}
+  {% include "admin/partials/tasks_panel.html" %}
+  </div>
+  <div class="lg:col-span-2">
+  {% include "admin/partials/api_status.html" %}
+  </div>
+</div>
+
+<div class="mt-6">
+  {% include "admin/partials/terminal_log.html" %}
+</div>
+
+<div class="mt-6 flex items-center justify-between text-xs text-muted-foreground border-t border-border pt-4">
+  <div class="flex items-center gap-6 flex-wrap">
+    <span>ENER-AI v2.4.1</span><span>|</span>
+    <span>NODE: production</span><span>|</span>
+    <span>MODEL: [ {{ active_model }} ]</span>
+  </div>
+  <div class="flex items-center gap-2">
+    <span class="w-1.5 h-1.5 rounded-full bg-primary pulse-online"></span>
+    <span>{{ health_summary }}</span>
+  </div>
+</div>
+{% endblock %}

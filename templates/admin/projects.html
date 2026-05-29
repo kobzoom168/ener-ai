@@ -1,0 +1,39 @@
+{% extends "admin/base.html" %}
+{% block title %}Projects — ENER-AI{% endblock %}
+{% block breadcrumb %}projects{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+  <h1 class="text-2xl font-bold text-primary terminal-glow-bright">&gt; PROJECTS</h1>
+  <p class="text-sm text-muted-foreground mt-1">{{ projects|length }} workspace projects</p>
+</div>
+
+<div class="bg-card border border-border rounded-sm card-glow overflow-hidden">
+  <table class="w-full text-xs">
+    <thead class="bg-secondary/50 text-muted-foreground uppercase tracking-wider text-left">
+      <tr>
+        <th class="px-4 py-3">ID</th>
+        <th class="px-4 py-3">NAME</th>
+        <th class="px-4 py-3">MSGS</th>
+        <th class="px-4 py-3">CREATED</th>
+        <th class="px-4 py-3"></th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-border">
+      {% for p in projects %}
+      <tr class="hover:bg-secondary/30">
+        <td class="px-4 py-3 font-mono text-muted-foreground">{{ p.id }}</td>
+        <td class="px-4 py-3 text-foreground">{{ p.name }}</td>
+        <td class="px-4 py-3 text-primary">{{ p.message_count or 0 }}</td>
+        <td class="px-4 py-3 text-muted-foreground">{{ p.created_at }}</td>
+        <td class="px-4 py-3 text-right">
+          <a href="/admin/projects/{{ p.id }}" class="text-primary hover:terminal-glow">open →</a>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="px-4 py-8 text-center text-muted-foreground">No projects.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

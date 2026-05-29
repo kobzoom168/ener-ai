@@ -20,10 +20,17 @@ import httpx
 import psutil
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from telegram import Update
 
 from app.admin.trace_pages import build_ai_traces_html
 from app.admin.ener_scan_business_pages import build_ener_scan_business_html
+from app.admin.jinja_context import (
+    load_admin_ai_context,
+    load_admin_base_context,
+    load_admin_settings_context,
+)
 from app.bot.router import build_application
 from app.core.ai import get_active_model, get_model_availability, get_model_label
 from app.core.agents import COMMAND_AGENT_MAP, SCHEDULER_AGENTS
@@ -37,6 +44,8 @@ from app.scheduler import build_scheduler
 
 telegram_app = build_application()
 scheduler = None
+_TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
+templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 _BANGKOK = ZoneInfo("Asia/Bangkok")
 _APP_STARTED_AT = datetime.now(_BANGKOK)
 _LOG_DIR = Path("/var/log/ener-ai")
@@ -7225,6 +7234,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+_STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+if _STATIC_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
 
 @app.post("/webhook")
@@ -8529,43 +8541,8 @@ async def _admin_project_workspace_page(request: Request, project_id: int, tab: 
 @app.get("/admin/projects")
 async def admin_projects_list(request: Request):
     await _require_admin(request)
-    async with get_db() as db:
-        cur = await db.execute(
-            """
-            SELECT p.id, p.name, datetime(p.created_at, '+7 hours') AS created_at,
-                   COUNT(m.id) AS message_count
-            FROM projects p
-            LEFT JOIN messages m ON m.project_id = p.id
-            WHERE p.deleted_at IS NULL
-            GROUP BY p.id, p.name, p.created_at
-            ORDER BY p.id DESC
-            """
-        )
-        rows = await cur.fetchall()
-    body = '<section class="pw-card"><h2>Projects</h2><table class="pw-table"><thead><tr><th>ID</th><th>Name</th><th>Messages</th><th>Created</th></tr></thead><tbody>'
-    if not rows:
-        body += '<tr><td colspan="4">ไม่มี project</td></tr>'
-    for r in rows:
-        body += (
-            f'<tr><td>{int(r["id"])}</td>'
-            f'<td><a href="/admin/projects/{int(r["id"])}">{escape(str(r["name"]))}</a></td>'
-            f'<td>{int(r["message_count"] or 0)}</td>'
-            f'<td>{escape(str(r["created_at"] or ""))}</td></tr>'
-        )
-    body += "</tbody></table></section>"
-    html = f"""<!DOCTYPE html>
-<html lang="th"><head><meta charset="utf-8"><title>Projects — Ener-AI</title>
-<style>
-body {{ font-family: Inter, sans-serif; background:#0d0d0d; color:#e5e5e5; padding:20px; }}
-a {{ color:#7dd3fc; }} .back {{ display:inline-block; margin-bottom:16px; padding:8px 14px; background:#1a1a1a; border-radius:8px; }}
-.pw-card {{ background:#141414; border:1px solid #222; border-radius:12px; padding:16px; }}
-.pw-table {{ width:100%; border-collapse:collapse; }} .pw-table th, .pw-table td {{ border-bottom:1px solid #222; padding:8px; text-align:left; }}
-</style></head><body>
-<a class="back" href="/admin">← Admin</a>
-<h1>Projects</h1>
-{body}
-</body></html>"""
-    return HTMLResponse(content=html)
+    ctx = await load_admin_base_context("projects", "Projects — Ener-AI")
+    return templates.TemplateResponse(request, "admin/projects.html", ctx)
 
 
 @app.get("/admin/projects/{project_id}")
@@ -8583,6 +8560,35 @@ async def admin_project_tab(request: Request, project_id: int, tab: str):
 
 @app.get("/admin")
 async def admin_dashboard(request: Request):
+    await _require_admin(request)
+    ctx = await load_admin_base_context("home", "Home — Ener-AI")
+    return templates.TemplateResponse(request, "admin/home.html", ctx)
+
+
+@app.get("/admin/ai")
+async def admin_ai_hub(request: Request):
+    await _require_admin(request)
+    ctx = await load_admin_ai_context()
+    return templates.TemplateResponse(request, "admin/ai.html", ctx)
+
+
+@app.get("/admin/ops")
+async def admin_ops_hub(request: Request):
+    await _require_admin(request)
+    ctx = await load_admin_base_context("ops", "Ops — Ener-AI")
+    return templates.TemplateResponse(request, "admin/ops.html", ctx)
+
+
+@app.get("/admin/settings")
+async def admin_settings_hub(request: Request):
+    await _require_admin(request)
+    ctx = await load_admin_settings_context()
+    return templates.TemplateResponse(request, "admin/settings.html", ctx)
+
+
+@app.get("/admin/classic")
+async def admin_dashboard_classic(request: Request):
+    """Legacy inline-HTML dashboard (pre-Jinja)."""
     await _require_admin(request)
     return build_admin_html(await _load_admin_overview())
 

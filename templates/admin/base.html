@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="th" class="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ page_title }}{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            background: 'oklch(0.05 0 0)',
+            foreground: 'oklch(0.75 0.18 142)',
+            card: { DEFAULT: 'oklch(0.08 0.01 142)', foreground: 'oklch(0.75 0.18 142)' },
+            primary: { DEFAULT: 'oklch(0.72 0.22 142)', foreground: 'oklch(0.05 0 0)' },
+            secondary: { DEFAULT: 'oklch(0.12 0.02 142)', foreground: 'oklch(0.65 0.15 142)' },
+            muted: { DEFAULT: 'oklch(0.15 0.02 142)', foreground: 'oklch(0.5 0.1 142)' },
+            border: 'oklch(0.2 0.04 142)',
+            input: 'oklch(0.12 0.02 142)',
+            sidebar: {
+              DEFAULT: 'oklch(0.06 0.01 142)',
+              foreground: 'oklch(0.65 0.15 142)',
+              accent: 'oklch(0.15 0.03 142)',
+              'accent-foreground': 'oklch(0.75 0.18 142)',
+              border: 'oklch(0.18 0.03 142)',
+            },
+            'terminal-amber': 'oklch(0.8 0.15 85)',
+            'terminal-red': 'oklch(0.55 0.22 25)',
+          },
+          fontFamily: { mono: ['Geist Mono', 'JetBrains Mono', 'Courier New', 'monospace'] },
+        },
+      },
+    };
+  </script>
+  <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/admin/terminal-theme.css">
+  <style>
+    body { font-family: "Geist Mono", "JetBrains Mono", monospace; }
+    .terminal-glow { text-shadow: 0 0 5px oklch(0.72 0.22 142), 0 0 10px oklch(0.72 0.22 142); }
+    .terminal-glow-bright { text-shadow: 0 0 5px oklch(0.85 0.25 142), 0 0 15px oklch(0.85 0.25 142); }
+    .card-glow { box-shadow: 0 0 1px oklch(0.72 0.22 142), inset 0 0 1px oklch(0.72 0.22 142); }
+    @keyframes blink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0; } }
+    .cursor-blink { animation: blink 1s step-end infinite; }
+    @keyframes pulse-green { 0%, 100% { box-shadow: 0 0 0 0 oklch(0.72 0.22 142); } 50% { box-shadow: 0 0 0 4px transparent; } }
+    .pulse-online { animation: pulse-green 2s ease-in-out infinite; }
+    .nav-btn-active { background: var(--sidebar-accent, oklch(0.15 0.03 142)); color: oklch(0.72 0.22 142); text-shadow: 0 0 5px oklch(0.72 0.22 142); }
+  </style>
+  {% block head_extra %}{% endblock %}
+</head>
+<body class="dark bg-background text-foreground font-mono antialiased overflow-hidden">
+  <div class="flex h-screen overflow-hidden">
+    <!-- Sidebar (v0: w-56) -->
+    <aside class="w-56 h-screen bg-sidebar border-r border-sidebar-border flex flex-col shrink-0">
+      <div class="p-4 border-b border-sidebar-border">
+        <div class="flex items-center gap-2">
+          <span class="text-primary terminal-glow text-lg">▸</span>
+          <span class="text-primary font-bold tracking-wider terminal-glow">ENER-AI_</span>
+          <span class="cursor-blink text-primary">▌</span>
+        </div>
+        <p class="text-xs text-muted-foreground mt-1">v2.4.1 // AI OPS CENTER</p>
+      </div>
+
+      <!-- Model selector -->
+      <div class="p-3 border-b border-sidebar-border">
+        <div class="flex items-center gap-2 mb-2">
+          <span class="text-primary text-xs">◆</span>
+          <span class="text-xs text-muted-foreground tracking-wider">&gt; MODEL</span>
+        </div>
+        <form method="post" action="/admin/switch-model" id="model-form">
+          <select name="model" onchange="this.form.submit()"
+            class="w-full h-8 text-xs bg-sidebar border border-sidebar-border rounded-sm text-foreground px-2 focus:outline-none focus:border-primary hover:border-primary transition-colors">
+            {% for row in model_panel.rows or [] %}
+            <option value="{{ row.key }}" {% if row.active %}selected{% endif %} {% if not row.available %}disabled{% endif %}>
+              [ {{ row.name|upper }} ]
+            </option>
+            {% endfor %}
+          </select>
+        </form>
+      </div>
+
+      <nav class="flex-1 p-2 overflow-y-auto">
+        <ul class="space-y-1 text-sm">
+          <li>
+            <a href="/admin" class="w-full flex items-center gap-3 px-3 py-2 rounded-sm transition-all hover:bg-sidebar-accent {% if active_nav == 'home' %}nav-btn-active{% else %}text-sidebar-foreground{% endif %}">
+              <span class="text-muted-foreground">&gt;&gt;</span><span>⌂</span><span class="tracking-wide">HOME</span>
+              {% if active_nav == 'home' %}<span class="ml-auto text-primary">&lt;</span>{% endif %}
+            </a>
+          </li>
+          <li>
+            <a href="/admin/projects" class="w-full flex items-center gap-3 px-3 py-2 rounded-sm transition-all hover:bg-sidebar-accent {% if active_nav == 'projects' %}nav-btn-active{% else %}text-sidebar-foreground{% endif %}">
+              <span class="text-muted-foreground">&gt;&gt;</span><span>📁</span><span class="tracking-wide">PROJECTS</span>
+              {% if active_nav == 'projects' %}<span class="ml-auto text-primary">&lt;</span>{% endif %}
+            </a>
+            <ul class="ml-8 mt-1 space-y-1">
+              <li><a href="/admin/hospital-work" class="flex items-center gap-2 px-3 py-1.5 text-xs rounded-sm hover:bg-sidebar-accent text-muted-foreground hover:text-sidebar-accent-foreground"><span>&gt;</span> Hospital Work</a></li>
+              <li><a href="/admin/ener-scan-business" class="flex items-center gap-2 px-3 py-1.5 text-xs rounded-sm hover:bg-sidebar-accent text-muted-foreground"><span>&gt;</span> Ener Scan</a></li>
+              <li><a href="/platform" class="flex items-center gap-2 px-3 py-1.5 text-xs rounded-sm hover:bg-sidebar-accent text-muted-foreground"><span>&gt;</span> Platform</a></li>
+            </ul>
+          </li>
+          <li>
+            <a href="/admin/ai" class="w-full flex items-center gap-3 px-3 py-2 rounded-sm transition-all hover:bg-sidebar-accent {% if active_nav == 'ai' %}nav-btn-active{% else %}text-sidebar-foreground{% endif %}">
+              <span class="text-muted-foreground">&gt;&gt;</span><span>◇</span><span class="tracking-wide">AI</span>
+              {% if active_nav == 'ai' %}<span class="ml-auto text-primary">&lt;</span>{% endif %}
+            </a>
+          </li>
+          <li>
+            <a href="/admin/ops" class="w-full flex items-center gap-3 px-3 py-2 rounded-sm transition-all hover:bg-sidebar-accent {% if active_nav == 'ops' %}nav-btn-active{% else %}text-sidebar-foreground{% endif %}">
+              <span class="text-muted-foreground">&gt;&gt;</span><span>◎</span><span class="tracking-wide">OPS</span>
+              {% if active_nav == 'ops' %}<span class="ml-auto text-primary">&lt;</span>{% endif %}
+            </a>
+          </li>
+          <li>
+            <a href="/admin/settings" class="w-full flex items-center gap-3 px-3 py-2 rounded-sm transition-all hover:bg-sidebar-accent {% if active_nav == 'settings' %}nav-btn-active{% else %}text-sidebar-foreground{% endif %}">
+              <span class="text-muted-foreground">&gt;&gt;</span><span>⚙</span><span class="tracking-wide">SETTINGS</span>
+              {% if active_nav == 'settings' %}<span class="ml-auto text-primary">&lt;</span>{% endif %}
+            </a>
+          </li>
+        </ul>
+      </nav>
+
+      <div class="p-4 border-t border-sidebar-border text-xs text-muted-foreground space-y-1">
+        <div class="flex justify-between"><span>SYS_LOAD:</span><span class="text-primary">{{ cpu_percent }}%</span></div>
+        <div class="flex justify-between"><span>UPTIME:</span><span class="text-primary">{{ uptime }}</span></div>
+        <div class="flex justify-between items-center">
+          <span>STATUS:</span>
+          <span class="text-primary flex items-center gap-1">
+            <span class="w-1.5 h-1.5 rounded-full bg-primary pulse-online"></span> ONLINE
+          </span>
+        </div>
+      </div>
+    </aside>
+
+    <div class="flex-1 flex flex-col overflow-hidden min-w-0">
+      <header class="h-14 border-b border-border bg-card/50 flex items-center justify-between px-6 shrink-0">
+        <div class="flex items-center gap-2 text-sm">
+          <span class="text-muted-foreground">root@ener-ai:</span>
+          <span class="text-primary">~</span>
+          <span class="text-muted-foreground">/</span>
+          <span class="text-foreground">{% block breadcrumb %}dashboard{% endblock %}</span>
+          <span class="cursor-blink text-primary">▌</span>
+        </div>
+        <div class="flex items-center gap-4 text-xs">
+          <span class="text-muted-foreground hidden sm:inline">{{ cost_today }} · {{ today_calls }} calls</span>
+          <span class="px-2 py-1 bg-secondary rounded-sm text-foreground">admin</span>
+          <form method="post" action="/admin/logout" class="inline">
+            <button type="submit" class="text-muted-foreground hover:text-primary transition-colors">logout</button>
+          </form>
+        </div>
+      </header>
+
+      <main class="flex-1 overflow-auto p-6">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+  </div>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

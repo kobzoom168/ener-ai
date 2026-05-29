@@ -1,0 +1,25 @@
+<div class="bg-card border border-border rounded-sm card-glow overflow-hidden">
+  <div class="flex items-center gap-2 px-4 py-2 border-b border-border bg-secondary/30">
+    <span class="text-primary">▸</span>
+    <span class="text-xs text-muted-foreground tracking-wider">&gt; SYSTEM_LOG</span>
+    <div class="ml-auto flex items-center gap-1">
+      <span class="w-2 h-2 rounded-full bg-terminal-red"></span>
+      <span class="w-2 h-2 rounded-full bg-terminal-amber"></span>
+      <span class="w-2 h-2 rounded-full bg-primary"></span>
+    </div>
+  </div>
+  <div class="p-3 h-64 overflow-y-auto font-mono text-xs space-y-1 bg-background/50">
+    {% for log in system_logs %}
+    <div class="flex gap-2 flex-wrap">
+      <span class="text-muted-foreground shrink-0">[{{ log.timestamp }}]</span>
+      <span class="shrink-0 {% if log.level == 'error' %}text-terminal-red{% elif log.level == 'warn' %}text-terminal-amber{% elif log.level == 'success' %}text-primary{% else %}text-foreground{% endif %}">[{{ log.level_label }}]</span>
+      <span class="{% if log.level == 'error' %}text-terminal-red{% elif log.level == 'warn' %}text-terminal-amber{% elif log.level == 'success' %}text-primary{% else %}text-foreground{% endif %}">{{ log.message }}</span>
+    </div>
+    {% else %}
+    <div class="text-muted-foreground">No system log entries.</div>
+    {% endfor %}
+    <div class="flex items-center gap-1 text-primary">
+      <span>&gt;</span><span class="cursor-blink">▌</span>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,42 @@
+{% extends "admin/base.html" %}
+{% block title %}AI — ENER-AI{% endblock %}
+{% block breadcrumb %}ai{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+  <h1 class="text-2xl font-bold text-primary terminal-glow-bright">&gt; AI_CONTROL</h1>
+  <p class="text-sm text-muted-foreground mt-1">Trace · Routing · Pipeline · Metrics</p>
+</div>
+
+<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
+  {% for link in ai_links %}
+  <a href="{{ link.href }}" class="bg-card border border-border rounded-sm p-4 card-glow hover:border-primary/50 transition-all block">
+    <div class="text-primary mb-2">{{ link.icon }}</div>
+    <div class="font-semibold text-foreground text-sm">{{ link.title }}</div>
+    <div class="text-xs text-muted-foreground mt-1">{{ link.desc }}</div>
+  </a>
+  {% endfor %}
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  <div class="bg-card border border-border rounded-sm p-4 card-glow">
+    <span class="text-xs text-muted-foreground tracking-wider">&gt; ACTIVE_MODEL</span>
+    <p class="text-2xl font-mono text-primary terminal-glow mt-2">[ {{ active_model }} ]</p>
+    <p class="text-sm text-muted-foreground">{{ active_model_label }}</p>
+  </div>
+  <div class="bg-card border border-border rounded-sm card-glow overflow-hidden">
+    <div class="px-4 py-3 border-b border-border text-xs text-muted-foreground">&gt; RECENT_TRACES</div>
+    <div class="divide-y divide-border max-h-80 overflow-y-auto text-xs">
+      {% for t in recent_traces %}
+      <div class="px-4 py-3">
+        <div class="font-mono text-primary">{{ t.trace_id }}</div>
+        <div class="text-muted-foreground mt-1">{{ t.intent }} · {{ t.model_used }}</div>
+        <div class="text-muted-foreground truncate">{{ t.user_preview }}</div>
+      </div>
+      {% else %}
+      <div class="p-4 text-muted-foreground">No traces.</div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}

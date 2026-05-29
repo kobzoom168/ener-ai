@@ -1,0 +1,61 @@
+/* Terminal/Hacker theme — from v0 dark-admin-dashboard/app/globals.css */
+:root {
+  --background: oklch(0.05 0 0);
+  --foreground: oklch(0.75 0.18 142);
+  --card: oklch(0.08 0.01 142);
+  --card-foreground: oklch(0.75 0.18 142);
+  --primary: oklch(0.72 0.22 142);
+  --primary-foreground: oklch(0.05 0 0);
+  --secondary: oklch(0.12 0.02 142);
+  --secondary-foreground: oklch(0.65 0.15 142);
+  --muted: oklch(0.15 0.02 142);
+  --muted-foreground: oklch(0.5 0.1 142);
+  --accent: oklch(0.72 0.22 142);
+  --border: oklch(0.2 0.04 142);
+  --input: oklch(0.12 0.02 142);
+  --sidebar: oklch(0.06 0.01 142);
+  --sidebar-foreground: oklch(0.65 0.15 142);
+  --sidebar-accent: oklch(0.15 0.03 142);
+  --sidebar-border: oklch(0.18 0.03 142);
+  --terminal-amber: oklch(0.8 0.15 85);
+  --terminal-red: oklch(0.55 0.22 25);
+}
+
+body.admin-terminal {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: "Geist Mono", "JetBrains Mono", "Courier New", monospace;
+}
+
+.terminal-glow {
+  text-shadow: 0 0 5px var(--primary), 0 0 10px var(--primary);
+}
+.terminal-glow-bright {
+  text-shadow: 0 0 5px oklch(0.85 0.25 142), 0 0 15px oklch(0.85 0.25 142);
+}
+.card-glow {
+  box-shadow: 0 0 1px var(--primary), inset 0 0 1px var(--primary);
+}
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+.cursor-blink { animation: blink 1s step-end infinite; }
+@keyframes pulse-green {
+  0%, 100% { box-shadow: 0 0 0 0 var(--primary); }
+  50% { box-shadow: 0 0 0 4px transparent; }
+}
+.pulse-online { animation: pulse-green 2s ease-in-out infinite; }
+
+.bg-background { background: var(--background); }
+.bg-card { background: var(--card); }
+.bg-secondary { background: var(--secondary); }
+.bg-sidebar { background: var(--sidebar); }
+.bg-input { background: var(--input); }
+.text-primary { color: var(--primary); }
+.text-muted-foreground { color: var(--muted-foreground); }
+.text-foreground { color: var(--foreground); }
+.text-terminal-amber { color: var(--terminal-amber); }
+.text-terminal-red { color: var(--terminal-red); }
+.border-border { border-color: var(--border); }
+.border-sidebar-border { border-color: var(--sidebar-border); }

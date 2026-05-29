@@ -1,0 +1,39 @@
+<div class="bg-card border border-border rounded-sm p-4 card-glow">
+  <div class="flex items-center justify-between mb-4">
+    <div class="flex items-center gap-2">
+      <span class="text-primary">☐</span>
+      <span class="text-xs text-muted-foreground tracking-wider">&gt; TASKS</span>
+    </div>
+    <div class="flex items-center gap-3 text-xs">
+      <span class="text-terminal-amber">{{ tasks_open }} OPEN</span>
+      <span class="text-muted-foreground">|</span>
+      <span class="text-primary">{{ tasks_active }} ACTIVE</span>
+      <span class="text-muted-foreground">|</span>
+      <span class="text-muted-foreground">{{ tasks_done }} DONE</span>
+    </div>
+  </div>
+  <div class="space-y-2">
+    {% for task in tasks %}
+    <div class="flex items-center gap-3 p-2 rounded-sm border border-border/50 text-xs {% if task.status == 'completed' %}opacity-50{% endif %}">
+      <span class="{% if task.status == 'completed' %}text-primary{% elif task.status == 'in-progress' %}text-terminal-amber{% else %}text-muted-foreground{% endif %}">
+        {% if task.status == 'completed' %}✓{% elif task.status == 'in-progress' %}◐{% else %}○{% endif %}
+      </span>
+      <span class="flex-1 truncate {% if task.status == 'completed' %}line-through{% endif %}">{{ task.title }}</span>
+      <span class="text-[10px] uppercase {% if task.priority == 'high' %}text-terminal-red{% elif task.priority == 'medium' %}text-terminal-amber{% else %}text-muted-foreground{% endif %}">[{{ task.priority }}]</span>
+    </div>
+    {% else %}
+    <div class="text-xs text-muted-foreground p-2">No open tasks.</div>
+    {% endfor %}
+  </div>
+  <div class="mt-4 pt-3 border-t border-border flex items-center justify-between text-xs">
+    <div class="flex items-center gap-2">
+      <span class="text-muted-foreground">QUEUE:</span>
+      <div class="flex gap-1">
+        {% for i in range(5) %}
+        <div class="w-2 h-2 rounded-sm {% if i < tasks_open %}bg-primary{% else %}bg-border{% endif %}"></div>
+        {% endfor %}
+      </div>
+    </div>
+    <span class="text-primary terminal-glow">{% if tasks_open > 0 %}{{ tasks_open }} PENDING{% else %}ALL CLEAR{% endif %}</span>
+  </div>
+</div>

@@ -1,0 +1,37 @@
+<div class="bg-card border border-border rounded-sm p-4 card-glow">
+  <div class="flex items-center gap-2 mb-4">
+    <span class="text-terminal-amber">$</span>
+    <span class="text-xs text-muted-foreground tracking-wider">&gt; COST_ANALYTICS</span>
+  </div>
+  <div class="grid grid-cols-2 gap-3 mb-4">
+    {% for cost in cost_grid %}
+    <div class="bg-secondary/50 rounded-sm p-3">
+      <div class="text-xs text-muted-foreground mb-1">{{ cost.label }}:</div>
+      <div class="flex items-center justify-between gap-2">
+        <span class="text-lg font-bold text-primary terminal-glow">{{ cost.value }}</span>
+        {% if cost.change is not none %}
+        <span class="text-xs {% if cost.trend == 'up' %}text-terminal-amber{% else %}text-primary{% endif %}">
+          {% if cost.trend == 'up' %}↑{% else %}↓{% endif %} {{ cost.change }}%
+        </span>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="border-t border-border pt-3">
+    <div class="flex items-center gap-2 mb-2">
+      <span class="text-primary animate-pulse">●</span>
+      <span class="text-xs text-muted-foreground">LIVE_METRICS</span>
+    </div>
+    <div class="grid grid-cols-2 gap-3 text-xs">
+      <div class="flex justify-between">
+        <span class="text-muted-foreground">TOTAL_REQ:</span>
+        <span class="text-primary font-mono">{{ total_ai_calls }}</span>
+      </div>
+      <div class="flex justify-between">
+        <span class="text-muted-foreground">AVG_LATENCY:</span>
+        <span class="text-primary font-mono">{{ avg_latency_ms }}ms</span>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,45 @@
+{% extends "admin/base.html" %}
+{% block title %}Settings — ENER-AI{% endblock %}
+{% block breadcrumb %}settings{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+  <h1 class="text-2xl font-bold text-primary terminal-glow-bright">&gt; SETTINGS</h1>
+  <p class="text-sm text-muted-foreground mt-1">Config · Auth · Model override</p>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  <div class="bg-card border border-border rounded-sm p-4 card-glow">
+    <span class="text-xs text-muted-foreground tracking-wider">&gt; QUICK_LINKS</span>
+    <div class="mt-4 space-y-2 text-sm">
+      <a href="/admin/config" class="flex justify-between px-3 py-2 border border-border rounded-sm hover:border-primary"><span>CONFIG_MANAGER</span><span class="text-primary">→</span></a>
+      <a href="/admin/reset" class="flex justify-between px-3 py-2 border border-border rounded-sm hover:border-primary"><span>RESET_PASSWORD</span><span class="text-primary">→</span></a>
+      <a href="/admin/classic" class="flex justify-between px-3 py-2 border border-border rounded-sm hover:border-primary"><span>CLASSIC_DASHBOARD</span><span class="text-primary">→</span></a>
+    </div>
+  </div>
+  <div class="bg-card border border-border rounded-sm p-4 card-glow">
+    <span class="text-xs text-muted-foreground tracking-wider">&gt; CONFIG_PREVIEW</span>
+    <p class="text-xs text-muted-foreground mt-2">{{ config_count }} keys</p>
+    <ul class="mt-3 space-y-1 text-xs max-h-48 overflow-y-auto">
+      {% for c in configs %}
+      <li class="flex justify-between gap-2 border-b border-border/40 py-1">
+        <span class="text-primary font-mono">{{ c.key }}</span>
+        <span class="text-muted-foreground truncate">{% set v = c.value|string %}{{ v[:32] }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+
+<div class="mt-6 bg-card border border-border rounded-sm p-4 card-glow">
+  <span class="text-xs text-muted-foreground tracking-wider">&gt; MODEL_OVERRIDE</span>
+  <div class="mt-3 flex flex-wrap gap-2">
+    {% for row in model_panel.rows or [] %}
+    <form method="post" action="/admin/switch-model" class="inline">
+      <input type="hidden" name="model" value="{{ row.key }}">
+      <button type="submit" class="px-3 py-2 text-xs border rounded-sm {% if row.active %}border-primary text-primary terminal-glow{% else %}border-border text-muted-foreground{% endif %}" {% if not row.available %}disabled{% endif %}>{{ row.name }}</button>
+    </form>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}
