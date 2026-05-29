@@ -18,6 +18,17 @@ logger = logging.getLogger(__name__)
 # Domains that must keep router-selected model (capabilities / tool loops).
 _KEEP_ROUTER_MODEL = frozenset({"vision", "code_agent", "image_analysis"})
 
+_INTENT_ROUTE_HINTS: dict[str, dict[str, str]] = {
+    "content": {"domain": "analysis", "reason": "ener scan / amulet / content"},
+    "ener": {"domain": "analysis", "reason": "ener scan / amulet / content"},
+    "hospital": {"domain": "analysis", "reason": "hospital IT / vendor analysis"},
+    "code_question": {"domain": "code", "reason": "code/technical"},
+    "code_agent": {"domain": "code_agent", "reason": "autonomous code agent"},
+    "gmail": {"domain": "analysis", "reason": "gmail / email"},
+    "github": {"domain": "code", "reason": "github / repos"},
+}
+
+
 def _intent_from_route(route: dict) -> str:
     for key in ("intent", "domain", "reason"):
         val = str(route.get(key, "")).strip()
@@ -175,6 +186,10 @@ async def run_ai(
     project_id: int | None = None,
     system_prompt: str | None = None,
     history: list[dict] | None = None,
+    preferred_model: str | None = None,
+    allow_external_model: bool = True,
+    allow_external_search: bool = False,
+    intent: str | None = None,
 ) -> dict:
     started = time.time()
     trace_id = uuid.uuid4().hex[:12]
@@ -191,18 +206,27 @@ async def run_ai(
 
     routing = await get_routing_config()
     route = route_fast(text, routing=routing)
-    intent = _intent_from_route(route)
+    intent_hint = str(intent or "").strip().lower()
+    if intent_hint and intent_hint in _INTENT_ROUTE_HINTS:
+        route = {**route, **_INTENT_ROUTE_HINTS[intent_hint]}
+    resolved_intent = _intent_from_route(route)
     route_model = str(route.get("model", "groq") or "groq")
 
-    active_model = await get_active_model()
-    if (
-        active_model
-        and active_model != "auto"
-        and active_model in _VALID_MODELS
-        and intent not in _KEEP_ROUTER_MODEL
-    ):
-        route = {**route, "model": active_model}
-        route_model = active_model
+    pref = str(preferred_model or "").strip().lower()
+    if pref and pref in _VALID_MODELS and resolved_intent not in _KEEP_ROUTER_MODEL:
+        route = {**route, "model": pref}
+        route_model = pref
+    else:
+        active_model = await get_active_model()
+        if (
+            active_model
+            and active_model != "auto"
+            and active_model in _VALID_MODELS
+            and allow_external_model
+            and resolved_intent not in _KEEP_ROUTER_MODEL
+        ):
+            route = {**route, "model": active_model}
+            route_model = active_model
 
     context = await build_context_v2(
         text=text,
@@ -213,7 +237,12 @@ async def run_ai(
     )
     context_text = str(context.get("text") or "")
     context_summary = str(context.get("summary") or "")
-    external_used = 0
+    context_sources = list(context.get("sources") or [])
+    external_used = int(
+        allow_external_search
+        or bool(route.get("needs_external"))
+        or bool(context.get("needs_external"))
+    )
     enhanced_system = (system_prompt or BASE_SYSTEM_PROMPT) + "\n\n" + context_text
 
     tokens = set_trace_context(
@@ -260,7 +289,7 @@ async def run_ai(
         content=text,
         project_id=project_id,
         source=source,
-        intent=intent,
+        intent=resolved_intent,
         model_used=route_model,
         route=route,
         context_snapshot=snapshot,
@@ -274,7 +303,7 @@ async def run_ai(
         content=reply,
         project_id=project_id,
         source=source,
-        intent=intent,
+        intent=resolved_intent,
         model_used=model_used,
         route=route,
         context_snapshot=snapshot,
@@ -290,7 +319,7 @@ async def run_ai(
             SET last_intent = ?, last_model = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
-            (intent, model_used, conversation_id),
+            (resolved_intent, model_used, conversation_id),
         )
         await db.commit()
 
@@ -299,9 +328,13 @@ async def run_ai(
         "reply": reply,
         "trace_id": trace_id,
         "conversation_id": conversation_id,
+        "project_id": project_id,
+        "intent": resolved_intent,
         "route": route,
         "context_summary": context_summary,
+        "context_sources": context_sources,
         "model_used": model_used,
+        "external_used": bool(external_used),
         "elapsed_ms": elapsed_ms,
     }
 
