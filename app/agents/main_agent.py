@@ -104,11 +104,16 @@ class MainAgent:
         if normalized_command == "code":
             return await code_agent.run(text, _agent_triggered_by="user")
 
-        if normalized_command == "ener":
-            return await ener_agent.run(text, _agent_triggered_by="user")
+        if normalized_command in {"ener", "content", "hospital"}:
+            from app.core.ai_gateway import run_ai
 
-        if normalized_command == "content":
-            return await content_agent.run(text, _agent_triggered_by="user")
+            result = await run_ai(
+                source="telegram",
+                external_chat_id=str(chat_id),
+                text=text,
+                intent=normalized_command,
+            )
+            return str(result.get("reply", "")).strip() or "ยังไม่มีคำตอบตอนนี้"
 
         return await chat_agent.run_chat(chat_id, text, _agent_triggered_by="user")
 
