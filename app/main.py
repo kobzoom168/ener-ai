@@ -2065,6 +2065,15 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       font-size: 0.9rem;
     }}
     .nav-link.active {{ border-color: var(--blue); color: var(--blue); }}
+    .nav-section {{
+      color: #666;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 4px 8px 0;
+      width: 100%;
+      flex-basis: 100%;
+    }}
     .refresh-link {{ margin-left: auto; }}
     #auto-refresh-select {{
       border: 1px solid #222;
@@ -2464,18 +2473,23 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       </div>
     </div>
     <div class="top-nav">
+      <span class="nav-section">Home</span>
       <a class="nav-link active" href="/admin">Overview</a>
-      <a class="nav-link" href="/admin/metrics">Metrics</a>
-      <a class="nav-link" href="/admin/pipeline">⚡ Pipeline</a>
-      <a class="nav-link" href="/admin/ai-traces">Trace</a>
+      <span class="nav-section">Projects</span>
+      <a class="nav-link" href="/admin/hospital-work">Hospital Work</a>
       <a class="nav-link" href="/admin/ener-scan-business">Ener Scan</a>
+      <a class="nav-link" href="/platform">Platform</a>
+      <span class="nav-section">AI</span>
+      <a class="nav-link" href="/admin/ai-traces">Trace</a>
+      <a class="nav-link" href="/admin/routing">Routing</a>
+      <a class="nav-link" href="/admin/pipeline">Pipeline</a>
+      <a class="nav-link" href="/admin/metrics">Metrics</a>
+      <span class="nav-section">Ops</span>
       <a class="nav-link" href="/admin/logs">Logs</a>
-      <a class="nav-link" href="/admin/config">⚙️ Config</a>
-      <a class="nav-link" href="/admin/routing">🔀 Routing</a>
-      <a class="nav-link" href="/admin/hospital-work">🏥 Hospital Work</a>
-      <a class="nav-link" href="/admin/api-status">📡 API Status</a>
-      <a class="nav-link" href="/platform">🚀 Platform</a>
-      <a class="nav-link" href="/admin/terminal" target="_blank" rel="noopener noreferrer">💻 Terminal</a>
+      <a class="nav-link" href="/admin/api-status">API Status</a>
+      <a class="nav-link" href="/admin/terminal" target="_blank" rel="noopener noreferrer">Terminal</a>
+      <span class="nav-section">Settings</span>
+      <a class="nav-link" href="/admin/config">Config</a>
       <button class="edit-btn" type="button" onclick="fetch('/admin/logout',{{method:'POST'}}).then(() => location.reload())">🚪 Logout</button>
       <button id="edit-btn" class="edit-btn" type="button" onclick="enterEditMode()">✏️ Edit</button>
       <select id="auto-refresh-select" title="Auto Refresh">
@@ -7245,6 +7259,10 @@ async def ai_run(request: Request):
         external_chat_id=external_chat_id,
         text=text,
         project_id=project_id,
+        preferred_model=str(body.get("preferred_model", "") or "").strip().lower() or None,
+        allow_external_model=bool(body.get("allow_external_model", True)),
+        allow_external_search=bool(body.get("allow_external_search", False)),
+        intent=str(body.get("intent", "") or "").strip().lower() or None,
     )
     return JSONResponse({"ok": True, **result})
 
