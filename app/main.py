@@ -2476,6 +2476,7 @@ def build_admin_html(overview: dict) -> HTMLResponse:
       <span class="nav-section">Home</span>
       <a class="nav-link active" href="/admin">Overview</a>
       <span class="nav-section">Projects</span>
+      <a class="nav-link" href="/admin/projects">Projects</a>
       <a class="nav-link" href="/admin/hospital-work">Hospital Work</a>
       <a class="nav-link" href="/admin/ener-scan-business">Ener Scan</a>
       <a class="nav-link" href="/platform">Platform</a>
@@ -8179,6 +8180,405 @@ async def workspace_projects_delete(project_id: int, request: Request):
         )
         await db.commit()
     return JSONResponse({"ok": True})
+
+
+_ADMIN_PROJECT_TABS: list[tuple[str, str]] = [
+    ("", "Overview"),
+    ("chat", "Chat"),
+    ("memory", "Memory"),
+    ("tasks", "Tasks"),
+    ("files", "Files"),
+    ("code-runs", "Code Runs"),
+    ("artifacts", "Artifacts"),
+    ("logs", "Logs"),
+    ("settings", "Settings"),
+]
+
+
+def _project_slug_from_name(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", str(name or "").lower()).strip("-")
+    return slug or "project"
+
+
+async def _fetch_admin_project(project_id: int) -> dict | None:
+    async with get_db() as db:
+        cur = await db.execute(
+            """
+            SELECT id, name, datetime(created_at, '+7 hours') AS created_at
+            FROM projects
+            WHERE id = ? AND deleted_at IS NULL
+            """,
+            (project_id,),
+        )
+        row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+def _project_tabs_html(project_id: int, active_tab: str) -> str:
+    links = []
+    for slug, label in _ADMIN_PROJECT_TABS:
+        href = f"/admin/projects/{project_id}" if not slug else f"/admin/projects/{project_id}/{slug}"
+        cls = "project-tab active" if slug == active_tab else "project-tab"
+        links.append(f'<a class="{cls}" href="{href}">{escape(label)}</a>')
+    return '<div class="project-tabs">' + "".join(links) + "</div>"
+
+
+def _admin_simple_table(headers: list[str], rows: list[list[str]]) -> str:
+    head = "".join(f"<th>{escape(h)}</th>" for h in headers)
+    body = ""
+    for row in rows:
+        body += "<tr>" + "".join(f"<td>{escape(str(c))}</td>" for c in row) + "</tr>"
+    if not body:
+        body = f'<tr><td colspan="{len(headers)}">ไม่มีข้อมูล</td></tr>'
+    return f'<table class="pw-table"><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>'
+
+
+async def _project_workspace_tab_html(project_id: int, tab: str, project: dict) -> str:
+    name = str(project.get("name") or "")
+    slug = _project_slug_from_name(name)
+    tab = (tab or "").strip().lower()
+
+    if tab in {"", "overview"}:
+        async with get_db() as db:
+            cur = await db.execute(
+                "SELECT COUNT(*) AS c FROM messages WHERE project_id = ?",
+                (project_id,),
+            )
+            msg_count = int((await cur.fetchone())["c"] or 0)
+            cur = await db.execute(
+                "SELECT COUNT(*) AS c FROM project_artifacts WHERE project_id = ? OR project_slug = ?",
+                (project_id, slug),
+            )
+            art_count = int((await cur.fetchone())["c"] or 0)
+            cur = await db.execute(
+                """
+                SELECT COUNT(*) AS c FROM code_runs
+                WHERE trace_id IN (
+                    SELECT DISTINCT trace_id FROM messages
+                    WHERE project_id = ? AND trace_id IS NOT NULL AND TRIM(trace_id) <> ''
+                )
+                """,
+                (project_id,),
+            )
+            code_count = int((await cur.fetchone())["c"] or 0)
+        return f"""
+        <section class="pw-card">
+          <h2>Overview</h2>
+          <p><strong>Project:</strong> {escape(name)} (id={project_id})</p>
+          <p><strong>Slug:</strong> {escape(slug)}</p>
+          <ul>
+            <li>Messages: {msg_count}</li>
+            <li>Artifacts: {art_count}</li>
+            <li>Code runs (linked traces): {code_count}</li>
+          </ul>
+        </section>
+        """
+
+    if tab == "chat":
+        async with get_db() as db:
+            cur = await db.execute(
+                """
+                SELECT role, substr(content, 1, 240) AS content,
+                       datetime(created_at, '+7 hours') AS created_at,
+                       COALESCE(model_used, '') AS model_used
+                FROM messages
+                WHERE project_id = ?
+                ORDER BY id DESC
+                LIMIT 50
+                """,
+                (project_id,),
+            )
+            rows = await cur.fetchall()
+        table_rows = [
+            [r["created_at"], r["role"], r["model_used"], r["content"]]
+            for r in reversed(rows)
+        ]
+        return '<section class="pw-card"><h2>Chat</h2>' + _admin_simple_table(
+            ["Time", "Role", "Model", "Content"], table_rows
+        ) + "</section>"
+
+    if tab == "memory":
+        async with get_db() as db:
+            cur = await db.execute(
+                """
+                SELECT substr(content, 1, 300) AS content, memory_type,
+                       datetime(created_at, '+7 hours') AS created_at
+                FROM long_term_memories
+                ORDER BY id DESC
+                LIMIT 40
+                """
+            )
+            ltm = await cur.fetchall()
+            cur = await db.execute(
+                """
+                SELECT key, substr(value, 1, 200) AS value, tag,
+                       datetime(updated_at, '+7 hours') AS updated_at
+                FROM memories
+                ORDER BY updated_at DESC
+                LIMIT 30
+                """
+            )
+            mem = await cur.fetchall()
+        ltm_rows = [[r["created_at"], r["memory_type"], r["content"]] for r in ltm]
+        mem_rows = [[r["updated_at"], r["key"], r["tag"], r["value"]] for r in mem]
+        return (
+            '<section class="pw-card"><h2>Long-term memories</h2>'
+            + _admin_simple_table(["Time", "Type", "Content"], ltm_rows)
+            + '</section><section class="pw-card"><h2>Memories (key/value)</h2>'
+            + _admin_simple_table(["Updated", "Key", "Tag", "Value"], mem_rows)
+            + "</section>"
+        )
+
+    if tab == "tasks":
+        async with get_db() as db:
+            cur = await db.execute(
+                """
+                SELECT id, title, priority, status, deadline_hint,
+                       datetime(created_at, '+7 hours') AS created_at
+                FROM tasks
+                WHERE status = 'open' OR status IS NULL
+                ORDER BY id DESC
+                LIMIT 50
+                """
+            )
+            rows = await cur.fetchall()
+        table_rows = [
+            [r["id"], r["title"], r["priority"], r["status"], r["deadline_hint"], r["created_at"]]
+            for r in rows
+        ]
+        return '<section class="pw-card"><h2>Open Tasks</h2><p class="muted">tasks table ไม่มี project_id — แสดง open tasks ทั้งระบบ</p>' + _admin_simple_table(
+            ["ID", "Title", "Priority", "Status", "Deadline", "Created"], table_rows
+        ) + "</section>"
+
+    if tab == "files":
+        async with get_db() as db:
+            cur = await db.execute(
+                """
+                SELECT id, filename, size_bytes, substr(summary, 1, 120) AS summary,
+                       datetime(created_at, '+7 hours') AS created_at
+                FROM uploads
+                ORDER BY id DESC
+                LIMIT 50
+                """
+            )
+            rows = await cur.fetchall()
+        table_rows = [
+            [r["id"], r["filename"], r["size_bytes"], r["summary"], r["created_at"]] for r in rows
+        ]
+        return '<section class="pw-card"><h2>Files</h2><p class="muted">uploads ยังไม่ผูก project_id — แสดงล่าสุดทั้งระบบ</p>' + _admin_simple_table(
+            ["ID", "Filename", "Bytes", "Summary", "Created"], table_rows
+        ) + "</section>"
+
+    if tab == "code-runs":
+        async with get_db() as db:
+            cur = await db.execute(
+                """
+                SELECT cr.id, cr.action, cr.status, cr.request_id,
+                       substr(cr.lesson_learned, 1, 120) AS lesson,
+                       datetime(cr.created_at, '+7 hours') AS created_at
+                FROM code_runs cr
+                WHERE cr.trace_id IN (
+                    SELECT DISTINCT trace_id FROM messages
+                    WHERE project_id = ? AND trace_id IS NOT NULL AND TRIM(trace_id) <> ''
+                )
+                ORDER BY cr.id DESC
+                LIMIT 50
+                """,
+                (project_id,),
+            )
+            rows = await cur.fetchall()
+            if not rows:
+                cur = await db.execute(
+                    """
+                    SELECT id, action, status, request_id,
+                           substr(lesson_learned, 1, 120) AS lesson,
+                           datetime(created_at, '+7 hours') AS created_at
+                    FROM code_runs
+                    ORDER BY id DESC
+                    LIMIT 30
+                    """
+                )
+                rows = await cur.fetchall()
+        table_rows = [
+            [r["id"], r["action"], r["status"], r["request_id"], r["lesson"], r["created_at"]]
+            for r in rows
+        ]
+        return '<section class="pw-card"><h2>Code Runs</h2>' + _admin_simple_table(
+            ["ID", "Action", "Status", "Request", "Lesson", "Created"], table_rows
+        ) + "</section>"
+
+    if tab == "artifacts":
+        async with get_db() as db:
+            cur = await db.execute(
+                """
+                SELECT artifact_type, title, substr(summary, 1, 160) AS summary, source,
+                       datetime(created_at, '+7 hours') AS created_at
+                FROM project_artifacts
+                WHERE project_id = ? OR project_slug = ?
+                ORDER BY id DESC
+                LIMIT 50
+                """,
+                (project_id, slug),
+            )
+            rows = await cur.fetchall()
+        table_rows = [
+            [r["created_at"], r["artifact_type"], r["title"], r["source"], r["summary"]] for r in rows
+        ]
+        return '<section class="pw-card"><h2>Artifacts</h2>' + _admin_simple_table(
+            ["Time", "Type", "Title", "Source", "Summary"], table_rows
+        ) + "</section>"
+
+    if tab == "logs":
+        async with get_db() as db:
+            cur = await db.execute(
+                """
+                SELECT agent_name, event_type, substr(summary, 1, 160) AS summary,
+                       result, datetime(created_at, '+7 hours') AS created_at
+                FROM agent_events
+                WHERE summary LIKE ? OR COALESCE(context, '') LIKE ?
+                ORDER BY id DESC
+                LIMIT 50
+                """,
+                (f"%{name[:40]}%", f"%project_id:{project_id}%"),
+            )
+            rows = await cur.fetchall()
+            if not rows:
+                cur = await db.execute(
+                    """
+                    SELECT agent_name, event_type, substr(summary, 1, 160) AS summary,
+                           result, datetime(created_at, '+7 hours') AS created_at
+                    FROM agent_events
+                    ORDER BY id DESC
+                    LIMIT 40
+                    """
+                )
+                rows = await cur.fetchall()
+        table_rows = [
+            [r["created_at"], r["agent_name"], r["event_type"], r["result"], r["summary"]]
+            for r in rows
+        ]
+        note = '<p class="muted">agent_events ไม่มี trace_id — กรองจากชื่อ/summary หรือแสดงล่าสุดทั้งระบบ</p>'
+        return '<section class="pw-card"><h2>Agent Events</h2>' + note + _admin_simple_table(
+            ["Time", "Agent", "Event", "Result", "Summary"], table_rows
+        ) + "</section>"
+
+    if tab == "settings":
+        return f"""
+        <section class="pw-card">
+          <h2>Settings</h2>
+          <p><strong>ID:</strong> {project_id}</p>
+          <p><strong>Name:</strong> {escape(name)}</p>
+          <p><strong>Created:</strong> {escape(str(project.get("created_at") or ""))}</p>
+          <p><strong>Workspace API:</strong> <code>/workspace/projects</code></p>
+        </section>
+        """
+
+    raise HTTPException(status_code=404, detail="Unknown project tab")
+
+
+def build_project_workspace_html(
+    *,
+    project: dict,
+    tab: str,
+    body_html: str,
+) -> HTMLResponse:
+    project_id = int(project["id"])
+    title = escape(str(project.get("name") or f"Project {project_id}"))
+    tabs = _project_tabs_html(project_id, tab)
+    html = f"""<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{title} — Ener-AI Project</title>
+  <style>
+    body {{ font-family: Inter, system-ui, sans-serif; background: #0d0d0d; color: #e5e5e5; margin: 0; padding: 20px; }}
+    a {{ color: #7dd3fc; text-decoration: none; }}
+    .back {{ display: inline-block; margin-bottom: 16px; padding: 8px 14px; background: #1a1a1a; border-radius: 8px; }}
+    h1 {{ margin: 0 0 12px; font-size: 1.4rem; }}
+    .project-tabs {{ display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 20px; }}
+    .project-tab {{ padding: 8px 12px; border: 1px solid #333; border-radius: 8px; background: #141414; color: #ccc; font-size: 0.85rem; }}
+    .project-tab.active {{ border-color: #3b82f6; color: #93c5fd; }}
+    .pw-card {{ background: #141414; border: 1px solid #222; border-radius: 12px; padding: 16px; margin-bottom: 16px; }}
+    .pw-table {{ width: 100%; border-collapse: collapse; font-size: 0.85rem; }}
+    .pw-table th, .pw-table td {{ border-bottom: 1px solid #222; padding: 8px 10px; text-align: left; vertical-align: top; }}
+    .pw-table th {{ color: #888; font-size: 0.75rem; text-transform: uppercase; }}
+    .muted {{ color: #888; font-size: 0.85rem; }}
+  </style>
+</head>
+<body>
+  <a class="back" href="/admin/projects">← All Projects</a>
+  <a class="back" href="/admin" style="margin-left:8px">Admin Home</a>
+  <h1>{title}</h1>
+  {tabs}
+  {body_html}
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
+
+async def _admin_project_workspace_page(request: Request, project_id: int, tab: str = "") -> HTMLResponse:
+    await _require_admin(request)
+    project = await _fetch_admin_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    body = await _project_workspace_tab_html(project_id, tab, project)
+    return build_project_workspace_html(project=project, tab=tab, body_html=body)
+
+
+@app.get("/admin/projects")
+async def admin_projects_list(request: Request):
+    await _require_admin(request)
+    async with get_db() as db:
+        cur = await db.execute(
+            """
+            SELECT p.id, p.name, datetime(p.created_at, '+7 hours') AS created_at,
+                   COUNT(m.id) AS message_count
+            FROM projects p
+            LEFT JOIN messages m ON m.project_id = p.id
+            WHERE p.deleted_at IS NULL
+            GROUP BY p.id, p.name, p.created_at
+            ORDER BY p.id DESC
+            """
+        )
+        rows = await cur.fetchall()
+    body = '<section class="pw-card"><h2>Projects</h2><table class="pw-table"><thead><tr><th>ID</th><th>Name</th><th>Messages</th><th>Created</th></tr></thead><tbody>'
+    if not rows:
+        body += '<tr><td colspan="4">ไม่มี project</td></tr>'
+    for r in rows:
+        body += (
+            f'<tr><td>{int(r["id"])}</td>'
+            f'<td><a href="/admin/projects/{int(r["id"])}">{escape(str(r["name"]))}</a></td>'
+            f'<td>{int(r["message_count"] or 0)}</td>'
+            f'<td>{escape(str(r["created_at"] or ""))}</td></tr>'
+        )
+    body += "</tbody></table></section>"
+    html = f"""<!DOCTYPE html>
+<html lang="th"><head><meta charset="utf-8"><title>Projects — Ener-AI</title>
+<style>
+body {{ font-family: Inter, sans-serif; background:#0d0d0d; color:#e5e5e5; padding:20px; }}
+a {{ color:#7dd3fc; }} .back {{ display:inline-block; margin-bottom:16px; padding:8px 14px; background:#1a1a1a; border-radius:8px; }}
+.pw-card {{ background:#141414; border:1px solid #222; border-radius:12px; padding:16px; }}
+.pw-table {{ width:100%; border-collapse:collapse; }} .pw-table th, .pw-table td {{ border-bottom:1px solid #222; padding:8px; text-align:left; }}
+</style></head><body>
+<a class="back" href="/admin">← Admin</a>
+<h1>Projects</h1>
+{body}
+</body></html>"""
+    return HTMLResponse(content=html)
+
+
+@app.get("/admin/projects/{project_id}")
+async def admin_project_overview(request: Request, project_id: int):
+    return await _admin_project_workspace_page(request, project_id, "")
+
+
+@app.get("/admin/projects/{project_id}/{tab}")
+async def admin_project_tab(request: Request, project_id: int, tab: str):
+    known = {slug for slug, _ in _ADMIN_PROJECT_TABS}
+    if tab not in known:
+        raise HTTPException(status_code=404, detail="Unknown tab")
+    return await _admin_project_workspace_page(request, project_id, tab)
 
 
 @app.get("/admin")
