@@ -229,7 +229,8 @@
       display: flex;
     }
 
-    #chat-messages {
+    #chat-messages,
+    #chat-messages.ws-chat-messages {
       flex: 1;
       overflow-y: auto;
       overflow-x: hidden;
@@ -240,6 +241,14 @@
       width: 100%;
       box-sizing: border-box;
       max-width: 100%;
+    }
+
+    #chat-messages-inner,
+    .ws-chat-inner {
+      width: 100%;
+      max-width: 48rem;
+      margin: 0 auto;
+      box-sizing: border-box;
     }
 
     .msg-row {
@@ -269,6 +278,9 @@
       word-break: break-word;
       overflow-wrap: anywhere;
       box-sizing: border-box;
+    }
+
+    .user-bubble.msg-bubble {
       flex: 0 0 auto;
     }
 
@@ -282,10 +294,10 @@
     }
 
     .ai-bubble {
-      flex: 1 1 auto;
+      flex: 1 1 0;
       min-width: 0;
-      max-width: min(90%, 42rem);
-      width: auto;
+      width: 100%;
+      max-width: 100%;
       background: transparent;
       border-radius: 0;
       padding: 4px 0;
