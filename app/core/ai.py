@@ -881,56 +881,128 @@ async def _call_groq_with_tools(
     messages: list[dict[str, str]] | None,
     tools: list[dict],
     agent: str,
+    max_turns: int = 5,
 ) -> dict:
+    """
+    Multi-turn Groq tool loop (OpenAI function calling + XML text fallback).
+    Tools are executed here; returns tool_calls=[] like the Claude agentic path.
+    """
+    from app.core.tool_call_parser import extract_tool_calls
+    from app.core.tools import execute_tool
+
     started_at = time.perf_counter()
-    try:
-        client = AsyncGroq(api_key=settings.groq_api_key)
-        groq_tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": tool["name"],
-                    "description": tool["description"],
-                    "parameters": tool["input_schema"],
-                },
-            }
-            for tool in tools
-        ]
-        response = await client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=_groq_messages(prompt, system, messages),
+    total_input = 0
+    total_output = 0
+    final_text = ""
+
+    if not tools:
+        text = await _call_groq(prompt, system, messages, agent)
+        return {"text": text, "tool_calls": []}
+
+    client = AsyncGroq(api_key=settings.groq_api_key)
+    groq_tools = _convert_tools_for_openai(tools)
+    current_messages = _groq_chat_messages_start(system, messages, prompt)
+
+    async def _groq_completion(chat_messages: list[dict], model: str):
+        return await client.chat.completions.create(
+            model=model,
+            messages=chat_messages,
             tools=groq_tools,
             tool_choice="auto",
+            max_tokens=4096,
         )
 
-        msg = response.choices[0].message
-        text = msg.content or ""
-        tool_calls = []
-        if msg.tool_calls:
-            for tool_call in msg.tool_calls:
-                raw_arguments = getattr(tool_call.function, "arguments", "") or "{}"
-                try:
-                    parsed_input = json.loads(raw_arguments)
-                except Exception:
-                    parsed_input = {}
-                tool_calls.append(
+    model = _GROQ_TOOL_MODEL
+    try:
+        for _turn in range(max_turns):
+            try:
+                response = await _groq_completion(current_messages, model)
+            except Exception:
+                if model == _GROQ_TOOL_MODEL:
+                    model = _GROQ_TOOL_MODEL_FALLBACK
+                    response = await _groq_completion(current_messages, model)
+                else:
+                    raise
+
+            usage = response.usage
+            total_input += getattr(usage, "prompt_tokens", 0) or 0
+            total_output += getattr(usage, "completion_tokens", 0) or 0
+
+            msg = response.choices[0].message
+            raw_text = msg.content or ""
+
+            native_calls: list[dict] = []
+            if msg.tool_calls:
+                for tool_call in msg.tool_calls:
+                    raw_arguments = getattr(tool_call.function, "arguments", "") or "{}"
+                    try:
+                        parsed_input = json.loads(raw_arguments)
+                    except Exception:
+                        parsed_input = {}
+                    native_calls.append(
+                        {
+                            "name": getattr(tool_call.function, "name", ""),
+                            "input": parsed_input,
+                            "tool_call_id": getattr(tool_call, "id", None),
+                        }
+                    )
+
+            parsed_calls, visible_text = extract_tool_calls(raw_text, native_calls)
+            if not parsed_calls:
+                final_text = visible_text
+                break
+
+            assistant_entry: dict = {
+                "role": "assistant",
+                "content": visible_text or None,
+            }
+            if msg.tool_calls:
+                assistant_entry["tool_calls"] = _serialize_groq_tool_calls(msg.tool_calls)
+            else:
+                assistant_entry["tool_calls"] = [
                     {
-                        "name": getattr(tool_call.function, "name", ""),
-                        "input": parsed_input,
+                        "id": f"call_{_turn}_{index}",
+                        "type": "function",
+                        "function": {
+                            "name": call.get("name", ""),
+                            "arguments": json.dumps(
+                                call.get("input", {}) or {},
+                                ensure_ascii=False,
+                            ),
+                        },
+                    }
+                    for index, call in enumerate(parsed_calls)
+                    if call.get("name")
+                ]
+            current_messages.append(assistant_entry)
+
+            for index, call in enumerate(parsed_calls):
+                tool_name = str(call.get("name", "")).strip()
+                tool_input = call.get("input", {}) or {}
+                if not tool_name:
+                    continue
+                try:
+                    result = await execute_tool(tool_name, tool_input)
+                    result_text = str(result)[:4000]
+                except Exception as exc:
+                    result_text = f"Error: {exc}"
+
+                tool_call_id = call.get("tool_call_id") or f"call_{_turn}_{index}"
+                current_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "content": result_text,
                     }
                 )
 
-        usage = response.usage
         elapsed_ms = int((time.perf_counter() - started_at) * 1000)
-        await _log_ai_run(
-            agent,
-            "groq",
-            getattr(usage, "prompt_tokens", 0) or 0,
-            getattr(usage, "completion_tokens", 0) or 0,
-            elapsed_ms,
-            True,
-        )
-        return {"text": text.strip(), "tool_calls": tool_calls}
+        await _log_ai_run(agent, "groq", total_input, total_output, elapsed_ms, True)
+        return {
+            "text": final_text.strip() or "ยังไม่มีคำตอบตอนนี้",
+            "tool_calls": [],
+            "model": "groq",
+        }
     except Exception:
         elapsed_ms = int((time.perf_counter() - started_at) * 1000)
         await _log_ai_run(agent, "groq", 0, 0, elapsed_ms, False)
@@ -1146,6 +1218,67 @@ def _convert_tools_for_anthropic(tools: list[dict]) -> list[dict]:
     ]
 
 
+def _convert_tools_for_openai(tools: list[dict]) -> list[dict]:
+    """OpenAI / Groq function-calling schema."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": tool["name"],
+                "description": tool.get("description", ""),
+                "parameters": tool.get(
+                    "input_schema",
+                    {"type": "object", "properties": {}},
+                ),
+            },
+        }
+        for tool in tools
+    ]
+
+
+_GROQ_TOOL_MODEL = "llama-3.3-70b-versatile"
+_GROQ_TOOL_MODEL_FALLBACK = "llama-3.1-8b-instant"
+_GROQ_TOOL_SYSTEM_SUFFIX = (
+    "\n\n=== Tool use ===\n"
+    "เรียก tools ผ่าน function calling API เท่านั้น "
+    "ห้ามพิมพ์ <function_calls> หรือ XML ในข้อความตอบ user"
+)
+
+
+def _groq_chat_messages_start(
+    system: str,
+    messages: list[dict] | None,
+    prompt: str,
+) -> list[dict]:
+    payload: list[dict] = [
+        {"role": "system", "content": (system or "") + _GROQ_TOOL_SYSTEM_SUFFIX},
+    ]
+    if messages:
+        for message in messages:
+            role = message.get("role", "user")
+            if role in {"user", "assistant"}:
+                payload.append({"role": role, "content": message.get("content", "")})
+    payload.append({"role": "user", "content": prompt})
+    return payload
+
+
+def _serialize_groq_tool_calls(tool_calls) -> list[dict]:
+    out = []
+    for index, tool_call in enumerate(tool_calls or []):
+        fn = tool_call.function
+        out.append(
+            {
+                "id": getattr(tool_call, "id", None) or f"call_{index}",
+                "type": "function",
+                "function": {
+                    "name": getattr(fn, "name", ""),
+                    "arguments": getattr(fn, "arguments", "") or "{}",
+                },
+            }
+        )
+    return out
+
+
 async def _single_turn_with_tools(
     prompt: str,
     system: str,
@@ -1170,12 +1303,12 @@ async def _single_turn_with_tools(
 
     if model_key == "haiku" and availability.get("haiku"):
         return await _call_anthropic_with_tools(prompt, system, messages, tools, agent)
-    if model_key == "groq" and availability.get("groq"):
+    if model_key in {"groq", "llama4"} and availability.get("groq"):
         return await _call_groq_with_tools(prompt, system, messages, tools, agent)
 
     if active == "haiku" and availability.get("haiku"):
         return await _call_anthropic_with_tools(prompt, system, messages, tools, agent)
-    if active == "groq" and availability.get("groq"):
+    if active in {"groq", "llama4"} and availability.get("groq"):
         return await _call_groq_with_tools(prompt, system, messages, tools, agent)
 
     text = await chat(prompt, system=system, agent=agent, messages=messages,
