@@ -282,8 +282,10 @@
     }
 
     .ai-bubble {
-      width: fit-content;
+      flex: 1 1 auto;
+      min-width: 0;
       max-width: min(90%, 42rem);
+      width: auto;
       background: transparent;
       border-radius: 0;
       padding: 4px 0;

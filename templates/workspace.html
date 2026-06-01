@@ -255,11 +255,12 @@
       flex: 0 0 auto;
     }
     #panel-chat .ai-bubble {
-      width: fit-content;
+      flex: 1 1 auto;
+      min-width: 0;
       max-width: min(90%, 42rem);
+      width: auto;
       padding: 0.25rem 0;
       background: transparent;
-      flex: 0 0 auto;
     }
     #panel-chat .msg-meta {
       font-size: 0.6875rem;
@@ -275,6 +276,21 @@
       white-space: pre-wrap;
       word-break: break-word;
       overflow-wrap: anywhere;
+    }
+    #panel-chat .msg-text strong { font-weight: 600; }
+    #panel-chat .msg-text ul,
+    #panel-chat .msg-text ol {
+      margin: 0.5rem 0;
+      padding-left: 1.25rem;
+    }
+    #panel-chat .msg-text li { margin: 0.25rem 0; }
+    #panel-chat .msg-text pre {
+      margin: 0.5rem 0;
+      padding: 0.75rem;
+      border-radius: 0.5rem;
+      background: oklch(0.2 0.01 250);
+      overflow-x: auto;
+      font-size: 0.875rem;
     }
     .ws-chat-history { margin-top: 1rem; }
     .ws-chat-date-link {

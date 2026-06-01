@@ -44,16 +44,61 @@ document.addEventListener('DOMContentLoaded', function() {
 
   function renderMarkdown(text) {
     let html = escapeHtml(text || '');
-    html = html.replace(/```([\\s\\S]*?)```/g, '<pre class="surface"><code>$1</code></pre>');
+    html = html.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
     html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-    html = html.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');
-    html = html.replace(/\\*([^*]+)\\*/g, '<em>$1</em>');
+    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
     html = html.replace(/(^|<br>)- (.+?)(?=(<br>|$))/g, '$1<li>$2</li>');
-    html = html.replace(/(<li>.*?<\\/li>)/gs, '<ul>$1</ul>');
-    html = html.replace(/(^|<br>)(\\d+)\\. (.+?)(?=(<br>|$))/g, '$1<li>$3</li>');
-    html = html.replace(/(<li>.*?<\\/li>)/gs, (match) => match.includes('<ul>') ? match : '<ol>' + match + '</ol>');
+    html = html.replace(/(<li>.*?<\/li>)/gs, '<ul>$1</ul>');
+    html = html.replace(/(^|<br>)(\d+)\. (.+?)(?=(<br>|$))/g, '$1<li>$3</li>');
+    html = html.replace(/(<li>.*?<\/li>)/gs, (match) => match.includes('<ul>') ? match : '<ol>' + match + '</ol>');
     html = html.replace(/\n/g, '<br>');
     return html;
+  }
+
+  function renderChatMessage(msg) {
+    const role = msg.role === 'user' ? 'user' : 'ai';
+    const row = document.createElement('div');
+    row.className = `msg-row ${role}-row`;
+    const content = msg.content || '';
+    if (role === 'user') {
+      row.innerHTML = `
+        <div class="msg-bubble user-bubble">
+          <div class="msg-text">${escapeHtml(content)}</div>
+        </div>
+      `;
+      return row;
+    }
+    const meta = msg.source === 'web' ? 'Ener-AI' : 'Telegram';
+    row.innerHTML = `
+      <div class="ws-ai-avatar" aria-hidden="true">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 11-12h-9l1-8z"/></svg>
+      </div>
+      <div class="msg-bubble ai-bubble">
+        <div class="msg-text">${renderMarkdown(content)}</div>
+        <div class="msg-meta">${escapeHtml(meta)}</div>
+      </div>
+    `;
+    return row;
+  }
+
+  function enhanceSsrChatMessages() {
+    if (!chatMessages) return;
+    chatMessages.querySelectorAll('.msg-row.ai-row').forEach((row) => {
+      if (row.querySelector('.ws-ai-avatar')) return;
+      const bubble = row.querySelector('.msg-bubble.ai-bubble');
+      const textEl = row.querySelector('.msg-text');
+      if (!bubble || !textEl) return;
+      const avatar = document.createElement('div');
+      avatar.className = 'ws-ai-avatar';
+      avatar.setAttribute('aria-hidden', 'true');
+      avatar.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 11-12h-9l1-8z"/></svg>';
+      row.insertBefore(avatar, bubble);
+      if (!textEl.dataset.md) {
+        textEl.innerHTML = renderMarkdown(textEl.textContent || '');
+        textEl.dataset.md = '1';
+      }
+    });
   }
 
   function showToast(msg) {
@@ -157,17 +202,13 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function appendUserBubble(text, meta='') {
-    const row = document.createElement('div');
-    row.className = 'msg-row user-row';
-    const metaHtml = meta
-      ? `<div class="msg-meta">${escapeHtml(meta)}</div>`
-      : '';
-    row.innerHTML = `
-      <div class="msg-bubble user-bubble">
-        <div class="msg-text">${escapeHtml(text)}</div>
-        ${metaHtml}
-      </div>
-    `;
+    const row = renderChatMessage({role: 'user', content: text, source: 'web'});
+    if (meta) {
+      const bubble = row.querySelector('.user-bubble');
+      if (bubble) {
+        bubble.insertAdjacentHTML('beforeend', `<div class="msg-meta">${escapeHtml(meta)}</div>`);
+      }
+    }
     chatMessages.appendChild(row);
     updateChatWelcome();
     scrollToBottom();
@@ -175,18 +216,13 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function appendAiBubble(text, meta='Ener-AI') {
-    const row = document.createElement('div');
-    row.className = 'msg-row ai-row';
-    row.innerHTML = `
-      <div class="msg-bubble ai-bubble">
-        <div class="msg-text">${renderMarkdown(text)}</div>
-        <div class="msg-meta">${escapeHtml(meta)}</div>
-      </div>
-    `;
+    const row = renderChatMessage({role: 'assistant', content: text, source: 'web'});
+    const metaEl = row.querySelector('.msg-meta');
+    if (metaEl) metaEl.textContent = meta;
     chatMessages.appendChild(row);
     updateChatWelcome();
     scrollToBottom();
-    return row;
+    return row.querySelector('.ai-bubble');
   }
 
   function appendThinkingBubble(id) {
@@ -194,6 +230,9 @@ document.addEventListener('DOMContentLoaded', function() {
     row.id = id;
     row.className = 'msg-row ai-row';
     row.innerHTML = `
+      <div class="ws-ai-avatar" aria-hidden="true">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 11-12h-9l1-8z"/></svg>
+      </div>
       <div class="msg-bubble ai-bubble thinking">
         <span class="dot"></span><span class="dot"></span><span class="dot"></span>
       </div>
@@ -412,12 +451,7 @@ document.addEventListener('DOMContentLoaded', function() {
           lastDay = day;
         }
       }
-      if (msg.role === 'user') {
-        appendUserBubble(msg.content || '');
-      } else {
-        const meta = msg.source === 'web' ? 'Ener-AI' : 'Telegram';
-        appendAiBubble(msg.content || '', meta);
-      }
+      chatMessages.appendChild(renderChatMessage(msg));
     });
     updateChatWelcome();
     scrollToBottom();
@@ -1289,6 +1323,7 @@ document.addEventListener('DOMContentLoaded', function() {
   showPanel(initialTool, {skipHistoryLoad: Boolean(hasSsrMessages)});
   loadProjects();
   if (hasSsrMessages) {
+    enhanceSsrChatMessages();
     updateChatWelcome();
     scrollToBottom();
   }
