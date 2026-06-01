@@ -875,6 +875,99 @@ async def _call_anthropic_with_tools(
         raise
 
 
+def _groq_sdk_response_to_dict(response) -> dict:
+    msg = response.choices[0].message
+    tool_calls = []
+    if msg.tool_calls:
+        for tool_call in msg.tool_calls:
+            tool_calls.append(
+                {
+                    "id": tool_call.id,
+                    "type": "function",
+                    "function": {
+                        "name": tool_call.function.name,
+                        "arguments": tool_call.function.arguments or "{}",
+                    },
+                }
+            )
+    return {
+        "choices": [
+            {
+                "message": {
+                    "content": msg.content,
+                    "tool_calls": tool_calls or None,
+                },
+            }
+        ],
+        "usage": {
+            "prompt_tokens": getattr(response.usage, "prompt_tokens", 0) or 0,
+            "completion_tokens": getattr(response.usage, "completion_tokens", 0) or 0,
+        },
+    }
+
+
+_OPENAI_TOOL_MODELS = frozenset(
+    {"groq", "llama4", "gpt-4o", "gpt-4o-mini", "deepseek-direct", "kimi", "grok"}
+)
+_GEMINI_TOOL_MODELS = frozenset({"gemini", "gemini-pro"})
+_CLAUDE_AGENTIC_MODELS = frozenset({"haiku", "sonnet", "opus"})
+_GROQ_TOOL_MODEL = "llama-3.3-70b-versatile"
+_GROQ_TOOL_MODEL_FALLBACK = "llama-3.1-8b-instant"
+_GROQ_TOOL_SYSTEM_SUFFIX = (
+    "\n\n=== Tool use ===\n"
+    "เรียก tools ผ่าน function calling API เท่านั้น "
+    "ห้ามพิมพ์ <function_calls> หรือ XML ในข้อความตอบ user"
+)
+
+
+async def _resolve_openai_compat_api(model_key: str) -> tuple[str, str, str]:
+    """Return (api_url, api_model, log_model)."""
+    from app.core.database import get_config
+
+    if model_key == "groq":
+        return "", _GROQ_TOOL_MODEL, "groq"
+    if model_key == "llama4":
+        return "", "meta-llama/llama-4-scout-17b-16e-instruct", "llama4"
+    if model_key == "gpt-4o-mini":
+        key = settings.openai_api_key or await get_config("openai_api_key", "")
+        if not key:
+            raise RuntimeError("OpenAI API key not set")
+        return "https://api.openai.com/v1/chat/completions", "gpt-4o-mini", "gpt-4o-mini"
+    if model_key == "gpt-4o":
+        key = settings.openai_api_key or await get_config("openai_api_key", "")
+        if not key:
+            raise RuntimeError("OpenAI API key not set")
+        return "https://api.openai.com/v1/chat/completions", "gpt-4o", "gpt-4o"
+    if model_key == "deepseek-direct":
+        key = settings.deepseek_api_key or await get_config("deepseek_api_key", "")
+        if not key:
+            raise RuntimeError("DeepSeek API key not set")
+        return "https://api.deepseek.com/chat/completions", "deepseek-chat", "deepseek-direct"
+    if model_key == "kimi":
+        key = settings.moonshot_api_key or await get_config("moonshot_api_key", "")
+        if not key:
+            raise RuntimeError("Moonshot API key not set")
+        return "https://api.moonshot.cn/v1/chat/completions", "kimi-k2-5", "kimi"
+    if model_key == "grok":
+        key = settings.xai_api_key or await get_config("xai_api_key", "")
+        if not key:
+            raise RuntimeError("xAI API key not set")
+        return "https://api.x.ai/v1/chat/completions", "grok-3", "grok"
+    raise RuntimeError(f"unsupported openai-compat model: {model_key}")
+
+
+async def _openai_compat_api_key(model_key: str) -> str:
+    from app.core.database import get_config
+
+    if model_key == "deepseek-direct":
+        return settings.deepseek_api_key or await get_config("deepseek_api_key", "")
+    if model_key == "kimi":
+        return settings.moonshot_api_key or await get_config("moonshot_api_key", "")
+    if model_key == "grok":
+        return settings.xai_api_key or await get_config("xai_api_key", "")
+    return settings.openai_api_key or await get_config("openai_api_key", "")
+
+
 async def _call_groq_with_tools(
     prompt: str,
     system: str,
@@ -883,130 +976,261 @@ async def _call_groq_with_tools(
     agent: str,
     max_turns: int = 5,
 ) -> dict:
-    """
-    Multi-turn Groq tool loop (OpenAI function calling + XML text fallback).
-    Tools are executed here; returns tool_calls=[] like the Claude agentic path.
-    """
-    from app.core.tool_call_parser import extract_tool_calls
-    from app.core.tools import execute_tool
+    return await _call_openai_compat_with_tools(
+        "groq", prompt, system, messages, tools, agent, max_turns=max_turns
+    )
 
-    started_at = time.perf_counter()
-    total_input = 0
-    total_output = 0
-    final_text = ""
+
+async def _call_openai_compat_with_tools(
+    model_key: str,
+    prompt: str,
+    system: str,
+    messages: list[dict[str, str]] | None,
+    tools: list[dict],
+    agent: str,
+    max_turns: int = 5,
+) -> dict:
+    """OpenAI-compatible multi-turn tool loop (Groq, GPT, DeepSeek, Kimi, Grok)."""
+    from app.core.universal_tools import openai_tool_loop
 
     if not tools:
-        text = await _call_groq(prompt, system, messages, agent)
-        return {"text": text, "tool_calls": []}
-
-    client = AsyncGroq(api_key=settings.groq_api_key)
-    groq_tools = _convert_tools_for_openai(tools)
-    current_messages = _groq_chat_messages_start(system, messages, prompt)
-
-    async def _groq_completion(chat_messages: list[dict], model: str):
-        return await client.chat.completions.create(
-            model=model,
-            messages=chat_messages,
-            tools=groq_tools,
-            tool_choice="auto",
-            max_tokens=4096,
+        text = await chat(
+            prompt,
+            system=system,
+            agent=agent,
+            messages=messages,
+            preferred_model=model_key,
         )
+        return {"text": text, "tool_calls": [], "model": model_key}
 
-    model = _GROQ_TOOL_MODEL
-    try:
-        for _turn in range(max_turns):
+    api_url, api_model, log_model = await _resolve_openai_compat_api(model_key)
+    groq_model = api_model
+    groq_fallback = _GROQ_TOOL_MODEL_FALLBACK
+
+    async def complete(chat_messages: list[dict], openai_tools: list[dict]) -> dict:
+        nonlocal groq_model
+        payload = {
+            "model": groq_model if model_key in {"groq", "llama4"} else api_model,
+            "messages": chat_messages,
+            "tools": openai_tools,
+            "tool_choice": "auto",
+            "max_tokens": 4096,
+        }
+        if model_key in {"groq", "llama4"}:
+            client = AsyncGroq(api_key=settings.groq_api_key)
             try:
-                response = await _groq_completion(current_messages, model)
+                response = await client.chat.completions.create(**payload)
             except Exception:
-                if model == _GROQ_TOOL_MODEL:
-                    model = _GROQ_TOOL_MODEL_FALLBACK
-                    response = await _groq_completion(current_messages, model)
+                if groq_model == api_model and model_key == "groq":
+                    groq_model = groq_fallback
+                    payload["model"] = groq_model
+                    response = await client.chat.completions.create(**payload)
                 else:
                     raise
+            return _groq_sdk_response_to_dict(response)
 
-            usage = response.usage
-            total_input += getattr(usage, "prompt_tokens", 0) or 0
-            total_output += getattr(usage, "completion_tokens", 0) or 0
+        api_key = await _openai_compat_api_key(model_key)
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                api_url,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=90.0,
+            )
+            resp.raise_for_status()
+            return resp.json()
 
-            msg = response.choices[0].message
-            raw_text = msg.content or ""
+    try:
+        return await openai_tool_loop(
+            complete=complete,
+            agent=agent,
+            log_model=log_model,
+            system=system,
+            messages=messages,
+            prompt=prompt,
+            tools=tools,
+            max_turns=max_turns,
+            log_fn=_log_ai_run,
+        )
+    except Exception:
+        await _log_ai_run(agent, log_model, 0, 0, 0, False)
+        raise
 
-            native_calls: list[dict] = []
-            if msg.tool_calls:
-                for tool_call in msg.tool_calls:
-                    raw_arguments = getattr(tool_call.function, "arguments", "") or "{}"
-                    try:
-                        parsed_input = json.loads(raw_arguments)
-                    except Exception:
-                        parsed_input = {}
-                    native_calls.append(
-                        {
-                            "name": getattr(tool_call.function, "name", ""),
-                            "input": parsed_input,
-                            "tool_call_id": getattr(tool_call, "id", None),
-                        }
+
+async def _call_gemini_with_tools(
+    model_key: str,
+    prompt: str,
+    system: str,
+    messages: list[dict[str, str]] | None,
+    tools: list[dict],
+    agent: str,
+    max_turns: int = 5,
+) -> dict:
+    """Gemini function-calling loop with text/XML fallback."""
+    from app.core.universal_tools import run_tools_from_text
+    from app.core.tools import execute_tool
+
+    if not tools:
+        fn = _call_gemini if model_key == "gemini" else _call_gemini_pro
+        text = await fn(prompt, system, messages, agent)
+        return {"text": text, "tool_calls": [], "model": model_key}
+
+    model_name = "gemini-2.5-flash" if model_key == "gemini" else "gemini-2.5-pro"
+    started_at = time.perf_counter()
+    try:
+        from google.genai import types
+
+        client = genai.Client(api_key=settings.gemini_api_key)
+        declarations = [
+            types.FunctionDeclaration(
+                name=tool["name"],
+                description=tool.get("description", ""),
+                parameters=tool.get("input_schema", {"type": "object", "properties": {}}),
+            )
+            for tool in tools
+        ]
+        gemini_tools = [types.Tool(function_declarations=declarations)]
+        contents: list = []
+        if messages:
+            for message in messages[-20:]:
+                role = "user" if message.get("role") == "user" else "model"
+                contents.append(
+                    types.Content(
+                        role=role,
+                        parts=[types.Part(text=str(message.get("content", "")))],
                     )
+                )
+        contents.append(types.Content(role="user", parts=[types.Part(text=prompt)]))
 
-            parsed_calls, visible_text = extract_tool_calls(raw_text, native_calls)
-            if not parsed_calls:
-                final_text = visible_text
+        final_text = ""
+        for _turn in range(max_turns):
+            response = await client.aio.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    tools=gemini_tools,
+                    system_instruction=(system or "") + _GROQ_TOOL_SYSTEM_SUFFIX,
+                    temperature=0.4,
+                    max_output_tokens=4096,
+                ),
+            )
+            candidate = (response.candidates or [None])[0]
+            if not candidate or not candidate.content:
+                break
+            parts = candidate.content.parts or []
+            function_calls = [part for part in parts if getattr(part, "function_call", None)]
+            text_parts = [part.text for part in parts if getattr(part, "text", None)]
+            if not function_calls:
+                final_text = "".join(text_parts).strip()
                 break
 
-            assistant_entry: dict = {
-                "role": "assistant",
-                "content": visible_text or None,
-            }
-            if msg.tool_calls:
-                assistant_entry["tool_calls"] = _serialize_groq_tool_calls(msg.tool_calls)
-            else:
-                assistant_entry["tool_calls"] = [
-                    {
-                        "id": f"call_{_turn}_{index}",
-                        "type": "function",
-                        "function": {
-                            "name": call.get("name", ""),
-                            "arguments": json.dumps(
-                                call.get("input", {}) or {},
-                                ensure_ascii=False,
-                            ),
-                        },
-                    }
-                    for index, call in enumerate(parsed_calls)
-                    if call.get("name")
-                ]
-            current_messages.append(assistant_entry)
-
-            for index, call in enumerate(parsed_calls):
-                tool_name = str(call.get("name", "")).strip()
-                tool_input = call.get("input", {}) or {}
-                if not tool_name:
-                    continue
+            contents.append(candidate.content)
+            response_parts = []
+            for part in function_calls:
+                fc = part.function_call
+                name = str(getattr(fc, "name", "") or "")
+                args = dict(getattr(fc, "args", None) or {})
                 try:
-                    result = await execute_tool(tool_name, tool_input)
-                    result_text = str(result)[:4000]
+                    result = await execute_tool(name, args)
+                    payload = {"result": str(result)[:4000]}
                 except Exception as exc:
-                    result_text = f"Error: {exc}"
-
-                tool_call_id = call.get("tool_call_id") or f"call_{_turn}_{index}"
-                current_messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "content": result_text,
-                    }
+                    payload = {"error": str(exc)}
+                response_parts.append(
+                    types.Part.from_function_response(name=name, response=payload)
                 )
+            contents.append(types.Content(role="user", parts=response_parts))
 
         elapsed_ms = int((time.perf_counter() - started_at) * 1000)
-        await _log_ai_run(agent, "groq", total_input, total_output, elapsed_ms, True)
-        return {
-            "text": final_text.strip() or "ยังไม่มีคำตอบตอนนี้",
-            "tool_calls": [],
-            "model": "groq",
-        }
+        await _log_ai_run(agent, model_key, 0, 0, elapsed_ms, True)
+        if final_text:
+            return {"text": final_text, "tool_calls": [], "model": model_key}
     except Exception:
-        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
-        await _log_ai_run(agent, "groq", 0, 0, elapsed_ms, False)
-        raise
+        await _log_ai_run(agent, model_key, 0, 0, 0, False)
+
+    fn = _call_gemini if model_key == "gemini" else _call_gemini_pro
+    raw = await fn(prompt, system, messages, agent)
+    cleaned = await run_tools_from_text(
+        raw,
+        prompt=prompt,
+        system=system,
+        messages=messages,
+        summarize=lambda user_prompt, **kw: chat(
+            user_prompt,
+            agent=agent,
+            preferred_model=model_key,
+            **kw,
+        ),
+    )
+    return {"text": cleaned, "tool_calls": [], "model": model_key}
+
+
+async def _dispatch_tools_for_model(
+    model_key: str,
+    prompt: str,
+    system: str,
+    messages: list[dict] | None,
+    tools: list[dict],
+    agent: str,
+    max_turns: int = 5,
+) -> dict:
+    """Route tool execution to the correct provider implementation."""
+    from app.core.universal_tools import run_tools_from_text
+
+    availability = await get_model_availability_async()
+    key = str(model_key or "groq").strip().lower()
+
+    if key in _OPENAI_TOOL_MODELS:
+        openai_ok = (
+            availability.get("groq", False)
+            if key in {"groq", "llama4"}
+            else availability.get(key, False)
+        )
+        if openai_ok:
+            return await _call_openai_compat_with_tools(
+                key, prompt, system, messages, tools, agent, max_turns=max_turns
+            )
+
+    if key in _GEMINI_TOOL_MODELS and availability.get("gemini"):
+        return await _call_gemini_with_tools(
+            key, prompt, system, messages, tools, agent, max_turns=max_turns
+        )
+
+    if key == "haiku" and availability.get("haiku"):
+        return await _call_anthropic_with_tools(prompt, system, messages, tools, agent)
+
+    if tools:
+        raw = await chat(
+            prompt,
+            system=system,
+            agent=agent,
+            messages=messages,
+            preferred_model=key or "groq",
+        )
+        cleaned = await run_tools_from_text(
+            raw,
+            prompt=prompt,
+            system=system,
+            messages=messages,
+            summarize=lambda user_prompt, **kw: chat(
+                user_prompt,
+                agent=agent,
+                preferred_model=key or "groq",
+                **kw,
+            ),
+        )
+        return {"text": cleaned, "tool_calls": [], "model": key}
+
+    text = await chat(
+        prompt,
+        system=system,
+        agent=agent,
+        messages=messages,
+        preferred_model=key or "groq",
+    )
+    return {"text": text, "tool_calls": [], "model": key}
 
 
 async def stream_chat_response(
@@ -1236,49 +1460,6 @@ def _convert_tools_for_openai(tools: list[dict]) -> list[dict]:
     ]
 
 
-_GROQ_TOOL_MODEL = "llama-3.3-70b-versatile"
-_GROQ_TOOL_MODEL_FALLBACK = "llama-3.1-8b-instant"
-_GROQ_TOOL_SYSTEM_SUFFIX = (
-    "\n\n=== Tool use ===\n"
-    "เรียก tools ผ่าน function calling API เท่านั้น "
-    "ห้ามพิมพ์ <function_calls> หรือ XML ในข้อความตอบ user"
-)
-
-
-def _groq_chat_messages_start(
-    system: str,
-    messages: list[dict] | None,
-    prompt: str,
-) -> list[dict]:
-    payload: list[dict] = [
-        {"role": "system", "content": (system or "") + _GROQ_TOOL_SYSTEM_SUFFIX},
-    ]
-    if messages:
-        for message in messages:
-            role = message.get("role", "user")
-            if role in {"user", "assistant"}:
-                payload.append({"role": role, "content": message.get("content", "")})
-    payload.append({"role": "user", "content": prompt})
-    return payload
-
-
-def _serialize_groq_tool_calls(tool_calls) -> list[dict]:
-    out = []
-    for index, tool_call in enumerate(tool_calls or []):
-        fn = tool_call.function
-        out.append(
-            {
-                "id": getattr(tool_call, "id", None) or f"call_{index}",
-                "type": "function",
-                "function": {
-                    "name": getattr(fn, "name", ""),
-                    "arguments": getattr(fn, "arguments", "") or "{}",
-                },
-            }
-        )
-    return out
-
-
 async def _single_turn_with_tools(
     prompt: str,
     system: str,
@@ -1288,32 +1469,11 @@ async def _single_turn_with_tools(
     model_key: str,
     strict_model: bool,
 ) -> dict:
-    """
-    Original single-turn tool-calling path (unchanged logic).
-    Used by Groq, Gemini, DeepSeek, and any non-Claude model.
-    """
-    availability = await get_model_availability_async()
-
-    if model_key == "deepseek":
-        text = await chat(prompt, system=system, agent=agent, messages=messages,
-                          preferred_model="deepseek")
-        return {"text": text, "tool_calls": []}
-
-    active = (await get_active_model()) or _default_model(availability)
-
-    if model_key == "haiku" and availability.get("haiku"):
-        return await _call_anthropic_with_tools(prompt, system, messages, tools, agent)
-    if model_key in {"groq", "llama4"} and availability.get("groq"):
-        return await _call_groq_with_tools(prompt, system, messages, tools, agent)
-
-    if active == "haiku" and availability.get("haiku"):
-        return await _call_anthropic_with_tools(prompt, system, messages, tools, agent)
-    if active in {"groq", "llama4"} and availability.get("groq"):
-        return await _call_groq_with_tools(prompt, system, messages, tools, agent)
-
-    text = await chat(prompt, system=system, agent=agent, messages=messages,
-                      preferred_model=model_key)
-    return {"text": text, "tool_calls": []}
+    """Universal tool path for non-Claude-agentic models."""
+    _ = strict_model
+    return await _dispatch_tools_for_model(
+        model_key, prompt, system, messages, tools, agent
+    )
 
 
 async def chat_with_tools(
@@ -1341,16 +1501,21 @@ async def chat_with_tools(
     if image_base64:
         model_key = "haiku"
 
-    # Only Claude supports the proper agentic multi-turn loop
-    if model_key not in {"haiku", "sonnet", "opus"}:
-        return await _single_turn_with_tools(
-            prompt, system, messages, tools, agent, model_key or "groq", strict_model
+    if model_key not in _CLAUDE_AGENTIC_MODELS:
+        return await _dispatch_tools_for_model(
+            model_key or "groq",
+            prompt,
+            system,
+            messages,
+            tools,
+            agent,
+            max_turns=max_turns,
         )
 
     api_key = settings.anthropic_api_key
     if not api_key:
-        return await _single_turn_with_tools(
-            prompt, system, messages, tools, agent, "groq", False
+        return await _dispatch_tools_for_model(
+            "groq", prompt, system, messages, tools, agent, max_turns=max_turns
         )
 
     model_id = {

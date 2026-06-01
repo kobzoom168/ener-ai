@@ -4,7 +4,8 @@ import time
 from app.core.ai import chat, chat_json, chat_with_tools
 from app.core.event_log import log_event
 from app.core.tool_call_parser import extract_tool_calls, strip_xml_tool_calls
-from app.core.tools import TOOLS, execute_tool
+from app.core.tools import TOOLS
+from app.core.universal_tools import execute_tool_calls, run_tools_from_text
 
 CHECKER_PROMPT = """ตรวจคำตอบนี้ก่อนส่งให้ user ตอบ JSON เท่านั้น:
 {
@@ -420,34 +421,24 @@ You are an autonomous coding agent. Act immediately, not just describe."""
         )
         reply = strip_xml_tool_calls(str(response.get("text", "")).strip())
 
-        # Groq/Claude agentic loops execute tools inside chat_with_tools (tool_calls=[]).
+        # Safety net: execute any XML/native tool calls still in the reply.
         pending_calls, reply = extract_tool_calls(reply, response.get("tool_calls") or [])
-        tool_results = []
-        for tool_call in pending_calls:
-            tool_name = str(tool_call.get("name", "")).strip()
-            tool_input = tool_call.get("input", {}) or {}
-            if not tool_name:
-                continue
-            try:
-                result = await execute_tool(tool_name, tool_input)
-                tool_results.append(f"✅ {result}")
-            except Exception as exc:
-                tool_results.append(f"⚠️ {tool_name}: {exc}")
-
-        if tool_results and not reply:
-            try:
-                summary = await chat(
-                    f"คำถาม: {text}\n\nผลจาก tools:\n"
-                    + "\n".join(tool_results)
-                    + "\n\nสรุปคำตอบให้กบเป็นภาษาไทย อ้างอิงผล tool จริงเท่านั้น",
+        if pending_calls:
+            tool_lines = await execute_tool_calls(pending_calls)
+            reply = await run_tools_from_text(
+                reply + "\n" + "\n".join(tool_lines) if reply else "\n".join(tool_lines),
+                prompt=text,
+                system=enhanced_system,
+                messages=history,
+                summarize=lambda user_prompt, **kw: chat(
+                    user_prompt,
                     system=enhanced_system,
                     agent="ReasonerToolSummary",
                     messages=history,
                     preferred_model=model,
-                )
-                reply = strip_xml_tool_calls(str(summary or "").strip())
-            except Exception:
-                reply = "\n".join(tool_results)
+                    **kw,
+                ),
+            )
 
         return reply or "ยังไม่มีคำตอบตอนนี้"
     except Exception:

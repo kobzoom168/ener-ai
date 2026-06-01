@@ -316,6 +316,37 @@
       padding: 0.25rem 0;
       background: transparent;
     }
+    #panel-chat .ai-bubble-wrap {
+      position: relative;
+      flex: 1 1 0;
+      min-width: 0;
+      width: 100%;
+      max-width: 100%;
+    }
+    #panel-chat .copy-btn {
+      position: absolute;
+      top: 0.25rem;
+      right: 0;
+      z-index: 2;
+      padding: 0.25rem 0.625rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: oklch(0.2 0.01 250 / 0.85);
+      color: var(--muted-foreground);
+      font-size: 0.6875rem;
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity 0.2s, background 0.2s, color 0.2s;
+    }
+    #panel-chat .ai-bubble-wrap:hover .copy-btn,
+    #panel-chat .copy-btn:focus-visible {
+      opacity: 1;
+    }
+    #panel-chat .copy-btn.copied {
+      color: #a78bfa;
+      border-color: #7c3aed;
+      background: oklch(0.28 0.08 300 / 0.5);
+    }
     #panel-chat .ai-row .msg-bubble.ai-bubble {
       flex: 1 1 0;
     }

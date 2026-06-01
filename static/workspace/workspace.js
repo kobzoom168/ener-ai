@@ -58,6 +58,46 @@ document.addEventListener('DOMContentLoaded', function() {
     return html;
   }
 
+  function getMessagePlainText(textEl) {
+    if (!textEl) return '';
+    const raw = textEl.dataset.raw;
+    if (raw) return raw;
+    const codes = textEl.querySelectorAll('pre code, pre');
+    if (codes.length > 0) {
+      return Array.from(codes).map((el) => el.textContent || '').join('\n\n').trim();
+    }
+    return textEl.textContent || '';
+  }
+
+  async function copyAiMessage(btn) {
+    const wrap = btn.closest('.ai-bubble-wrap');
+    const textEl = wrap?.querySelector('.msg-text');
+    const textToCopy = getMessagePlainText(textEl);
+    if (!textToCopy) {
+      showToast('ไม่มีข้อความให้ copy');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(textToCopy);
+      btn.textContent = '✓ Copied';
+      btn.classList.add('copied');
+      setTimeout(() => {
+        btn.textContent = 'Copy';
+        btn.classList.remove('copied');
+      }, 2000);
+    } catch (error) {
+      showToast('Copy failed');
+    }
+  }
+
+  function attachCopyButton(wrap) {
+    if (!wrap || wrap.dataset.copyBound === '1') return;
+    const btn = wrap.querySelector('.copy-btn');
+    if (!btn) return;
+    btn.addEventListener('click', () => copyAiMessage(btn));
+    wrap.dataset.copyBound = '1';
+  }
+
   function renderChatMessage(msg) {
     const role = msg.role === 'user' ? 'user' : 'ai';
     const row = document.createElement('div');
@@ -76,30 +116,60 @@ document.addEventListener('DOMContentLoaded', function() {
       <div class="ws-ai-avatar" aria-hidden="true">
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 11-12h-9l1-8z"/></svg>
       </div>
-      <div class="msg-bubble ai-bubble">
-        <div class="msg-text">${renderMarkdown(content)}</div>
-        <div class="msg-meta">${escapeHtml(meta)}</div>
+      <div class="ai-bubble-wrap">
+        <div class="msg-bubble ai-bubble">
+          <div class="msg-text" data-raw="${escapeHtml(content)}"></div>
+          <div class="msg-meta">${escapeHtml(meta)}</div>
+        </div>
+        <button type="button" class="copy-btn" aria-label="Copy message">Copy</button>
       </div>
     `;
+    const textEl = row.querySelector('.msg-text');
+    if (textEl) {
+      textEl.innerHTML = renderMarkdown(content);
+      textEl.dataset.raw = content;
+    }
+    attachCopyButton(row.querySelector('.ai-bubble-wrap'));
     return row;
   }
 
   function enhanceSsrChatMessages() {
     if (!chatMessages) return;
     chatMessages.querySelectorAll('.msg-row.ai-row').forEach((row) => {
-      if (row.querySelector('.ws-ai-avatar')) return;
       const bubble = row.querySelector('.msg-bubble.ai-bubble');
       const textEl = row.querySelector('.msg-text');
       if (!bubble || !textEl) return;
-      const avatar = document.createElement('div');
-      avatar.className = 'ws-ai-avatar';
-      avatar.setAttribute('aria-hidden', 'true');
-      avatar.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 11-12h-9l1-8z"/></svg>';
-      row.insertBefore(avatar, bubble);
+
+      if (!row.querySelector('.ws-ai-avatar')) {
+        const avatar = document.createElement('div');
+        avatar.className = 'ws-ai-avatar';
+        avatar.setAttribute('aria-hidden', 'true');
+        avatar.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 11-12h-9l1-8z"/></svg>';
+        row.insertBefore(avatar, row.querySelector('.ai-bubble-wrap') || bubble);
+      }
+
+      let wrap = row.querySelector('.ai-bubble-wrap');
+      if (!wrap) {
+        wrap = document.createElement('div');
+        wrap.className = 'ai-bubble-wrap';
+        bubble.parentNode.insertBefore(wrap, bubble);
+        wrap.appendChild(bubble);
+        const copyBtn = document.createElement('button');
+        copyBtn.type = 'button';
+        copyBtn.className = 'copy-btn';
+        copyBtn.setAttribute('aria-label', 'Copy message');
+        copyBtn.textContent = 'Copy';
+        wrap.appendChild(copyBtn);
+      }
+
+      if (!textEl.dataset.raw) {
+        textEl.dataset.raw = textEl.textContent || '';
+      }
       if (!textEl.dataset.md) {
-        textEl.innerHTML = renderMarkdown(textEl.textContent || '');
+        textEl.innerHTML = renderMarkdown(textEl.dataset.raw || '');
         textEl.dataset.md = '1';
       }
+      attachCopyButton(wrap);
     });
   }
 
@@ -1404,6 +1474,7 @@ document.addEventListener('DOMContentLoaded', function() {
   window.createTask = createTask;
   window.generateStandup = generateStandup;
   window.copyStandupReport = copyStandupReport;
+  window.copyAiMessage = copyAiMessage;
   window.updateProject = updateProject;
   window.runBrainstorm = runBrainstorm;
   window.fetchNews = fetchNews;
