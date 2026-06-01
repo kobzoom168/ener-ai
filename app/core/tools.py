@@ -219,6 +219,76 @@ TOOLS = [
         },
     },
     {
+        "name": "get_server_overview",
+        "description": (
+            "ภาพรวม server: docker containers ที่รัน, ขนาดโปรเจกต์, ports, CPU/RAM/Disk "
+            "เรียกเมื่อถาม server status, containers, docker ps, ports"
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "get_project_structure",
+        "description": (
+            "git log/status, branch, รายการไฟล์สำคัญของโปรเจกต์ "
+            "เรียกก่อนเขียน Cursor prompt หรือเมื่อถาม codebase, git commit, file structure"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "ener-ai | ener-scan | ener-scan-pro",
+                    "enum": ["ener-ai", "ener-scan", "ener-scan-pro"],
+                },
+            },
+        },
+    },
+    {
+        "name": "get_service_logs",
+        "description": (
+            "ดู docker logs ล่าสุดของ service "
+            "เรียกเมื่อถาม logs, errors, traceback ของ container"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "service": {
+                    "type": "string",
+                    "description": "ชื่อ container เช่น ener-ai, ener-scan-pro",
+                },
+                "lines": {
+                    "type": "integer",
+                    "description": "จำนวนบรรทัด (default 20, max 200)",
+                },
+            },
+        },
+    },
+    {
+        "name": "get_nginx_config",
+        "description": (
+            "อ่าน nginx site config ของ ener-ai / ener-scan / ener-local "
+            "เรียกเมื่อถาม routing, domain, reverse proxy, nginx"
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "get_env_summary",
+        "description": (
+            "สรุปค่าใน .env ของโปรเจกต์ (ซ่อน KEY/SECRET/TOKEN) "
+            "เรียกเมื่อถาม config, settings, environment variables"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "ener-ai | ener-scan | ener-scan-pro",
+                    "enum": ["ener-ai", "ener-scan", "ener-scan-pro"],
+                },
+            },
+        },
+    },
+    {
         "name": "get_system_info",
         "description": "ดูข้อมูลระบบ Ener-AI แบบ real-time: agent list, DB stats, scheduler, model ที่ใช้อยู่",
         "input_schema": {
@@ -597,6 +667,35 @@ async def _execute_tool_inner(tool_name: str, tool_input: dict) -> str:
     if tool_name == "check_system_stats":
         stats = collect_system_stats()
         return format_system_stats_report(stats)
+
+    if tool_name == "get_server_overview":
+        from app.core.server_awareness import format_tool_payload, get_server_overview
+
+        return format_tool_payload(get_server_overview())
+
+    if tool_name == "get_project_structure":
+        from app.core.server_awareness import format_tool_payload, get_project_structure
+
+        project = str(payload.get("project", "ener-ai")).strip() or "ener-ai"
+        return format_tool_payload(get_project_structure(project))
+
+    if tool_name == "get_service_logs":
+        from app.core.server_awareness import format_tool_payload, get_service_logs
+
+        service = str(payload.get("service", "ener-ai")).strip() or "ener-ai"
+        lines = payload.get("lines", 20)
+        return format_tool_payload(get_service_logs(service=service, lines=lines))
+
+    if tool_name == "get_nginx_config":
+        from app.core.server_awareness import format_tool_payload, get_nginx_config
+
+        return format_tool_payload(get_nginx_config())
+
+    if tool_name == "get_env_summary":
+        from app.core.server_awareness import format_tool_payload, get_env_summary
+
+        project = str(payload.get("project", "ener-scan-pro")).strip() or "ener-scan-pro"
+        return format_tool_payload(get_env_summary(project))
 
     if tool_name == "get_system_info":
         from app.core.ai import get_active_model, get_model_label

@@ -4599,6 +4599,11 @@ async def _workspace_chat_system_prompt(message: str, memory_context: str) -> st
     stats_context = await _workspace_system_stats_context(message)
     if stats_context:
         parts.append(stats_context)
+    from app.core.server_awareness import build_workspace_server_tools_context
+
+    server_context = await build_workspace_server_tools_context(message)
+    if server_context:
+        parts.append(server_context)
     if memory_context:
         parts.append(memory_context)
     return "\n\n".join(parts)

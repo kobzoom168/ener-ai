@@ -138,7 +138,18 @@ AI_PERSONALITY = """คุณชื่อ Ener-AI เป็นผู้ช่ว
 - ถ้าไม่ชัด → ถามสั้นๆ "งาน รพ. หรือ Ener ครับกบ?"
 """
 
-BASE_SYSTEM_PROMPT = OWNER_CONTEXT + "\n\n" + AI_PERSONALITY
+SERVER_CURSOR_GUIDANCE = """
+=== Server / Cursor prompt (สำคัญ) ===
+เมื่อกบต้องการให้ช่วยเขียน Cursor prompt แก้ code บน server หรือถาม state ของระบบ:
+1. เรียก tool get_project_structure(project=...) ก่อนเสมอ เพื่อรู้ path, git log/status, ไฟล์จริง
+2. ถ้าถาม containers / ports / ภาพรวมเครื่อง → เรียก get_server_overview
+3. ถ้าถาม logs / errors → เรียก get_service_logs(service=...)
+4. ถ้าถาม domain / nginx / routing → เรียก get_nginx_config
+5. ถ้าถาม config/.env → เรียก get_env_summary (ค่า secret ถูกปิด *** แล้ว)
+6. เขียน Cursor prompt ให้ตรง path และ state จริง ห้ามเดาโครงสร้างไฟล์
+"""
+
+BASE_SYSTEM_PROMPT = OWNER_CONTEXT + "\n\n" + AI_PERSONALITY + "\n\n" + SERVER_CURSOR_GUIDANCE
 
 
 def build_system_prompt(extra_system: str = "") -> str:

@@ -42,14 +42,92 @@ def route_fast(text: str, routing: dict[str, str] | None = None) -> dict:
 
     from app.core.tool_router import classify_system_tool_intent
 
-    if classify_system_tool_intent(text) == "server":
+    _server_tools = [
+        "check_system_stats",
+        "get_server_overview",
+        "get_project_structure",
+        "get_service_logs",
+        "get_nginx_config",
+        "get_env_summary",
+        "get_system_info",
+    ]
+
+    sys_intent = classify_system_tool_intent(text)
+    if sys_intent == "server":
         return {
             "complexity": "simple",
             "domain": "system",
             "model": r.get("system", "groq"),
-            "tools": ["check_system_stats", "get_system_info"],
+            "tools": _server_tools,
             "needs_check": False,
             "reason": "system resource monitoring",
+        }
+    if sys_intent == "logs":
+        return {
+            "complexity": "simple",
+            "domain": "system",
+            "model": r.get("system", "groq"),
+            "tools": ["get_service_logs", "get_server_overview", "check_system_stats"],
+            "needs_check": False,
+            "reason": "service logs",
+        }
+    if sys_intent == "errors":
+        return {
+            "complexity": "simple",
+            "domain": "system",
+            "model": r.get("system", "groq"),
+            "tools": ["get_service_logs", "get_project_structure", "check_system_stats"],
+            "needs_check": False,
+            "reason": "service errors",
+        }
+
+    if any(k in t for k in ["container", "docker ps", "containers", "docker compose"]):
+        return {
+            "complexity": "simple",
+            "domain": "system",
+            "model": r.get("system", "groq"),
+            "tools": ["get_server_overview", "check_system_stats", "get_service_logs"],
+            "needs_check": False,
+            "reason": "docker containers",
+        }
+
+    if any(k in t for k in ["nginx", "routing", "reverse proxy", "sites-enabled"]) or (
+        "domain" in t and any(x in t for x in ("my-ener", "ener.uk", "proxy"))
+    ):
+        return {
+            "complexity": "simple",
+            "domain": "system",
+            "model": r.get("system", "groq"),
+            "tools": ["get_nginx_config", "get_server_overview"],
+            "needs_check": False,
+            "reason": "nginx routing",
+        }
+
+    if any(k in t for k in ["cursor prompt", "git commit", "git status", "codebase", "file structure"]):
+        return {
+            "complexity": "complex",
+            "domain": "code",
+            "model": r.get("code", "groq"),
+            "tools": [
+                "get_project_structure",
+                "read_code_file",
+                "get_server_overview",
+                "get_env_summary",
+            ],
+            "needs_check": False,
+            "reason": "cursor prompt / codebase introspection",
+        }
+
+    if any(k in t for k in [".env", "environment variable", "config file"]) or (
+        "config" in t and "server" in t
+    ):
+        return {
+            "complexity": "simple",
+            "domain": "system",
+            "model": r.get("system", "groq"),
+            "tools": ["get_env_summary", "get_project_structure", "get_nginx_config"],
+            "needs_check": False,
+            "reason": "env/config summary",
         }
 
     # Location / current info → Gemini (free, grounded)
@@ -226,6 +304,11 @@ def route_fast(text: str, routing: dict[str, str] | None = None) -> dict:
             "model": r.get("system", "groq"),
             "tools": [
                 "check_system_stats",
+                "get_server_overview",
+                "get_project_structure",
+                "get_service_logs",
+                "get_nginx_config",
+                "get_env_summary",
                 "get_system_info",
                 "read_code_file",
                 "generate_cursor_prompt",
