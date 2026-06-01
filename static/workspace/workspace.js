@@ -94,20 +94,27 @@ document.addEventListener('DOMContentLoaded', function() {
     chatMessages.appendChild(marker);
   }
 
-  function scrollToChatDay(dayKey) {
-    if (!dayKey) return false;
-    const marker = document.getElementById('chat-day-' + dayKey);
-    if (!marker) return false;
-    marker.scrollIntoView({behavior: 'smooth', block: 'start'});
-    return true;
+  function getWorkspaceDateFilter() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('date') === 'all') return 'all';
+    const fromUrl = params.get('date') || params.get('scroll');
+    if (fromUrl) return fromUrl.slice(0, 10);
+    if (window.__WORKSPACE_SHOW_ALL__) return 'all';
+    return window.__WORKSPACE_CHAT_DATE__ || window.__WORKSPACE_TODAY__ || '';
   }
 
-  function scrollChatToTarget() {
-    const scrollDay =
-      window.__WORKSPACE_SCROLL_DATE__ ||
-      new URLSearchParams(window.location.search).get('scroll');
-    if (scrollDay && scrollToChatDay(scrollDay)) return;
-    scrollToBottom();
+  function workspaceHistoryQuery() {
+    const params = new URLSearchParams();
+    if (window._currentProject) params.set('project_id', String(window._currentProject));
+    const dateFilter = getWorkspaceDateFilter();
+    if (dateFilter === 'all') {
+      params.set('date', 'all');
+      params.set('limit', '500');
+    } else {
+      params.set('date', dateFilter);
+      params.set('limit', '300');
+    }
+    return params.toString() ? `?${params.toString()}` : '';
   }
 
   function setSendButtonState(loading) {
@@ -351,6 +358,11 @@ document.addEventListener('DOMContentLoaded', function() {
           }
           if (data.type === 'done') {
             loadProjects().catch(() => {});
+            const df = getWorkspaceDateFilter();
+            const today = window.__WORKSPACE_TODAY__ || '';
+            if (df && df !== 'all' && df !== today) {
+              loadChatHistory();
+            }
           }
           if (data.type === 'error') {
             document.getElementById(thinkingId)?.remove();
@@ -370,11 +382,9 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   async function loadChatHistory() {
-    const params = new URLSearchParams();
-    if (window._currentProject) params.set('project_id', String(window._currentProject));
-    params.set('limit', '200');
-    const query = params.toString() ? `?${params.toString()}` : '';
-    const data = await api(`/workspace/chat/history${query}`);
+    const dateFilter = getWorkspaceDateFilter();
+    const showAll = dateFilter === 'all';
+    const data = await api(`/workspace/chat/history${workspaceHistoryQuery()}`);
     chatMessages.innerHTML = '';
     const messages = data.messages || [];
     if (!messages.length) {
@@ -382,12 +392,25 @@ document.addEventListener('DOMContentLoaded', function() {
       updateChatWelcome();
       return;
     }
+    if (showAll) {
+      const title = document.createElement('div');
+      title.className = 'ws-chat-view-title';
+      title.textContent = 'ประวัติทั้งหมด';
+      chatMessages.appendChild(title);
+    } else if (dateFilter) {
+      const title = document.createElement('div');
+      title.className = 'ws-chat-view-title';
+      title.textContent = 'chat ' + formatDayLabel(dateFilter);
+      chatMessages.appendChild(title);
+    }
     let lastDay = '';
     messages.forEach((msg) => {
-      const day = dayKeyFromCreatedAt(msg.created_at);
-      if (day && day !== lastDay) {
-        ensureDayMarker(day);
-        lastDay = day;
+      if (showAll) {
+        const day = dayKeyFromCreatedAt(msg.created_at);
+        if (day && day !== lastDay) {
+          ensureDayMarker(day);
+          lastDay = day;
+        }
       }
       if (msg.role === 'user') {
         appendUserBubble(msg.content || '');
@@ -397,7 +420,7 @@ document.addEventListener('DOMContentLoaded', function() {
       }
     });
     updateChatWelcome();
-    scrollChatToTarget();
+    scrollToBottom();
   }
 
   function highlightProjectLink() {
@@ -1267,7 +1290,7 @@ document.addEventListener('DOMContentLoaded', function() {
   loadProjects();
   if (hasSsrMessages) {
     updateChatWelcome();
-    scrollChatToTarget();
+    scrollToBottom();
   }
   } catch(err) {
     console.error('WORKSPACE JS ERROR:', err);

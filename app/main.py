@@ -4548,13 +4548,37 @@ def _workspace_user_id() -> str:
     return str(settings.telegram_chat_id)
 
 
-def _format_chat_date_label(date_key: str) -> str:
-    from datetime import datetime
+def _workspace_tz() -> ZoneInfo:
+    return ZoneInfo("Asia/Bangkok")
 
+
+def _workspace_today_key() -> str:
+    return datetime.now(_workspace_tz()).strftime("%Y-%m-%d")
+
+
+def _format_chat_date_label(date_key: str) -> str:
     try:
         return datetime.strptime(str(date_key), "%Y-%m-%d").strftime("%d-%b-%Y").lower()
     except ValueError:
         return str(date_key)
+
+
+def _resolve_workspace_chat_date(
+    date: str | None = None,
+    scroll: str | None = None,
+) -> tuple[str | None, bool]:
+    """Return (filter_date YYYY-MM-DD or None, show_all). Default = today (Bangkok)."""
+    raw = str(date or scroll or "").strip()
+    if raw.lower() == "all":
+        return None, True
+    if not raw:
+        return _workspace_today_key(), False
+    day = raw[:10]
+    try:
+        datetime.strptime(day, "%Y-%m-%d")
+    except ValueError:
+        return _workspace_today_key(), False
+    return day, False
 
 
 async def _workspace_conversation_id(project_id: int | None = None) -> str:
@@ -4606,12 +4630,21 @@ def _normalize_project_id(value: object) -> int | None:
     return project_id if project_id > 0 else None
 
 
-async def _workspace_history_rows(project_id: int | None = None, limit: int = 200) -> list[dict]:
+async def _workspace_history_rows(
+    project_id: int | None = None,
+    limit: int = 200,
+    chat_date: str | None = None,
+) -> list[dict]:
     limit_value = max(1, min(limit, 500))
+    date_clause = ""
+    date_params: tuple[object, ...] = ()
+    if chat_date:
+        date_clause = " AND date(datetime(created_at, '+7 hours')) = ?"
+        date_params = (chat_date,)
     async with get_db() as db:
         if project_id is None:
             cursor = await db.execute(
-                """
+                f"""
                 SELECT
                     id,
                     role,
@@ -4622,14 +4655,15 @@ async def _workspace_history_rows(project_id: int | None = None, limit: int = 20
                 FROM messages
                 WHERE chat_id = ?
                   AND role IN ('user', 'assistant')
+                  {date_clause}
                 ORDER BY id DESC
                 LIMIT ?
                 """,
-                (_workspace_user_id(), limit_value),
+                (_workspace_user_id(), *date_params, limit_value),
             )
         else:
             cursor = await db.execute(
-                """
+                f"""
                 SELECT
                     id,
                     role,
@@ -4640,10 +4674,11 @@ async def _workspace_history_rows(project_id: int | None = None, limit: int = 20
                 FROM messages
                 WHERE chat_id = ? AND project_id = ?
                   AND role IN ('user', 'assistant')
+                  {date_clause}
                 ORDER BY id DESC
                 LIMIT ?
                 """,
-                (_workspace_user_id(), project_id, limit_value),
+                (_workspace_user_id(), project_id, *date_params, limit_value),
             )
         rows = await cursor.fetchall()
     return [
@@ -5030,6 +5065,7 @@ async def workspace_page(
     request: Request,
     tool: str = "chat",
     project_id: int | None = None,
+    date: str | None = None,
     scroll: str | None = None,
 ):
     await _require_admin(request)
@@ -5039,7 +5075,8 @@ async def workspace_page(
     if normalized_tool not in _VALID_WORKSPACE_TOOLS:
         normalized_tool = "chat"
     normalized_project_id = _normalize_project_id(project_id)
-    scroll_date = str(scroll or "").strip()[:10] or None
+    selected_date, show_all = _resolve_workspace_chat_date(date, scroll)
+    today_key = _workspace_today_key()
 
     stats = await get_system_stats()
     total_messages, projects = await _workspace_projects_for_page()
@@ -5048,7 +5085,8 @@ async def workspace_page(
     active_model_key = await get_active_model()
     recent_messages = await _workspace_history_rows(
         project_id=normalized_project_id,
-        limit=100,
+        limit=500 if show_all else 300,
+        chat_date=None if show_all else selected_date,
     )
     chat_dates = await _workspace_chat_dates()
 
@@ -5066,7 +5104,13 @@ async def workspace_page(
             "recent_messages": recent_messages,
             "project_id": normalized_project_id,
             "chat_dates": chat_dates,
-            "scroll_date": scroll_date,
+            "selected_date": selected_date,
+            "selected_date_label": _format_chat_date_label(selected_date)
+            if selected_date
+            else "",
+            "show_all": show_all,
+            "today_key": today_key,
+            "today_label": _format_chat_date_label(today_key),
         },
     )
 
@@ -5219,7 +5263,20 @@ async def workspace_chat_history(request: Request):
     await _require_admin(request)
     project_id = _normalize_project_id(request.query_params.get("project_id"))
     limit = int(request.query_params.get("limit", "200") or 200)
-    return JSONResponse({"messages": await _workspace_history_rows(project_id=project_id, limit=limit)})
+    raw_date = request.query_params.get("date") or request.query_params.get("scroll")
+    selected_date, show_all = _resolve_workspace_chat_date(raw_date, None)
+    messages = await _workspace_history_rows(
+        project_id=project_id,
+        limit=500 if show_all else max(limit, 300),
+        chat_date=None if show_all else selected_date,
+    )
+    return JSONResponse(
+        {
+            "messages": messages,
+            "date": selected_date,
+            "show_all": show_all,
+        }
+    )
 
 
 @app.post("/workspace/notes/save")

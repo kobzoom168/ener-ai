@@ -5,12 +5,19 @@
       </div>
       <div id="chat-messages" class="ws-chat-messages{% if not recent_messages %} hidden{% endif %}">
         <div class="ws-chat-inner" id="chat-messages-inner">
+          {% if show_all %}
+          <div class="ws-chat-view-title">ประวัติทั้งหมด</div>
+          {% elif selected_date_label %}
+          <div class="ws-chat-view-title">chat {{ selected_date_label }}</div>
+          {% endif %}
           {% set ns = namespace(prev_day='') %}
           {% for msg in recent_messages %}
+          {% if show_all %}
           {% set day = msg.created_at[:10] if msg.created_at else '' %}
           {% if day and day != ns.prev_day %}
           <div id="chat-day-{{ day }}" class="ws-chat-day-marker">{{ day }}</div>
           {% set ns.prev_day = day %}
+          {% endif %}
           {% endif %}
           <div class="msg-row {{ 'user-row' if msg.role == 'user' else 'ai-row' }}">
             {% if msg.role != 'user' %}

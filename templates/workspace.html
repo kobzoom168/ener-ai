@@ -294,6 +294,13 @@
       margin: 16px 0 8px;
       scroll-margin-top: 12px;
     }
+    .ws-chat-view-title {
+      text-align: center;
+      font-size: 12px;
+      color: #a78bfa;
+      margin: 8px 0 16px;
+      font-weight: 500;
+    }
     @media (max-width: 768px) { #workspace-sidebar { display: none; } }
   </style>
 </head>
@@ -330,11 +337,21 @@
       <div class="ws-chat-history">
         <p class="mb-2 px-3 text-xs font-medium uppercase tracking-wider" style="color: var(--muted-foreground);">วันที่</p>
         <nav class="space-y-0.5">
+          <a href="/workspace?tool=chat&amp;date={{ today_key }}{% if project_id %}&amp;project_id={{ project_id }}{% endif %}"
+             class="ws-chat-date-link{% if not show_all and selected_date == today_key %} active{% endif %}">
+            chat วันนี้ ({{ today_label }})
+          </a>
+          <a href="/workspace?tool=chat&amp;date=all{% if project_id %}&amp;project_id={{ project_id }}{% endif %}"
+             class="ws-chat-date-link{% if show_all %} active{% endif %}">
+            ทั้งหมด
+          </a>
           {% for d in chat_dates %}
-          <a href="/workspace?tool=chat&amp;scroll={{ d.key }}{% if project_id %}&amp;project_id={{ project_id }}{% endif %}"
-             class="ws-chat-date-link{% if scroll_date == d.key %} active{% endif %}">
+          {% if d.key != today_key %}
+          <a href="/workspace?tool=chat&amp;date={{ d.key }}{% if project_id %}&amp;project_id={{ project_id }}{% endif %}"
+             class="ws-chat-date-link{% if not show_all and selected_date == d.key %} active{% endif %}">
             chat {{ d.label }}
           </a>
+          {% endif %}
           {% endfor %}
         </nav>
       </div>
@@ -383,7 +400,9 @@
 <script>
   window.__WORKSPACE_TOOL__ = {{ tool|tojson }};
   window.__WORKSPACE_PROJECT_ID__ = {{ project_id|tojson }};
-  window.__WORKSPACE_SCROLL_DATE__ = {{ scroll_date|tojson }};
+  window.__WORKSPACE_CHAT_DATE__ = {{ (none if show_all else selected_date)|tojson }};
+  window.__WORKSPACE_SHOW_ALL__ = {{ show_all|tojson }};
+  window.__WORKSPACE_TODAY__ = {{ today_key|tojson }};
 
   function handleChatFormSubmit(event) {
     if (typeof window.sendMessage === 'function') {
