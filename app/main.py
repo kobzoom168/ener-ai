@@ -5021,6 +5021,33 @@ async def workspace_page(
     )
 
 
+@app.post("/workspace/chat")
+async def workspace_chat(request: Request):
+    await _require_admin(request)
+    form = await request.form()
+    message = str(form.get("message", "")).strip()
+    project_id = _normalize_project_id(form.get("project_id"))
+    if message:
+        from app.core.ai_gateway import run_ai
+
+        await run_ai(
+            source="web",
+            external_chat_id=_workspace_user_id(),
+            text=message,
+            project_id=project_id,
+        )
+    redirect_url = "/workspace?tool=chat"
+    if project_id is not None:
+        redirect_url = f"/workspace?tool=chat&project_id={project_id}"
+    return RedirectResponse(url=redirect_url, status_code=303)
+
+
+@app.post("/workspace/new-chat")
+async def workspace_new_chat(request: Request):
+    await _require_admin(request)
+    return RedirectResponse(url="/workspace?tool=chat", status_code=303)
+
+
 @app.post("/workspace/chat/send")
 async def workspace_chat_send(request: Request):
     await _require_admin(request)
@@ -8192,6 +8219,14 @@ async def admin_switch_model(request: Request):
     import asyncio as _asyncio
 
     _asyncio.create_task(_generate_model_handoff(model))
+    if request.headers.get("X-Workspace-Ajax") == "1":
+        return JSONResponse(
+            {
+                "ok": True,
+                "model": model,
+                "active_model_label": get_model_label(model),
+            }
+        )
     next_url = form_data.get("next", [""])[0].strip()
     if not next_url.startswith("/workspace"):
         next_url = "/admin"

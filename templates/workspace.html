@@ -68,17 +68,13 @@
       font-size: 0.875rem; cursor: pointer; outline: none; max-width: 140px;
     }
     .ws-send-btn {
-      width: 2.5rem; height: 2.5rem; border-radius: 9999px; border: none;
-      background: var(--foreground); color: var(--background); cursor: pointer;
+      width: 40px; height: 40px; border-radius: 50%; border: none;
+      background: #7c3aed; color: white; cursor: pointer; flex-shrink: 0;
       display: inline-flex; align-items: center; justify-content: center;
     }
-    .ws-suggestion-row { display: flex; justify-content: center; margin-top: 1rem; }
-    .ws-suggestion-chip {
-      display: inline-flex; align-items: center; gap: 0.5rem;
-      border: 1px solid var(--border); background: var(--card);
-      border-radius: 9999px; padding: 0.5rem 1rem; font-size: 0.875rem;
-      color: var(--muted-foreground); cursor: pointer;
-    }
+    .ws-send-btn:hover { background: #6d28d9; }
+    .ws-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    #chat-form { margin: 0; }
     .ws-ai-avatar {
       width: 2rem; height: 2rem; border-radius: 9999px; background: var(--primary);
       display: flex; align-items: center; justify-content: center; flex-shrink: 0;
@@ -133,17 +129,19 @@
     </div>
 
     <div class="px-3 pb-4">
-      <button type="button" class="ws-new-chat" onclick="newChat()">
-        <i data-lucide="plus" class="h-4 w-4"></i>
-        <span>New Chat</span>
-      </button>
+      <form method="post" action="/workspace/new-chat" class="m-0">
+        <button type="submit" class="ws-new-chat">
+          <i data-lucide="plus" class="h-4 w-4"></i>
+          <span>New Chat</span>
+        </button>
+      </form>
     </div>
 
     <div class="flex-1 overflow-y-auto px-2">
       <p class="mb-2 px-3 text-xs font-medium uppercase tracking-wider text-muted-foreground" style="color: var(--muted-foreground);">Tools</p>
       <nav id="workspace-tool-nav" class="space-y-0.5">
         {% for tid, label in tools %}
-        <a href="/workspace?tool={{ tid }}" class="tool-link{% if tool == tid %} active{% endif %}" data-panel="{{ tid }}" onclick="event.preventDefault(); showPanel('{{ tid }}')">
+        <a href="/workspace?tool={{ tid }}" class="tool-link{% if tool == tid %} active{% endif %}" data-panel="{{ tid }}">
           <span>{{ label }}</span>
         </a>
         {% endfor %}
@@ -192,6 +190,47 @@
 <script>
   window.__WORKSPACE_TOOL__ = {{ tool|tojson }};
   window.__WORKSPACE_PROJECT_ID__ = {{ project_id|tojson }};
+
+  function handleChatFormSubmit(event) {
+    if (typeof window.sendMessage === 'function') {
+      event.preventDefault();
+      window.sendMessage();
+      return false;
+    }
+    return true;
+  }
+
+  document.addEventListener('DOMContentLoaded', function() {
+    const modelSelect = document.getElementById('model-select');
+    const modelBadge = document.getElementById('active-model-badge');
+    if (modelSelect) {
+      modelSelect.addEventListener('change', async function() {
+        const model = this.value;
+        try {
+          const body = new URLSearchParams({ model: model, next: '/workspace?tool=chat' });
+          const res = await fetch('/admin/switch-model', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'X-Workspace-Ajax': '1',
+            },
+            credentials: 'same-origin',
+            body: body.toString(),
+          });
+          if (!res.ok) throw new Error('switch model failed');
+          const data = await res.json();
+          if (modelBadge && data.active_model_label) {
+            modelBadge.textContent = data.active_model_label;
+          }
+        } catch (err) {
+          console.error(err);
+          if (typeof window.showToast === 'function') {
+            window.showToast('เปลี่ยนโมเดลไม่สำเร็จ');
+          }
+        }
+      });
+    }
+  });
 </script>
 <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 <script src="/static/workspace/workspace.js"></script>

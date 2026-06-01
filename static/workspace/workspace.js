@@ -52,7 +52,7 @@ document.addEventListener('DOMContentLoaded', function() {
     html = html.replace(/(<li>.*?<\\/li>)/gs, '<ul>$1</ul>');
     html = html.replace(/(^|<br>)(\\d+)\\. (.+?)(?=(<br>|$))/g, '$1<li>$3</li>');
     html = html.replace(/(<li>.*?<\\/li>)/gs, (match) => match.includes('<ul>') ? match : '<ol>' + match + '</ol>');
-    html = html.replace(/\\n/g, '<br>');
+    html = html.replace(/\n/g, '<br>');
     return html;
   }
 
@@ -71,8 +71,9 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function setSendButtonState(loading) {
+    if (!sendBtn) return;
     sendBtn.disabled = loading;
-    sendBtn.textContent = loading ? '...' : '↑';
+    sendBtn.setAttribute('aria-busy', loading ? 'true' : 'false');
   }
 
   function currentTimeLabel() {
@@ -239,6 +240,7 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   async function sendMessage() {
+    if (!chatInput) return;
     const msg = chatInput.value.trim();
     if (!msg || state.streaming) return;
 
@@ -264,7 +266,7 @@ document.addEventListener('DOMContentLoaded', function() {
         body: JSON.stringify({
           message: msg,
           project_id: window._currentProject || null,
-          model: 'auto'
+          model: (document.getElementById('model-select') || {}).value || 'auto'
         })
       });
 
@@ -281,11 +283,11 @@ document.addEventListener('DOMContentLoaded', function() {
         if (done) break;
 
         buffer += decoder.decode(value, {stream: true});
-        const chunks = buffer.split('\\n\\n');
+        const chunks = buffer.split('\n\n');
         buffer = chunks.pop() || '';
 
         for (const chunk of chunks) {
-          const line = chunk.split('\\n').find((item) => item.startsWith('data: '));
+          const line = chunk.split('\n').find((item) => item.startsWith('data: '));
           if (!line) continue;
           const data = JSON.parse(line.slice(6));
 
@@ -920,6 +922,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   });
 
+  if (chatInput) {
   chatInput.addEventListener('input', function() {
     this.style.height = 'auto';
     this.style.height = Math.min(this.scrollHeight, 200) + 'px';
@@ -952,6 +955,7 @@ document.addEventListener('DOMContentLoaded', function() {
       sendMessage();
     }
   });
+  }
 
   document.addEventListener('click', function(e) {
     if (!e.target.closest('#slash-menu') && !e.target.closest('#chat-input')) {
@@ -1019,8 +1023,8 @@ document.addEventListener('DOMContentLoaded', function() {
       const d = await res.json();
       _codeFolderData = d;
       const summary = d.files.map(f =>
-        '# ' + f.path + ' (' + f.lines + ' lines)\\n' + f.preview + '\\n' + '='.repeat(60)
-      ).join('\\n\\n');
+        '# ' + f.path + ' (' + f.lines + ' lines)\n' + f.preview + '\n' + '='.repeat(60)
+      ).join('\n\n');
       if (viewer) viewer.textContent = summary || '(no .py files found)';
       if (info) info.textContent = `📁 ${folderPath} · ${d.file_count} files · ${d.total_lines} lines total`;
       const msgs = document.getElementById('code-chat-messages');
@@ -1089,7 +1093,7 @@ document.addEventListener('DOMContentLoaded', function() {
       msgs.innerHTML += `
         <div id="${answerId}" style="align-self:flex-start;background:#1a1a1a;padding:12px;border-radius:12px;font-size:14px;max-width:90%;border-left:3px solid #7c3aed">
           <div style="font-size:11px;color:#7c3aed;margin-bottom:6px">🤖 ${selectedModel.toUpperCase()}</div>
-          <div style="line-height:1.7">${(d.answer||'').replace(/\\n/g,'<br>')}</div>
+          <div style="line-height:1.7">${(d.answer||'').replace(/\n/g,'<br>')}</div>
           <button onclick="saveCodeMemory('${answerId}')" style="margin-top:8px;font-size:11px;padding:3px 10px;background:#2a2a2a;border:1px solid #444;border-radius:6px;color:#888;cursor:pointer">💾 บันทึกใน Memory</button>
         </div>`;
       msgs.scrollTop = msgs.scrollHeight;
@@ -1168,6 +1172,14 @@ document.addEventListener('DOMContentLoaded', function() {
   window.showPanel = showPanel;
   window.newChat = newChat;
   window.sendMessage = sendMessage;
+  window.handleChatFormSubmit = function(event) {
+    if (typeof sendMessage === 'function') {
+      event.preventDefault();
+      sendMessage();
+      return false;
+    }
+    return true;
+  };
   window.showNewProjectModal = showNewProjectModal;
   window.closeModal = closeModal;
   window.createProject = createProject;
@@ -1229,7 +1241,7 @@ function _benchEscapeHtml(text) {
 
 function _benchRenderMarkdown(text) {
   if (typeof window.renderMarkdown === 'function') return window.renderMarkdown(text);
-  return _benchEscapeHtml(text || '').replace(/\\n/g, '<br>');
+  return _benchEscapeHtml(text || '').replace(/\n/g, '<br>');
 }
 
 function renderBenchSummary(stats) {

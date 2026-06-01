@@ -1,5 +1,5 @@
 <main id="content">
-    <div id="panel-chat" class="panel active-panel ws-chat-panel">
+    <div id="panel-chat" class="panel ws-chat-panel{% if tool == 'chat' %} active-panel{% endif %}"{% if tool != 'chat' %} style="display:none"{% endif %}>
       <div id="chat-welcome" class="ws-chat-welcome{% if recent_messages %} hidden{% endif %}">
         <h1 class="ws-welcome-title">พร้อมเมื่อไรก็บอกได้เลย</h1>
       </div>
@@ -19,26 +19,22 @@
         </div>
       </div>
       <div id="chat-input-wrap" class="ws-chat-input-wrap">
-        <div class="ws-chat-input-bar">
-          <textarea id="chat-input" rows="1" placeholder="ถามอะไรก็ได้"></textarea>
-          <form class="ws-model-form" method="post" action="/admin/switch-model" id="workspace-model-form">
-            <input type="hidden" name="next" value="/workspace?tool=chat">
-            <select name="model" class="ws-model-select" onchange="this.form.submit()" title="เลือกโมเดล">
-              {% for key, label in model_options %}
-              <option value="{{ key }}" {% if active_model_key == key %}selected{% endif %}>{{ label }}</option>
-              {% endfor %}
-            </select>
-          </form>
-          <button type="button" id="send-btn" class="ws-send-btn" onclick="sendMessage()" aria-label="ส่ง">
-            <i data-lucide="audio-waveform"></i>
+        <form id="chat-form" class="ws-chat-input-bar" method="post" action="/workspace/chat" onsubmit="return handleChatFormSubmit(event)">
+          {% if project_id %}
+          <input type="hidden" name="project_id" value="{{ project_id }}">
+          {% endif %}
+          <textarea id="chat-input" name="message" rows="1" placeholder="ถามอะไรก็ได้" required></textarea>
+          <select id="model-select" class="ws-model-select" title="เลือกโมเดล">
+            {% for key, label in model_options %}
+            <option value="{{ key }}" {% if active_model_key == key %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+          <button type="submit" id="send-btn" class="ws-send-btn" aria-label="ส่ง">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 19V5M5 12l7-7 7 7"/>
+            </svg>
           </button>
-        </div>
-        <div class="ws-suggestion-row">
-          <button type="button" class="ws-suggestion-chip" onclick="document.getElementById('chat-input').value='สรุปงานวันนี้'; document.getElementById('chat-input').focus();">
-            <i data-lucide="settings"></i>
-            <span>ความรู้ของบริษัท</span>
-          </button>
-        </div>
+        </form>
       </div>
     </div>
 
