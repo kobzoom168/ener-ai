@@ -5,6 +5,8 @@ document.addEventListener('DOMContentLoaded', function() {
     currentProject: null,
     projectName: 'All Chats',
     toastTimer: null,
+    pendingImageFile: null,
+    pendingPreviewUrl: '',
   };
 
   const chatMessages = document.getElementById('chat-messages-inner') || document.getElementById('chat-messages');
@@ -201,13 +203,18 @@ document.addEventListener('DOMContentLoaded', function() {
     slashMenu.style.display = 'none';
   }
 
-  function appendUserBubble(text, meta='') {
+  function appendUserBubble(text, meta='', imageUrl='') {
     const row = renderChatMessage({role: 'user', content: text, source: 'web'});
-    if (meta) {
-      const bubble = row.querySelector('.user-bubble');
-      if (bubble) {
-        bubble.insertAdjacentHTML('beforeend', `<div class="msg-meta">${escapeHtml(meta)}</div>`);
-      }
+    const bubble = row.querySelector('.user-bubble');
+    if (bubble && imageUrl) {
+      const img = document.createElement('img');
+      img.className = 'msg-user-image';
+      img.src = imageUrl;
+      img.alt = 'Screenshot';
+      bubble.insertBefore(img, bubble.firstChild);
+    }
+    if (meta && bubble) {
+      bubble.insertAdjacentHTML('beforeend', `<div class="msg-meta">${escapeHtml(meta)}</div>`);
     }
     chatMessages.appendChild(row);
     updateChatWelcome();
@@ -333,21 +340,85 @@ document.addEventListener('DOMContentLoaded', function() {
     showPanel('chat');
   }
 
+  function setPendingImage(file) {
+    if (!file || !String(file.type || '').startsWith('image/')) {
+      showToast('รองรับเฉพาะไฟล์รูปภาพ');
+      return;
+    }
+    state.pendingImageFile = file;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      state.pendingPreviewUrl = e.target.result || '';
+      const previewImg = document.getElementById('preview-img');
+      const imagePreview = document.getElementById('image-preview');
+      if (previewImg) previewImg.src = state.pendingPreviewUrl;
+      imagePreview?.classList.remove('hidden');
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function clearPendingImage() {
+    state.pendingImageFile = null;
+    state.pendingPreviewUrl = '';
+    const imageUpload = document.getElementById('image-upload');
+    const imagePreview = document.getElementById('image-preview');
+    const previewImg = document.getElementById('preview-img');
+    if (imageUpload) imageUpload.value = '';
+    imagePreview?.classList.add('hidden');
+    if (previewImg) previewImg.src = '';
+  }
+
   async function sendMessage() {
     if (!chatInput) return;
     const msg = chatInput.value.trim();
-    if (!msg || state.streaming) return;
+    const imageFile = state.pendingImageFile;
+    if ((!msg && !imageFile) || state.streaming) return;
 
+    const previewUrl = state.pendingPreviewUrl || '';
     chatInput.value = '';
     chatInput.style.height = 'auto';
     slashMenu.style.display = 'none';
-    appendUserBubble(msg);
+    appendUserBubble(msg || '📷 Screenshot', '', previewUrl);
+    clearPendingImage();
 
     const thinkingId = 'thinking-' + Date.now();
     appendThinkingBubble(thinkingId);
 
     state.streaming = true;
     setSendButtonState(true);
+
+    if (imageFile) {
+      try {
+        const formData = new FormData();
+        formData.append('message', msg);
+        if (window._currentProject) formData.append('project_id', String(window._currentProject));
+        formData.append('image', imageFile, imageFile.name || 'screenshot.png');
+        const response = await fetch('/workspace/chat/vision', {
+          method: 'POST',
+          body: formData,
+          credentials: 'same-origin',
+        });
+        const data = await response.json().catch(() => ({}));
+        document.getElementById(thinkingId)?.remove();
+        if (!response.ok) {
+          throw new Error(data.detail || data.error || `Request failed (${response.status})`);
+        }
+        const reply = String(data.reply || '').trim() || 'ยังไม่มีคำตอบตอนนี้';
+        const aiBubble = appendAiBubble('', 'Ener-AI · Vision');
+        aiBubble.querySelector('.msg-text').innerHTML = renderMarkdown(reply);
+        loadProjects().catch(() => {});
+        scrollToBottom();
+      } catch (error) {
+        document.getElementById(thinkingId)?.remove();
+        appendAiBubble('ไม่สามารถวิเคราะห์รูปได้ กรุณาลองใหม่', 'Ener-AI');
+        showToast(error.message || 'Vision request failed');
+      } finally {
+        state.streaming = false;
+        setSendButtonState(false);
+        chatInput.focus();
+      }
+      return;
+    }
 
     let aiBubble = null;
     let fullText = '';
@@ -1037,6 +1108,36 @@ document.addEventListener('DOMContentLoaded', function() {
   });
 
   if (chatInput) {
+  const imageUpload = document.getElementById('image-upload');
+  const clearImageBtn = document.getElementById('clear-image-btn');
+  const composerWrap = document.getElementById('chat-input-wrap');
+
+  if (imageUpload) {
+    imageUpload.addEventListener('change', function() {
+      if (this.files && this.files[0]) setPendingImage(this.files[0]);
+    });
+  }
+  if (clearImageBtn) {
+    clearImageBtn.addEventListener('click', clearPendingImage);
+  }
+  if (composerWrap) {
+    composerWrap.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    composerWrap.addEventListener('drop', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (file) setPendingImage(file);
+    });
+  }
+
+  window.clearImage = clearPendingImage;
+  window.previewImage = function(input) {
+    if (input && input.files && input.files[0]) setPendingImage(input.files[0]);
+  };
+
   chatInput.addEventListener('input', function() {
     this.style.height = 'auto';
     this.style.height = Math.min(this.scrollHeight, 200) + 'px';
@@ -1286,6 +1387,7 @@ document.addEventListener('DOMContentLoaded', function() {
   window.showPanel = showPanel;
   window.newChat = newChat;
   window.sendMessage = sendMessage;
+  window.clearPendingImage = clearPendingImage;
   window.handleChatFormSubmit = function(event) {
     if (typeof sendMessage === 'function') {
       event.preventDefault();

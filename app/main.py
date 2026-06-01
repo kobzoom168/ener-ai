@@ -5218,39 +5218,101 @@ async def workspace_page(
     )
 
 
+async def _read_workspace_image_from_form(form) -> tuple[str | None, str]:
+    import base64
+
+    from app.core.vision import guess_media_type
+
+    image_file = form.get("image")
+    if not image_file or not hasattr(image_file, "read"):
+        return None, "image/jpeg"
+    image_bytes = await image_file.read()
+    if not image_bytes:
+        return None, "image/jpeg"
+    media_type = guess_media_type(
+        str(getattr(image_file, "filename", "") or ""),
+        str(getattr(image_file, "content_type", "") or ""),
+    )
+    return base64.b64encode(image_bytes).decode("ascii"), media_type
+
+
+async def _workspace_run_chat_ai(
+    *,
+    message: str,
+    project_id: int | None,
+    image_base64: str | None = None,
+    image_media_type: str = "image/jpeg",
+    preferred_model: str | None = None,
+) -> str:
+    from app.core.ai_gateway import run_ai
+    from app.core.workspace_memory import (
+        build_workspace_conversation_context,
+        build_workspace_history_for_ai,
+    )
+
+    chat_id = _workspace_user_id()
+    prompt_text = str(message or "").strip() or "วิเคราะห์รูป screenshot นี้"
+    memory_context = await build_workspace_conversation_context(
+        chat_id, prompt_text, project_id=project_id
+    )
+    history = await build_workspace_history_for_ai(
+        chat_id, prompt_text, project_id=project_id
+    )
+    system_prompt = await _workspace_chat_system_prompt(prompt_text, memory_context)
+    model = preferred_model or ("haiku" if image_base64 else None)
+    result = await run_ai(
+        source="telegram",
+        external_chat_id=chat_id,
+        text=prompt_text,
+        project_id=project_id,
+        history=history,
+        system_prompt=system_prompt,
+        image_base64=image_base64,
+        image_media_type=image_media_type,
+        preferred_model=model,
+    )
+    return str(result.get("reply", "")).strip() or "ยังไม่มีคำตอบตอนนี้"
+
+
 @app.post("/workspace/chat")
 async def workspace_chat(request: Request):
     await _require_admin(request)
     form = await request.form()
     message = str(form.get("message", "")).strip()
     project_id = _normalize_project_id(form.get("project_id"))
-    if message:
-        from app.core.ai_gateway import run_ai
-        from app.core.workspace_memory import (
-            build_workspace_conversation_context,
-            build_workspace_history_for_ai,
-        )
-
-        chat_id = _workspace_user_id()
-        memory_context = await build_workspace_conversation_context(
-            chat_id, message, project_id=project_id
-        )
-        history = await build_workspace_history_for_ai(
-            chat_id, message, project_id=project_id
-        )
-        system_prompt = await _workspace_chat_system_prompt(message, memory_context)
-        await run_ai(
-            source="telegram",
-            external_chat_id=chat_id,
-            text=message,
+    image_b64, image_media = await _read_workspace_image_from_form(form)
+    if message or image_b64:
+        await _workspace_run_chat_ai(
+            message=message,
             project_id=project_id,
-            history=history,
-            system_prompt=system_prompt,
+            image_base64=image_b64,
+            image_media_type=image_media,
+            preferred_model="haiku" if image_b64 else None,
         )
     redirect_url = "/workspace?tool=chat"
     if project_id is not None:
         redirect_url = f"/workspace?tool=chat&project_id={project_id}"
     return RedirectResponse(url=redirect_url, status_code=303)
+
+
+@app.post("/workspace/chat/vision")
+async def workspace_chat_vision(request: Request):
+    await _require_admin(request)
+    form = await request.form()
+    message = str(form.get("message", "")).strip()
+    project_id = _normalize_project_id(form.get("project_id"))
+    image_b64, image_media = await _read_workspace_image_from_form(form)
+    if not message and not image_b64:
+        raise HTTPException(status_code=400, detail="กรุณาพิมพ์ข้อความหรือแนบรูป")
+
+    reply = await _workspace_run_chat_ai(
+        message=message,
+        project_id=project_id,
+        image_base64=image_b64,
+        image_media_type=image_media,
+        preferred_model="haiku",
+    )
+    return JSONResponse({"ok": True, "reply": reply})
 
 
 @app.post("/workspace/new-chat")

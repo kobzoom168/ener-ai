@@ -158,7 +158,18 @@ SERVER_CURSOR_GUIDANCE = """
 ห้ามบอกให้ user รัน command เอง ถ้า run_shell_command ทำได้
 """
 
-BASE_SYSTEM_PROMPT = OWNER_CONTEXT + "\n\n" + AI_PERSONALITY + "\n\n" + SERVER_CURSOR_GUIDANCE
+VISION_GUIDANCE = """
+=== Vision / Screenshot UI ===
+เมื่อได้รับรูป screenshot ของ UI:
+1. อธิบายว่าเห็นอะไร (หน้า, layout, ปัญหา, องค์ประกอบ)
+2. ถ้ากบต้องการแก้ UI → เรียก get_project_structure() ก่อน แล้วเขียน Cursor prompt พร้อม copy-paste
+3. Cursor prompt ต้องระบุ: ไฟล์ที่แก้, สิ่งที่เปลี่ยน, expected result หลังแก้
+4. ใช้ path จริงจาก project structure ห้ามเดา
+"""
+
+BASE_SYSTEM_PROMPT = (
+    OWNER_CONTEXT + "\n\n" + AI_PERSONALITY + "\n\n" + SERVER_CURSOR_GUIDANCE + "\n\n" + VISION_GUIDANCE
+)
 
 
 def build_system_prompt(extra_system: str = "") -> str:

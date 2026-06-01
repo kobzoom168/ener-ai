@@ -35,16 +35,19 @@
       </div>
       <div id="chat-input-wrap" class="ws-composer-wrap">
         <div class="ws-composer-inner">
-          <form id="chat-form" class="ws-composer-pill" method="post" action="/workspace/chat" onsubmit="return handleChatFormSubmit(event)">
+          <div id="image-preview" class="ws-image-preview hidden" aria-live="polite">
+            <img id="preview-img" alt="ตัวอย่างรูปที่แนบ">
+            <button type="button" id="clear-image-btn" class="ws-image-preview-clear" aria-label="ลบรูป">×</button>
+          </div>
+          <form id="chat-form" class="ws-composer-pill" method="post" action="/workspace/chat" enctype="multipart/form-data" onsubmit="return handleChatFormSubmit(event)">
             {% if project_id %}
             <input type="hidden" name="project_id" value="{{ project_id }}">
             {% endif %}
-            <button type="button" class="ws-composer-icon-btn" tabindex="-1" aria-hidden="true" disabled>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <path d="M12 5v14M5 12h14"/>
-              </svg>
-            </button>
-            <textarea id="chat-input" name="message" class="ws-composer-input" rows="1" placeholder="ถามอะไรก็ได้" required></textarea>
+            <label for="image-upload" class="ws-composer-icon-btn ws-attach-btn" title="แนบรูป screenshot">
+              <span aria-hidden="true">📎</span>
+            </label>
+            <input type="file" id="image-upload" name="image" accept="image/*" class="hidden">
+            <textarea id="chat-input" name="message" class="ws-composer-input" rows="1" placeholder="ถามอะไรก็ได้ หรือแนบ screenshot"></textarea>
             <div class="ws-composer-trail">
               <label class="ws-model-chip" title="เลือกโมเดล">
                 <select id="model-select" class="ws-model-select" aria-label="เลือกโมเดล">

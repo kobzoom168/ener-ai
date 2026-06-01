@@ -190,6 +190,8 @@ async def run_ai(
     allow_external_model: bool = True,
     allow_external_search: bool = False,
     intent: str | None = None,
+    image_base64: str | None = None,
+    image_media_type: str = "image/jpeg",
 ) -> dict:
     started = time.time()
     trace_id = uuid.uuid4().hex[:12]
@@ -205,7 +207,12 @@ async def run_ai(
         history = await get_recent_history(conversation_id=conversation_id, limit=20)
 
     routing = await get_routing_config()
-    route = route_fast(text, routing=routing)
+    if image_base64:
+        from app.core.vision import vision_route
+
+        route = vision_route()
+    else:
+        route = route_fast(text, routing=routing)
     intent_hint = str(intent or "").strip().lower()
     if intent_hint and intent_hint in _INTENT_ROUTE_HINTS:
         route = {**route, **_INTENT_ROUTE_HINTS[intent_hint]}
@@ -213,7 +220,11 @@ async def run_ai(
     route_model = str(route.get("model", "groq") or "groq")
 
     pref = str(preferred_model or "").strip().lower()
-    if pref and pref in _VALID_MODELS and resolved_intent not in _KEEP_ROUTER_MODEL:
+    if image_base64:
+        route = {**route, "model": "haiku"}
+        route_model = "haiku"
+        pref = "haiku"
+    elif pref and pref in _VALID_MODELS and resolved_intent not in _KEEP_ROUTER_MODEL:
         route = {**route, "model": pref}
         route_model = pref
     else:
@@ -253,7 +264,12 @@ async def run_ai(
     )
     try:
         reply, pipeline_meta = await run_pipeline(
-            text, history, enhanced_system, route=route
+            text,
+            history,
+            enhanced_system,
+            route=route,
+            image_base64=image_base64,
+            image_media_type=image_media_type or "image/jpeg",
         )
     except Exception as exc:
         try:
@@ -282,11 +298,17 @@ async def run_ai(
     model_used = str(pipeline_meta.get("model_used") or route_model)
     snapshot = _preview(context_summary or context_text, 1200)
 
+    user_content = text
+    if image_base64 and not user_content:
+        user_content = "[screenshot]"
+    elif image_base64:
+        user_content = f"{text}\n[screenshot attached]".strip()
+
     await save_gateway_message(
         external_chat_id=external_chat_id,
         conversation_id=conversation_id,
         role="user",
-        content=text,
+        content=user_content,
         project_id=project_id,
         source=source,
         intent=resolved_intent,

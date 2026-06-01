@@ -365,6 +365,8 @@ async def reason(
     history: list[dict],
     system_prompt: str,
     route: dict,
+    image_base64: str | None = None,
+    image_media_type: str = "image/jpeg",
 ) -> str:
     from app.core.context_builder import build_context
 
@@ -395,6 +397,15 @@ You are an autonomous coding agent. Act immediately, not just describe."""
 คิดทีละขั้นตอน พิจารณาหลายมุมมอง สรุปชัดเจน
 ความแม่นยำสำคัญกว่าความเร็ว"""
 
+    if route.get("domain") == "vision" or image_base64:
+        enhanced_system += """
+
+=== Vision / Screenshot Mode ===
+1. อธิบายสิ่งที่เห็นในรูป (หน้า, layout, ปัญหา UI)
+2. ถ้ากบขอแก้ UI → เรียก get_project_structure ก่อน แล้วเขียน Cursor prompt พร้อม copy-paste
+3. Cursor prompt ต้องระบุ: ไฟล์, สิ่งที่เปลี่ยน, ผลลัพธ์ที่คาดหวัง
+4. ห้ามเดา path ไฟล์ — ใช้จาก tool เท่านั้น"""
+
     try:
         response = await chat_with_tools(
             prompt=text,
@@ -403,6 +414,8 @@ You are an autonomous coding agent. Act immediately, not just describe."""
             tools=selected_tools,
             agent="Reasoner",
             preferred_model=model,
+            image_base64=image_base64,
+            image_media_type=image_media_type,
         )
         reply = str(response.get("text", "")).strip()
 
@@ -513,17 +526,31 @@ async def run_pipeline(
     history: list[dict],
     system_prompt: str,
     route: dict | None = None,
+    image_base64: str | None = None,
+    image_media_type: str = "image/jpeg",
 ) -> tuple[str, dict]:
     total_start = time.time()
 
     t1 = time.time()
     if route is None:
-        routing = await get_routing_config()
-        route = route_fast(text, routing=routing)
+        if image_base64:
+            from app.core.vision import vision_route
+
+            route = vision_route()
+        else:
+            routing = await get_routing_config()
+            route = route_fast(text, routing=routing)
     router_ms = int((time.time() - t1) * 1000)
 
     t2 = time.time()
-    raw_answer = await reason(text, history, system_prompt, route)
+    raw_answer = await reason(
+        text,
+        history,
+        system_prompt,
+        route,
+        image_base64=image_base64,
+        image_media_type=image_media_type,
+    )
     reasoner_ms = int((time.time() - t2) * 1000)
 
     t3 = time.time()

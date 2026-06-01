@@ -1192,15 +1192,21 @@ async def chat_with_tools(
     preferred_model: str | None = None,
     strict_model: bool = False,
     max_turns: int = 5,
+    image_base64: str | None = None,
+    image_media_type: str = "image/jpeg",
 ) -> dict:
     """
     Multi-turn agentic tool-calling loop (up to max_turns).
     Claude (haiku/sonnet/opus): full agentic loop — read file → propose → get token.
     All other models: single-turn fallback via _single_turn_with_tools().
     """
+    from app.core.vision import build_user_content
+
     availability = await get_model_availability_async()
     active = (await get_active_model()) or _default_model(availability)
     model_key = preferred_model if preferred_model in _VALID_MODELS else active
+    if image_base64:
+        model_key = "haiku"
 
     # Only Claude supports the proper agentic multi-turn loop
     if model_key not in {"haiku", "sonnet", "opus"}:
@@ -1228,7 +1234,16 @@ async def chat_with_tools(
         role = m.get("role", "user")
         if role in {"user", "assistant"}:
             current_messages.append({"role": role, "content": m.get("content", "")})
-    current_messages.append({"role": "user", "content": prompt})
+    current_messages.append(
+        {
+            "role": "user",
+            "content": build_user_content(
+                prompt,
+                image_base64=image_base64,
+                image_media_type=image_media_type,
+            ),
+        }
+    )
 
     anthropic_tools = _convert_tools_for_anthropic(tools) if tools else []
     all_tool_summaries: list[str] = []
