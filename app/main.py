@@ -5076,28 +5076,30 @@ async def workspace_chat_stream(request: Request):
     from app.core.ai import stream_chat_response
     from app.core.memory import extract_and_store_long_term_memories
 
+    import asyncio as _asyncio
+
     user_id = _workspace_user_id()
     history = [
         {"role": row["role"], "content": row["content"]}
         for row in await _workspace_history_rows(project_id=project_id, limit=20)
     ]
-
-    async with get_db() as db:
-        await db.execute(
-            """
-            INSERT INTO messages (chat_id, role, content, source, project_id)
-            VALUES (?, ?, ?, 'web', ?)
-            """,
-            (user_id, "user", message, project_id),
-        )
-        await db.commit()
-
-    system_prompt = await _build_system_prompt(message)
     full_reply: list[str] = []
 
     async def generate():
         try:
             yield f"data: {json.dumps({'type': 'start'}, ensure_ascii=False)}\n\n"
+
+            async with get_db() as db:
+                await db.execute(
+                    """
+                    INSERT INTO messages (chat_id, role, content, source, project_id)
+                    VALUES (?, ?, ?, 'web', ?)
+                    """,
+                    (user_id, "user", message, project_id),
+                )
+                await db.commit()
+
+            system_prompt = await _build_system_prompt(message)
             async for token in stream_chat_response(
                 message=message,
                 history=history,
@@ -5123,18 +5125,21 @@ async def workspace_chat_stream(request: Request):
                 )
                 await db.commit()
 
-            try:
-                async with get_db() as db:
-                    await db.execute("DELETE FROM memories WHERE key = 'model_handoff_context'")
-                    await db.commit()
-            except Exception:
-                pass
+            async def _post_reply_tasks() -> None:
+                try:
+                    async with get_db() as db:
+                        await db.execute(
+                            "DELETE FROM memories WHERE key = 'model_handoff_context'"
+                        )
+                        await db.commit()
+                except Exception:
+                    pass
+                try:
+                    await extract_and_store_long_term_memories(message, reply_text)
+                except Exception:
+                    pass
 
-            try:
-                await extract_and_store_long_term_memories(message, reply_text)
-            except Exception:
-                pass
-
+            _asyncio.create_task(_post_reply_tasks())
             yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
         except Exception as exc:
             yield f"data: {json.dumps({'type': 'error', 'text': str(exc)}, ensure_ascii=False)}\n\n"

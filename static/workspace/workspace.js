@@ -109,13 +109,16 @@ document.addEventListener('DOMContentLoaded', function() {
     slashMenu.style.display = 'none';
   }
 
-  function appendUserBubble(text, meta=`Web • ${currentTimeLabel()}`) {
+  function appendUserBubble(text, meta='') {
     const row = document.createElement('div');
     row.className = 'msg-row user-row';
+    const metaHtml = meta
+      ? `<div class="msg-meta">${escapeHtml(meta)}</div>`
+      : '';
     row.innerHTML = `
       <div class="msg-bubble user-bubble">
         <div class="msg-text">${escapeHtml(text)}</div>
-        <div class="msg-meta">${escapeHtml(meta)}</div>
+        ${metaHtml}
       </div>
     `;
     chatMessages.appendChild(row);
@@ -252,7 +255,7 @@ document.addEventListener('DOMContentLoaded', function() {
     chatInput.value = '';
     chatInput.style.height = 'auto';
     slashMenu.style.display = 'none';
-    appendUserBubble(msg, `Web • ${currentTimeLabel()}`);
+    appendUserBubble(msg);
 
     const thinkingId = 'thinking-' + Date.now();
     appendThinkingBubble(thinkingId);
@@ -307,7 +310,7 @@ document.addEventListener('DOMContentLoaded', function() {
             scrollToBottom();
           }
           if (data.type === 'done') {
-            await loadProjects();
+            loadProjects().catch(() => {});
           }
           if (data.type === 'error') {
             document.getElementById(thinkingId)?.remove();
@@ -337,10 +340,10 @@ document.addEventListener('DOMContentLoaded', function() {
       return;
     }
     messages.forEach((msg) => {
-      const meta = `${msg.source === 'web' ? 'Web' : 'Telegram'} • ${msg.created_at || ''}`;
       if (msg.role === 'user') {
-        appendUserBubble(msg.content || '', meta);
+        appendUserBubble(msg.content || '');
       } else {
+        const meta = msg.source === 'web' ? 'Ener-AI' : 'Telegram';
         appendAiBubble(msg.content || '', meta);
       }
     });
