@@ -4591,6 +4591,15 @@ async def _workspace_conversation_id(project_id: int | None = None) -> str:
     )
 
 
+async def _workspace_chat_system_prompt(message: str, memory_context: str) -> str:
+    from app.agents.chat import _build_system_prompt
+
+    base = await _build_system_prompt(message)
+    if memory_context:
+        return f"{base}\n\n{memory_context}"
+    return base
+
+
 async def _workspace_chat_dates() -> list[dict[str, str]]:
     async with get_db() as db:
         cursor = await db.execute(
@@ -4723,16 +4732,23 @@ async def _workspace_generate_reply(
     project_id: int | None,
     preferred_model: str | None = None,
 ) -> str:
-    from app.agents.chat import _build_system_prompt
     from app.core.ai import _call_anthropic_with_tools, _call_groq_with_tools, chat, get_model_availability
     from app.core.memory import extract_and_store_long_term_memories
     from app.core.tools import TOOLS, execute_tool
 
-    history = [
-        {"role": row["role"], "content": row["content"]}
-        for row in await _workspace_history_rows(project_id=project_id, limit=40)
-    ]
-    system_prompt = await _build_system_prompt(text)
+    from app.core.workspace_memory import (
+        build_workspace_conversation_context,
+        build_workspace_history_for_ai,
+    )
+
+    chat_id = _workspace_user_id()
+    memory_context = await build_workspace_conversation_context(
+        chat_id, text, project_id=project_id
+    )
+    history = await build_workspace_history_for_ai(
+        chat_id, text, project_id=project_id
+    )
+    system_prompt = await _workspace_chat_system_prompt(text, memory_context)
     availability = get_model_availability()
     selected_model = str(preferred_model or "").strip().lower() or None
     response: dict[str, object]
@@ -5123,17 +5139,26 @@ async def workspace_chat(request: Request):
     project_id = _normalize_project_id(form.get("project_id"))
     if message:
         from app.core.ai_gateway import run_ai
+        from app.core.workspace_memory import (
+            build_workspace_conversation_context,
+            build_workspace_history_for_ai,
+        )
 
-        history = [
-            {"role": row["role"], "content": row["content"]}
-            for row in await _workspace_history_rows(project_id=project_id, limit=50)
-        ]
+        chat_id = _workspace_user_id()
+        memory_context = await build_workspace_conversation_context(
+            chat_id, message, project_id=project_id
+        )
+        history = await build_workspace_history_for_ai(
+            chat_id, message, project_id=project_id
+        )
+        system_prompt = await _workspace_chat_system_prompt(message, memory_context)
         await run_ai(
             source="telegram",
-            external_chat_id=_workspace_user_id(),
+            external_chat_id=chat_id,
             text=message,
             project_id=project_id,
             history=history,
+            system_prompt=system_prompt,
         )
     redirect_url = "/workspace?tool=chat"
     if project_id is not None:
@@ -5171,26 +5196,34 @@ async def workspace_chat_stream(request: Request):
     if not message:
         raise HTTPException(status_code=400, detail="empty message")
 
-    from app.agents.chat import _build_system_prompt
     from app.core.ai import stream_chat_response
     from app.core.memory import extract_and_store_long_term_memories
+    from app.core.workspace_memory import (
+        build_workspace_conversation_context,
+        build_workspace_history_for_ai,
+        index_workspace_message,
+    )
 
     import asyncio as _asyncio
 
     user_id = _workspace_user_id()
     conversation_id = await _workspace_conversation_id(project_id=project_id)
-    history = [
-        {"role": row["role"], "content": row["content"]}
-        for row in await _workspace_history_rows(project_id=project_id, limit=50)
-    ]
+    memory_context = await build_workspace_conversation_context(
+        user_id, message, project_id=project_id
+    )
+    history = await build_workspace_history_for_ai(
+        user_id, message, project_id=project_id
+    )
+    system_prompt = await _workspace_chat_system_prompt(message, memory_context)
     full_reply: list[str] = []
 
     async def generate():
         try:
             yield f"data: {json.dumps({'type': 'start'}, ensure_ascii=False)}\n\n"
 
+            user_message_id: int | None = None
             async with get_db() as db:
-                await db.execute(
+                cur = await db.execute(
                     """
                     INSERT INTO messages (
                         chat_id, conversation_id, role, content, source, project_id
@@ -5199,9 +5232,15 @@ async def workspace_chat_stream(request: Request):
                     """,
                     (user_id, conversation_id, "user", message, project_id),
                 )
+                user_message_id = cur.lastrowid
                 await db.commit()
-
-            system_prompt = await _build_system_prompt(message)
+            await index_workspace_message(
+                message_id=user_message_id,
+                chat_id=user_id,
+                role="user",
+                content=message,
+                project_id=project_id,
+            )
             async for token in stream_chat_response(
                 message=message,
                 history=history,
@@ -5213,8 +5252,9 @@ async def workspace_chat_stream(request: Request):
                 yield f"data: {json.dumps({'type': 'token', 'text': token}, ensure_ascii=False)}\n\n"
 
             reply_text = "".join(full_reply).strip() or "ยังไม่มีคำตอบตอนนี้"
+            assistant_message_id: int | None = None
             async with get_db() as db:
-                await db.execute(
+                cur = await db.execute(
                     """
                     INSERT INTO messages (
                         chat_id, conversation_id, role, content, source, project_id
@@ -5223,11 +5263,19 @@ async def workspace_chat_stream(request: Request):
                     """,
                     (user_id, conversation_id, "assistant", reply_text, project_id),
                 )
+                assistant_message_id = cur.lastrowid
                 await db.execute(
                     "INSERT INTO audit_logs (action, details) VALUES (?, ?)",
                     ("workspace_chat_stream_saved", f"project_id={project_id or 'all'}"),
                 )
                 await db.commit()
+            await index_workspace_message(
+                message_id=assistant_message_id,
+                chat_id=user_id,
+                role="assistant",
+                content=reply_text,
+                project_id=project_id,
+            )
 
             async def _post_reply_tasks() -> None:
                 try:
