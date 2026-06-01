@@ -289,6 +289,28 @@ TOOLS = [
         },
     },
     {
+        "name": "run_shell_command",
+        "description": (
+            "รัน shell command บน server (whitelist เท่านั้น) เพื่อดู containers, git, logs, "
+            "disk, process, deploy status ฯลฯ — คิด command ที่เหมาะแล้วเรียกเอง "
+            "ห้ามบอก user ไปรัน command ถ้าใช้ tool นี้ได้"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "คำสั่ง shell เช่น docker ps, git -C /root/ener-scan log --oneline -5",
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "timeout วินาที (default 15, max 60)",
+                },
+            },
+            "required": ["command"],
+        },
+    },
+    {
         "name": "get_system_info",
         "description": "ดูข้อมูลระบบ Ener-AI แบบ real-time: agent list, DB stats, scheduler, model ที่ใช้อยู่",
         "input_schema": {
@@ -696,6 +718,13 @@ async def _execute_tool_inner(tool_name: str, tool_input: dict) -> str:
 
         project = str(payload.get("project", "ener-scan-pro")).strip() or "ener-scan-pro"
         return format_tool_payload(get_env_summary(project))
+
+    if tool_name == "run_shell_command":
+        from app.core.shell_tools import format_shell_result, run_shell_command
+
+        command = str(payload.get("command", "")).strip()
+        timeout = payload.get("timeout", 15)
+        return format_shell_result(run_shell_command(command, timeout=timeout))
 
     if tool_name == "get_system_info":
         from app.core.ai import get_active_model, get_model_label

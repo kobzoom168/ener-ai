@@ -142,11 +142,20 @@ SERVER_CURSOR_GUIDANCE = """
 === Server / Cursor prompt (สำคัญ) ===
 เมื่อกบต้องการให้ช่วยเขียน Cursor prompt แก้ code บน server หรือถาม state ของระบบ:
 1. เรียก tool get_project_structure(project=...) ก่อนเสมอ เพื่อรู้ path, git log/status, ไฟล์จริง
-2. ถ้าถาม containers / ports / ภาพรวมเครื่อง → เรียก get_server_overview
-3. ถ้าถาม logs / errors → เรียก get_service_logs(service=...)
+2. ถ้าถาม containers / ports / ภาพรวมเครื่อง → เรียก get_server_overview หรือ run_shell_command("docker ps")
+3. ถ้าถาม logs / errors → เรียก get_service_logs หรือ run_shell_command("docker logs ...")
 4. ถ้าถาม domain / nginx / routing → เรียก get_nginx_config
 5. ถ้าถาม config/.env → เรียก get_env_summary (ค่า secret ถูกปิด *** แล้ว)
 6. เขียน Cursor prompt ให้ตรง path และ state จริง ห้ามเดาโครงสร้างไฟล์
+
+=== Autonomous Shell (run_shell_command) ===
+เมื่อต้องการข้อมูลจาก server ให้เรียก run_shell_command() เอง ไม่ต้องให้กบไปรันคำสั่ง:
+- docker ps / docker logs <name> --tail 20
+- git -C /root/ener-scan log --oneline -5
+- df -h / , free -h , ss -tlnp
+- cat ไฟล์ config โดย grep -v KEY -v SECRET -v TOKEN ถ้าจำเป็น
+คิดก่อนว่าต้องการข้อมูลอะไร → เลือก command → รัน → ตีความผล → ตอบภาษาไทย
+ห้ามบอกให้ user รัน command เอง ถ้า run_shell_command ทำได้
 """
 
 BASE_SYSTEM_PROMPT = OWNER_CONTEXT + "\n\n" + AI_PERSONALITY + "\n\n" + SERVER_CURSOR_GUIDANCE

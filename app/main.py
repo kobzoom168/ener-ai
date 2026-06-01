@@ -4609,6 +4609,69 @@ async def _workspace_chat_system_prompt(message: str, memory_context: str) -> st
     return "\n\n".join(parts)
 
 
+def _is_simple_cpu_query(message: str) -> bool:
+    import re
+
+    from app.core.tool_router import classify_system_tool_intent
+
+    if classify_system_tool_intent(message) != "server":
+        return False
+    lowered = str(message or "").lower()
+    if any(
+        token in lowered
+        for token in (
+            "container",
+            "docker",
+            "git",
+            "log",
+            "error",
+            "nginx",
+            "commit",
+            "ปกติ",
+            "ener-scan",
+            "deploy",
+            "disk เหลือ",
+            "df ",
+            "shell",
+        )
+    ):
+        return False
+    return bool(re.search(r"\b(cpu|ram|disk|memory)\b", lowered))
+
+
+def _workspace_needs_tool_agent(message: str) -> bool:
+    if _is_simple_cpu_query(message):
+        return False
+    from app.core.tool_router import classify_system_tool_intent
+
+    intent = classify_system_tool_intent(message)
+    if intent in ("server", "logs", "errors", "status"):
+        return True
+    lowered = str(message or "").lower()
+    return any(
+        token in lowered
+        for token in (
+            "docker",
+            "container",
+            "git ",
+            "git-",
+            "logs",
+            "error",
+            "traceback",
+            "disk",
+            "df ",
+            "deploy",
+            "ปกติไหม",
+            "ener-scan",
+            "commit",
+            "nginx",
+            "port ",
+            "process",
+            "server",
+        )
+    )
+
+
 async def _workspace_system_stats_context(message: str) -> str:
     from app.core.tool_router import classify_system_tool_intent
     from app.core.tools import execute_tool
@@ -5266,12 +5329,25 @@ async def workspace_chat_stream(request: Request):
                 project_id=project_id,
             )
 
-            from app.core.tool_router import classify_system_tool_intent
-
-            if classify_system_tool_intent(message) == "server":
+            if _is_simple_cpu_query(message):
                 from app.agents.monitor_agent import format_nl_resource_report, get_server_stats
 
                 reply_text = format_nl_resource_report(get_server_stats())
+                yield f"data: {json.dumps({'type': 'token', 'text': reply_text}, ensure_ascii=False)}\n\n"
+            elif _workspace_needs_tool_agent(message):
+                from app.core.ai_gateway import run_ai
+
+                pref_model = model if model and model != "auto" else None
+                gateway_result = await run_ai(
+                    source="telegram",
+                    external_chat_id=user_id,
+                    text=message,
+                    project_id=project_id,
+                    history=history,
+                    system_prompt=system_prompt,
+                    preferred_model=pref_model,
+                )
+                reply_text = str(gateway_result.get("reply", "")).strip() or "ยังไม่มีคำตอบตอนนี้"
                 yield f"data: {json.dumps({'type': 'token', 'text': reply_text}, ensure_ascii=False)}\n\n"
             else:
                 async for token in stream_chat_response(

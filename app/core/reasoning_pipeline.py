@@ -43,6 +43,7 @@ def route_fast(text: str, routing: dict[str, str] | None = None) -> dict:
     from app.core.tool_router import classify_system_tool_intent
 
     _server_tools = [
+        "run_shell_command",
         "check_system_stats",
         "get_server_overview",
         "get_project_structure",
@@ -57,7 +58,7 @@ def route_fast(text: str, routing: dict[str, str] | None = None) -> dict:
         return {
             "complexity": "simple",
             "domain": "system",
-            "model": r.get("system", "groq"),
+            "model": r.get("system", "haiku"),
             "tools": _server_tools,
             "needs_check": False,
             "reason": "system resource monitoring",
@@ -67,7 +68,7 @@ def route_fast(text: str, routing: dict[str, str] | None = None) -> dict:
             "complexity": "simple",
             "domain": "system",
             "model": r.get("system", "groq"),
-            "tools": ["get_service_logs", "get_server_overview", "check_system_stats"],
+            "tools": ["run_shell_command", "get_service_logs", "get_server_overview", "check_system_stats"],
             "needs_check": False,
             "reason": "service logs",
         }
@@ -76,17 +77,17 @@ def route_fast(text: str, routing: dict[str, str] | None = None) -> dict:
             "complexity": "simple",
             "domain": "system",
             "model": r.get("system", "groq"),
-            "tools": ["get_service_logs", "get_project_structure", "check_system_stats"],
+            "tools": ["run_shell_command", "get_service_logs", "get_project_structure", "check_system_stats"],
             "needs_check": False,
             "reason": "service errors",
         }
 
-    if any(k in t for k in ["container", "docker ps", "containers", "docker compose"]):
+    if any(k in t for k in ["container", "docker ps", "containers", "docker compose", "ปกติไหม"]):
         return {
             "complexity": "simple",
             "domain": "system",
-            "model": r.get("system", "groq"),
-            "tools": ["get_server_overview", "check_system_stats", "get_service_logs"],
+            "model": r.get("system", "haiku"),
+            "tools": ["run_shell_command", "get_server_overview", "check_system_stats", "get_service_logs"],
             "needs_check": False,
             "reason": "docker containers",
         }
@@ -107,8 +108,9 @@ def route_fast(text: str, routing: dict[str, str] | None = None) -> dict:
         return {
             "complexity": "complex",
             "domain": "code",
-            "model": r.get("code", "groq"),
+            "model": r.get("code", "haiku"),
             "tools": [
+                "run_shell_command",
                 "get_project_structure",
                 "read_code_file",
                 "get_server_overview",
