@@ -189,10 +189,15 @@ document.addEventListener('DOMContentLoaded', function() {
   function updateChatWelcome() {
     const welcome = document.getElementById('chat-welcome');
     const messagesWrap = document.getElementById('chat-messages');
+    const panel = document.getElementById('panel-chat');
     if (!welcome || !messagesWrap || !chatMessages) return;
-    const hasMessages = chatMessages.querySelector('.msg-row');
-    welcome.classList.toggle('hidden', Boolean(hasMessages));
+    const hasMessages = Boolean(chatMessages.querySelector('.msg-row'));
+    welcome.classList.toggle('hidden', hasMessages);
     messagesWrap.classList.toggle('hidden', !hasMessages);
+    if (panel) {
+      panel.classList.toggle('ws-chat-empty', !hasMessages);
+      panel.classList.toggle('ws-has-messages', hasMessages);
+    }
   }
 
   function showPanel(name) {

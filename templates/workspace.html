@@ -52,29 +52,151 @@
     .ws-welcome-title { font-size: 1.875rem; font-weight: 400; margin: 0 0 2rem; color: var(--foreground); }
     .ws-chat-messages { flex: 1; overflow-y: auto; padding: 1.5rem 1rem; }
     .ws-chat-inner { max-width: 48rem; margin: 0 auto; }
-    .ws-chat-input-wrap { padding: 0 1rem 1.5rem; }
-    .ws-chat-input-bar {
-      max-width: 48rem; margin: 0 auto;
-      display: flex; align-items: center; gap: 0.5rem;
-      border: 1px solid var(--border); background: var(--card);
-      border-radius: 9999px; padding: 0.75rem 1rem; box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.25);
+    /* ChatGPT-style composer */
+    .ws-composer-wrap {
+      flex-shrink: 0;
+      padding: 0 1rem 1.25rem;
+      background: linear-gradient(to top, var(--background) 70%, transparent);
     }
-    #chat-input {
-      flex: 1; border: none; background: transparent; color: var(--foreground);
-      font-size: 15px; resize: none; outline: none; min-height: 24px; max-height: 120px;
+    .ws-composer-inner {
+      max-width: 48rem;
+      margin: 0 auto;
+      width: 100%;
+    }
+    #chat-form.ws-composer-pill {
+      margin: 0;
+      display: flex;
+      align-items: flex-end;
+      gap: 0.25rem;
+      width: 100%;
+      padding: 0.5rem 0.5rem 0.5rem 0.625rem;
+      border: 1px solid var(--border);
+      border-radius: 1.75rem;
+      background: oklch(0.19 0.01 250);
+      box-shadow: 0 0 0 1px rgb(255 255 255 / 0.04), 0 8px 32px rgb(0 0 0 / 0.35);
+      box-sizing: border-box;
+    }
+    .ws-composer-icon-btn {
+      flex-shrink: 0;
+      width: 2.25rem;
+      height: 2.25rem;
+      margin-bottom: 0.125rem;
+      border: none;
+      border-radius: 9999px;
+      background: transparent;
+      color: var(--muted-foreground);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: default;
+      opacity: 0.45;
+    }
+    #chat-input.ws-composer-input,
+    .ws-composer-input {
+      flex: 1 1 auto;
+      min-width: 0;
+      width: 100%;
+      border: none !important;
+      background: transparent !important;
+      box-shadow: none !important;
+      color: var(--foreground);
+      font-size: 1rem;
+      line-height: 1.5;
+      resize: none;
+      outline: none;
+      padding: 0.625rem 0.5rem;
+      margin: 0;
+      min-height: 1.5rem;
+      max-height: 200px;
+      overflow-y: auto;
+      field-sizing: content;
+    }
+    .ws-composer-trail {
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+      flex-shrink: 0;
+      padding-bottom: 0.125rem;
+    }
+    .ws-model-chip {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      border-radius: 9999px;
+      background: oklch(0.24 0.01 250);
+      border: 1px solid transparent;
+      transition: background 0.15s, border-color 0.15s;
+      cursor: pointer;
+    }
+    .ws-model-chip:hover {
+      background: oklch(0.28 0.01 250);
+      border-color: var(--border);
     }
     .ws-model-select {
-      background: transparent; border: none; color: var(--muted-foreground);
-      font-size: 0.875rem; cursor: pointer; outline: none; max-width: 140px;
+      appearance: none;
+      -webkit-appearance: none;
+      border: none;
+      background: transparent;
+      color: var(--foreground);
+      font-size: 0.875rem;
+      font-weight: 500;
+      padding: 0.5rem 1.75rem 0.5rem 0.75rem;
+      cursor: pointer;
+      outline: none;
+      max-width: 11rem;
+      line-height: 1.25;
+    }
+    .ws-model-chevron {
+      position: absolute;
+      right: 0.5rem;
+      top: 50%;
+      transform: translateY(-50%);
+      pointer-events: none;
+      color: var(--muted-foreground);
     }
     .ws-send-btn {
-      width: 40px; height: 40px; border-radius: 50%; border: none;
-      background: #7c3aed; color: white; cursor: pointer; flex-shrink: 0;
-      display: inline-flex; align-items: center; justify-content: center;
+      width: 2.25rem;
+      height: 2.25rem;
+      border-radius: 50%;
+      border: none;
+      background: #ececec;
+      color: #0d0d0d;
+      cursor: pointer;
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s, opacity 0.15s;
     }
-    .ws-send-btn:hover { background: #6d28d9; }
-    .ws-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-    #chat-form { margin: 0; }
+    .ws-send-btn:hover:not(:disabled) { background: #ffffff; }
+    .ws-send-btn:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+      background: oklch(0.35 0.01 250);
+      color: var(--muted-foreground);
+    }
+    #panel-chat.ws-chat-panel {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    #panel-chat.ws-chat-empty {
+      justify-content: center;
+      align-items: stretch;
+      padding: 1.5rem 1rem;
+    }
+    #panel-chat.ws-chat-empty .ws-chat-welcome {
+      flex: 0 0 auto;
+      margin-bottom: 1.5rem;
+    }
+    #panel-chat.ws-chat-empty .ws-composer-wrap {
+      flex: 0 0 auto;
+      padding-bottom: 0;
+      background: transparent;
+    }
+    #panel-chat.ws-has-messages .ws-chat-welcome {
+      display: none !important;
+    }
     .ws-ai-avatar {
       width: 2rem; height: 2rem; border-radius: 9999px; background: var(--primary);
       display: flex; align-items: center; justify-content: center; flex-shrink: 0;
@@ -206,6 +328,7 @@
     if (modelSelect) {
       modelSelect.addEventListener('change', async function() {
         const model = this.value;
+        const selectedLabel = this.options[this.selectedIndex]?.text || model;
         try {
           const body = new URLSearchParams({ model: model, next: '/workspace?tool=chat' });
           const res = await fetch('/admin/switch-model', {
@@ -219,9 +342,8 @@
           });
           if (!res.ok) throw new Error('switch model failed');
           const data = await res.json();
-          if (modelBadge && data.active_model_label) {
-            modelBadge.textContent = data.active_model_label;
-          }
+          const label = data.active_model_label || selectedLabel;
+          if (modelBadge) modelBadge.textContent = label;
         } catch (err) {
           console.error(err);
           if (typeof window.showToast === 'function') {

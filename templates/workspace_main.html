@@ -1,5 +1,5 @@
 <main id="content">
-    <div id="panel-chat" class="panel ws-chat-panel{% if tool == 'chat' %} active-panel{% endif %}"{% if tool != 'chat' %} style="display:none"{% endif %}>
+    <div id="panel-chat" class="panel ws-chat-panel{% if tool == 'chat' %} active-panel{% endif %}{% if not recent_messages %} ws-chat-empty{% else %} ws-has-messages{% endif %}"{% if tool != 'chat' %} style="display:none"{% endif %}>
       <div id="chat-welcome" class="ws-chat-welcome{% if recent_messages %} hidden{% endif %}">
         <h1 class="ws-welcome-title">พร้อมเมื่อไรก็บอกได้เลย</h1>
       </div>
@@ -18,23 +18,37 @@
           {% endfor %}
         </div>
       </div>
-      <div id="chat-input-wrap" class="ws-chat-input-wrap">
-        <form id="chat-form" class="ws-chat-input-bar" method="post" action="/workspace/chat" onsubmit="return handleChatFormSubmit(event)">
-          {% if project_id %}
-          <input type="hidden" name="project_id" value="{{ project_id }}">
-          {% endif %}
-          <textarea id="chat-input" name="message" rows="1" placeholder="ถามอะไรก็ได้" required></textarea>
-          <select id="model-select" class="ws-model-select" title="เลือกโมเดล">
-            {% for key, label in model_options %}
-            <option value="{{ key }}" {% if active_model_key == key %}selected{% endif %}>{{ label }}</option>
-            {% endfor %}
-          </select>
-          <button type="submit" id="send-btn" class="ws-send-btn" aria-label="ส่ง">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 19V5M5 12l7-7 7 7"/>
-            </svg>
-          </button>
-        </form>
+      <div id="chat-input-wrap" class="ws-composer-wrap">
+        <div class="ws-composer-inner">
+          <form id="chat-form" class="ws-composer-pill" method="post" action="/workspace/chat" onsubmit="return handleChatFormSubmit(event)">
+            {% if project_id %}
+            <input type="hidden" name="project_id" value="{{ project_id }}">
+            {% endif %}
+            <button type="button" class="ws-composer-icon-btn" tabindex="-1" aria-hidden="true" disabled>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <path d="M12 5v14M5 12h14"/>
+              </svg>
+            </button>
+            <textarea id="chat-input" name="message" class="ws-composer-input" rows="1" placeholder="ถามอะไรก็ได้" required></textarea>
+            <div class="ws-composer-trail">
+              <label class="ws-model-chip" title="เลือกโมเดล">
+                <select id="model-select" class="ws-model-select" aria-label="เลือกโมเดล">
+                  {% for key, label in model_options %}
+                  <option value="{{ key }}" {% if active_model_key == key %}selected{% endif %}>{{ label }}</option>
+                  {% endfor %}
+                </select>
+                <svg class="ws-model-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M6 9l6 6 6-6"/>
+                </svg>
+              </label>
+              <button type="submit" id="send-btn" class="ws-send-btn" aria-label="ส่ง">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 19V5M5 12l7-7 7 7"/>
+                </svg>
+              </button>
+            </div>
+          </form>
+        </div>
       </div>
     </div>
 
