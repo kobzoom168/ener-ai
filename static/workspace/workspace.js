@@ -1,5 +1,7 @@
 document.addEventListener('DOMContentLoaded', function() {
   try {
+  const richMarkdown = window.renderMarkdown;
+
   const state = {
     streaming: false,
     currentProject: null,
@@ -44,23 +46,36 @@ document.addEventListener('DOMContentLoaded', function() {
       .replace(/'/g, '&#39;');
   }
 
-  function renderMarkdown(text) {
-    let html = escapeHtml(text || '');
-    html = html.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
-    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-    html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-    html = html.replace(/(^|<br>)- (.+?)(?=(<br>|$))/g, '$1<li>$2</li>');
-    html = html.replace(/(<li>.*?<\/li>)/gs, '<ul>$1</ul>');
-    html = html.replace(/(^|<br>)(\d+)\. (.+?)(?=(<br>|$))/g, '$1<li>$3</li>');
-    html = html.replace(/(<li>.*?<\/li>)/gs, (match) => match.includes('<ul>') ? match : '<ol>' + match + '</ol>');
-    html = html.replace(/\n/g, '<br>');
-    return html;
+  function renderMarkdown(text, options) {
+    if (typeof richMarkdown === 'function') {
+      return richMarkdown(text, options);
+    }
+    return escapeHtml(text || '').replace(/\n/g, '<br>');
+  }
+
+  function renderAiMessageContent(textEl, rawText) {
+    if (typeof window.renderMarkdownInto === 'function') {
+      window.renderMarkdownInto(textEl, rawText);
+      return;
+    }
+    if (!textEl) return;
+    const cleaned = typeof window.sanitizeAiContent === 'function'
+      ? window.sanitizeAiContent(rawText)
+      : rawText;
+    textEl.dataset.raw = cleaned;
+    textEl.classList.add('markdown-body');
+    textEl.innerHTML = renderMarkdown(cleaned);
+    if (typeof window.bindCodeCopyButtons === 'function') {
+      window.bindCodeCopyButtons(textEl);
+    }
   }
 
   function getMessagePlainText(textEl) {
     if (!textEl) return '';
-    const raw = textEl.dataset.raw;
+    let raw = textEl.dataset.raw;
+    if (raw && typeof window.sanitizeAiContent === 'function') {
+      raw = window.sanitizeAiContent(raw);
+    }
     if (raw) return raw;
     const codes = textEl.querySelectorAll('pre code, pre');
     if (codes.length > 0) {
@@ -118,17 +133,14 @@ document.addEventListener('DOMContentLoaded', function() {
       </div>
       <div class="ai-bubble-wrap">
         <div class="msg-bubble ai-bubble">
-          <div class="msg-text" data-raw="${escapeHtml(content)}"></div>
+          <div class="msg-text markdown-body"></div>
           <div class="msg-meta">${escapeHtml(meta)}</div>
         </div>
         <button type="button" class="copy-btn" aria-label="Copy message">Copy</button>
       </div>
     `;
     const textEl = row.querySelector('.msg-text');
-    if (textEl) {
-      textEl.innerHTML = renderMarkdown(content);
-      textEl.dataset.raw = content;
-    }
+    if (textEl) renderAiMessageContent(textEl, content);
     attachCopyButton(row.querySelector('.ai-bubble-wrap'));
     return row;
   }
@@ -162,13 +174,12 @@ document.addEventListener('DOMContentLoaded', function() {
         wrap.appendChild(copyBtn);
       }
 
-      if (!textEl.dataset.raw) {
-        textEl.dataset.raw = textEl.textContent || '';
+      let raw = textEl.getAttribute('data-raw') || textEl.dataset.raw || textEl.textContent || '';
+      if (raw.startsWith('"') && raw.endsWith('"')) {
+        try { raw = JSON.parse(raw); } catch (e) { /* keep as-is */ }
       }
-      if (!textEl.dataset.md) {
-        textEl.innerHTML = renderMarkdown(textEl.dataset.raw || '');
-        textEl.dataset.md = '1';
-      }
+      renderAiMessageContent(textEl, raw);
+      textEl.dataset.md = '1';
       attachCopyButton(wrap);
     });
   }
@@ -475,7 +486,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         const reply = String(data.reply || '').trim() || 'ยังไม่มีคำตอบตอนนี้';
         const aiBubble = appendAiBubble('', 'Ener-AI · Vision');
-        aiBubble.querySelector('.msg-text').innerHTML = renderMarkdown(reply);
+        renderAiMessageContent(aiBubble.querySelector('.msg-text'), reply);
         loadProjects().catch(() => {});
         scrollToBottom();
       } catch (error) {
@@ -533,7 +544,7 @@ document.addEventListener('DOMContentLoaded', function() {
           if (data.type === 'token') {
             if (!aiBubble) aiBubble = appendAiBubble('', 'Ener-AI');
             fullText += data.text || '';
-            aiBubble.querySelector('.msg-text').innerHTML = renderMarkdown(fullText);
+            renderAiMessageContent(aiBubble.querySelector('.msg-text'), fullText);
             scrollToBottom();
           }
           if (data.type === 'done') {
@@ -1485,7 +1496,9 @@ document.addEventListener('DOMContentLoaded', function() {
   window.showToast = showToast;
   window.api = api;
   window.escapeHtml = escapeHtml;
-  window.renderMarkdown = renderMarkdown;
+  if (typeof richMarkdown === 'function') {
+    window.renderMarkdown = richMarkdown;
+  }
 
   window._currentProject = window.__WORKSPACE_PROJECT_ID__ ?? null;
   state.currentProject = window._currentProject;

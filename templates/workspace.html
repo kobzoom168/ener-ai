@@ -29,6 +29,13 @@
     };
   </script>
   <link rel="stylesheet" href="/static/workspace/workspace.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" crossorigin="anonymous">
+  <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js" crossorigin="anonymous"></script>
   <style>
     :root {
       --background: oklch(0.13 0.01 250);
@@ -361,24 +368,91 @@
     #panel-chat .msg-text {
       font-size: 1rem;
       line-height: 1.55;
-      white-space: pre-wrap;
       word-break: break-word;
       overflow-wrap: anywhere;
     }
-    #panel-chat .msg-text strong { font-weight: 600; }
-    #panel-chat .msg-text ul,
-    #panel-chat .msg-text ol {
+    #panel-chat .msg-text.markdown-body {
+      white-space: normal;
+    }
+    #panel-chat .user-bubble .msg-text {
+      white-space: pre-wrap;
+    }
+    #panel-chat .markdown-body h1,
+    #panel-chat .markdown-body h2,
+    #panel-chat .markdown-body h3 {
+      font-weight: 600;
+      margin: 1rem 0 0.5rem;
+      color: #e6edf3;
+    }
+    #panel-chat .markdown-body h1 { font-size: 1.4em; }
+    #panel-chat .markdown-body h2 { font-size: 1.2em; }
+    #panel-chat .markdown-body h3 { font-size: 1.05em; }
+    #panel-chat .markdown-body strong { color: #e6edf3; font-weight: 600; }
+    #panel-chat .markdown-body ul,
+    #panel-chat .markdown-body ol {
       margin: 0.5rem 0;
       padding-left: 1.25rem;
     }
-    #panel-chat .msg-text li { margin: 0.25rem 0; }
-    #panel-chat .msg-text pre {
-      margin: 0.5rem 0;
-      padding: 0.75rem;
-      border-radius: 0.5rem;
-      background: oklch(0.2 0.01 250);
+    #panel-chat .markdown-body li { margin: 0.25rem 0; }
+    #panel-chat .markdown-body p { margin: 0.5rem 0; line-height: 1.7; }
+    #panel-chat .markdown-body code:not(pre code) {
+      background: #21262d;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: Consolas, Monaco, monospace;
+      font-size: 0.8125rem;
+      color: #e6897a;
+    }
+    #panel-chat .code-block {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      margin: 0.75rem 0;
+      overflow: hidden;
+    }
+    #panel-chat .code-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 14px;
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+    }
+    #panel-chat .code-lang {
+      font-size: 12px;
+      color: #8b949e;
+      font-family: Consolas, Monaco, monospace;
+      text-transform: lowercase;
+    }
+    #panel-chat .code-copy-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: none;
+      border: none;
+      color: #888;
+      font-size: 12px;
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    #panel-chat .code-copy-btn:hover {
+      background: #21262d;
+      color: #ccc;
+    }
+    #panel-chat .code-copy-btn.copied {
+      color: #a78bfa;
+    }
+    #panel-chat .code-block pre {
+      margin: 0;
+      padding: 14px;
       overflow-x: auto;
-      font-size: 0.875rem;
+      background: transparent;
+    }
+    #panel-chat .code-block code {
+      font-family: Consolas, Monaco, monospace;
+      font-size: 13px;
+      line-height: 1.5;
     }
     .ws-chat-history { margin-top: 1rem; }
     .ws-chat-date-link {
@@ -550,6 +624,7 @@
   });
 </script>
 <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<script src="/static/workspace/workspace-markdown.js"></script>
 <script src="/static/workspace/workspace.js"></script>
 <script>
   document.addEventListener('DOMContentLoaded', function() {
