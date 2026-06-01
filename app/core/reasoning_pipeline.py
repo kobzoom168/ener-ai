@@ -40,6 +40,18 @@ def route_fast(text: str, routing: dict[str, str] | None = None) -> dict:
     r = routing or {}
     t = text.lower()
 
+    from app.core.tool_router import classify_system_tool_intent
+
+    if classify_system_tool_intent(text) == "server":
+        return {
+            "complexity": "simple",
+            "domain": "system",
+            "model": r.get("system", "groq"),
+            "tools": ["check_system_stats", "get_system_info"],
+            "needs_check": False,
+            "reason": "system resource monitoring",
+        }
+
     # Location / current info → Gemini (free, grounded)
     if any(k in t for k in [
         "หาร้าน", "ที่ไหน", "ใกล้", "พิกัด", "เบอร์โทร", "ราคา",
@@ -210,11 +222,17 @@ def route_fast(text: str, routing: dict[str, str] | None = None) -> dict:
     ]):
         return {
             "complexity": "simple",
-            "domain": "code",
+            "domain": "system",
             "model": r.get("system", "groq"),
-            "tools": ["get_system_info", "read_code_file",
-                      "generate_cursor_prompt",
-                      "propose_code_change", "approve_code_change", "deploy_code"],
+            "tools": [
+                "check_system_stats",
+                "get_system_info",
+                "read_code_file",
+                "generate_cursor_prompt",
+                "propose_code_change",
+                "approve_code_change",
+                "deploy_code",
+            ],
             "needs_check": False,
             "reason": "system introspection",
         }

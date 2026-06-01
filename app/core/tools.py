@@ -208,6 +208,17 @@ TOOLS = [
         },
     },
     {
+        "name": "check_system_stats",
+        "description": (
+            "ดึง CPU, RAM, Disk ของเครื่องที่รัน Ener-AI แบบ real-time ผ่าน psutil "
+            "เรียกเมื่อกบถาม cpu, ram, disk, memory, server status, ทรัพยากรเครื่อง"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
         "name": "get_system_info",
         "description": "ดูข้อมูลระบบ Ener-AI แบบ real-time: agent list, DB stats, scheduler, model ที่ใช้อยู่",
         "input_schema": {
@@ -401,6 +412,37 @@ async def _log_tool_run(
         await db.commit()
 
 
+def collect_system_stats() -> dict[str, float]:
+    import psutil
+
+    cpu = psutil.cpu_percent(interval=1)
+    ram = psutil.virtual_memory()
+    disk = psutil.disk_usage("/")
+
+    def _gb(value: float) -> float:
+        return round(value / (1024**3), 1)
+
+    return {
+        "cpu_percent": round(float(cpu), 1),
+        "ram_used_gb": _gb(float(ram.used)),
+        "ram_total_gb": _gb(float(ram.total)),
+        "ram_percent": round(float(ram.percent), 1),
+        "disk_used_gb": _gb(float(disk.used)),
+        "disk_total_gb": _gb(float(disk.total)),
+        "disk_percent": round(float(disk.percent), 1),
+    }
+
+
+def format_system_stats_report(stats: dict[str, float]) -> str:
+    return (
+        f"CPU: {stats['cpu_percent']}%\n"
+        f"RAM: {stats['ram_percent']}% "
+        f"({stats['ram_used_gb']}/{stats['ram_total_gb']} GB)\n"
+        f"Disk: {stats['disk_percent']}% "
+        f"({stats['disk_used_gb']}/{stats['disk_total_gb']} GB)"
+    )
+
+
 async def execute_tool(tool_name: str, tool_input: dict) -> str:
     started = time.time()
     ctx = get_trace_context()
@@ -551,6 +593,10 @@ async def _execute_tool_inner(tool_name: str, tool_input: dict) -> str:
         if not query:
             return "กรุณาระบุคำค้นหา"
         return await _gemini_grounded_search(query)
+
+    if tool_name == "check_system_stats":
+        stats = collect_system_stats()
+        return format_system_stats_report(stats)
 
     if tool_name == "get_system_info":
         from app.core.ai import get_active_model, get_model_label

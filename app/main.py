@@ -4595,9 +4595,28 @@ async def _workspace_chat_system_prompt(message: str, memory_context: str) -> st
     from app.agents.chat import _build_system_prompt
 
     base = await _build_system_prompt(message)
+    parts = [base]
+    stats_context = await _workspace_system_stats_context(message)
+    if stats_context:
+        parts.append(stats_context)
     if memory_context:
-        return f"{base}\n\n{memory_context}"
-    return base
+        parts.append(memory_context)
+    return "\n\n".join(parts)
+
+
+async def _workspace_system_stats_context(message: str) -> str:
+    from app.core.tool_router import classify_system_tool_intent
+    from app.core.tools import execute_tool
+
+    if classify_system_tool_intent(message) != "server":
+        return ""
+    stats_text = await execute_tool("check_system_stats", {})
+    return (
+        "=== ข้อมูลทรัพยากรเครื่อง (ดึงจริงจาก psutil แล้ว) ===\n"
+        f"{stats_text}\n\n"
+        "กฎ: ตอบกบด้วยตัวเลขด้านบนโดยตรง ห้ามบอกให้รัน docker stats, docker compose "
+        "หรือคำสั่ง shell อื่นแทน"
+    )
 
 
 async def _workspace_chat_dates() -> list[dict[str, str]]:
@@ -5241,17 +5260,25 @@ async def workspace_chat_stream(request: Request):
                 content=message,
                 project_id=project_id,
             )
-            async for token in stream_chat_response(
-                message=message,
-                history=history,
-                system_prompt=system_prompt,
-                model=model,
-                agent="MainChatAgent",
-            ):
-                full_reply.append(token)
-                yield f"data: {json.dumps({'type': 'token', 'text': token}, ensure_ascii=False)}\n\n"
 
-            reply_text = "".join(full_reply).strip() or "ยังไม่มีคำตอบตอนนี้"
+            from app.core.tool_router import classify_system_tool_intent
+
+            if classify_system_tool_intent(message) == "server":
+                from app.agents.monitor_agent import format_nl_resource_report, get_server_stats
+
+                reply_text = format_nl_resource_report(get_server_stats())
+                yield f"data: {json.dumps({'type': 'token', 'text': reply_text}, ensure_ascii=False)}\n\n"
+            else:
+                async for token in stream_chat_response(
+                    message=message,
+                    history=history,
+                    system_prompt=system_prompt,
+                    model=model,
+                    agent="MainChatAgent",
+                ):
+                    full_reply.append(token)
+                    yield f"data: {json.dumps({'type': 'token', 'text': token}, ensure_ascii=False)}\n\n"
+                reply_text = "".join(full_reply).strip() or "ยังไม่มีคำตอบตอนนี้"
             assistant_message_id: int | None = None
             async with get_db() as db:
                 cur = await db.execute(
