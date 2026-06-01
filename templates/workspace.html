@@ -276,6 +276,24 @@
       word-break: break-word;
       overflow-wrap: anywhere;
     }
+    .ws-chat-history { margin-top: 1rem; }
+    .ws-chat-date-link {
+      display: block;
+      padding: 6px 12px;
+      font-size: 13px;
+      color: #ccc;
+      text-decoration: none;
+      border-radius: 8px;
+    }
+    .ws-chat-date-link:hover { background: rgba(255,255,255,0.05); color: #e5e5e5; }
+    .ws-chat-date-link.active { color: #a78bfa; }
+    .ws-chat-day-marker {
+      text-align: center;
+      font-size: 11px;
+      color: var(--muted-foreground);
+      margin: 16px 0 8px;
+      scroll-margin-top: 12px;
+    }
     @media (max-width: 768px) { #workspace-sidebar { display: none; } }
   </style>
 </head>
@@ -307,6 +325,20 @@
         </a>
         {% endfor %}
       </nav>
+
+      {% if chat_dates %}
+      <div class="ws-chat-history">
+        <p class="mb-2 px-3 text-xs font-medium uppercase tracking-wider" style="color: var(--muted-foreground);">วันที่</p>
+        <nav class="space-y-0.5">
+          {% for d in chat_dates %}
+          <a href="/workspace?tool=chat&amp;scroll={{ d.key }}{% if project_id %}&amp;project_id={{ project_id }}{% endif %}"
+             class="ws-chat-date-link{% if scroll_date == d.key %} active{% endif %}">
+            chat {{ d.label }}
+          </a>
+          {% endfor %}
+        </nav>
+      </div>
+      {% endif %}
 
       <div class="mt-6">
         <div class="mb-2 flex items-center justify-between px-3">
@@ -351,6 +383,7 @@
 <script>
   window.__WORKSPACE_TOOL__ = {{ tool|tojson }};
   window.__WORKSPACE_PROJECT_ID__ = {{ project_id|tojson }};
+  window.__WORKSPACE_SCROLL_DATE__ = {{ scroll_date|tojson }};
 
   function handleChatFormSubmit(event) {
     if (typeof window.sendMessage === 'function') {

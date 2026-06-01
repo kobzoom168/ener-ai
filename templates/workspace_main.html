@@ -5,7 +5,13 @@
       </div>
       <div id="chat-messages" class="ws-chat-messages{% if not recent_messages %} hidden{% endif %}">
         <div class="ws-chat-inner" id="chat-messages-inner">
+          {% set ns = namespace(prev_day='') %}
           {% for msg in recent_messages %}
+          {% set day = msg.created_at[:10] if msg.created_at else '' %}
+          {% if day and day != ns.prev_day %}
+          <div id="chat-day-{{ day }}" class="ws-chat-day-marker">{{ day }}</div>
+          {% set ns.prev_day = day %}
+          {% endif %}
           <div class="msg-row {{ 'user-row' if msg.role == 'user' else 'ai-row' }}">
             {% if msg.role != 'user' %}
             <div class="ws-ai-avatar"><i data-lucide="zap"></i></div>

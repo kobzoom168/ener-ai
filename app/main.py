@@ -4548,6 +4548,48 @@ def _workspace_user_id() -> str:
     return str(settings.telegram_chat_id)
 
 
+def _format_chat_date_label(date_key: str) -> str:
+    from datetime import datetime
+
+    try:
+        return datetime.strptime(str(date_key), "%Y-%m-%d").strftime("%d-%b-%Y").lower()
+    except ValueError:
+        return str(date_key)
+
+
+async def _workspace_conversation_id(project_id: int | None = None) -> str:
+    from app.core.ai_gateway import get_or_create_conversation
+
+    return await get_or_create_conversation(
+        source="telegram",
+        external_chat_id=_workspace_user_id(),
+        project_id=project_id,
+    )
+
+
+async def _workspace_chat_dates() -> list[dict[str, str]]:
+    async with get_db() as db:
+        cursor = await db.execute(
+            """
+            SELECT DISTINCT date(datetime(created_at, '+7 hours')) AS chat_date
+            FROM messages
+            WHERE chat_id = ?
+              AND role IN ('user', 'assistant')
+            ORDER BY chat_date DESC
+            LIMIT 30
+            """,
+            (_workspace_user_id(),),
+        )
+        rows = await cursor.fetchall()
+    dates: list[dict[str, str]] = []
+    for row in rows:
+        key = str(row["chat_date"] or "").strip()
+        if not key:
+            continue
+        dates.append({"key": key, "label": _format_chat_date_label(key)})
+    return dates
+
+
 def _workspace_upload_dir() -> Path:
     upload_dir = _data_dir() / "uploads"
     upload_dir.mkdir(parents=True, exist_ok=True)
@@ -4579,6 +4621,7 @@ async def _workspace_history_rows(project_id: int | None = None, limit: int = 20
                     datetime(created_at, '+7 hours') AS local_created_at
                 FROM messages
                 WHERE chat_id = ?
+                  AND role IN ('user', 'assistant')
                 ORDER BY id DESC
                 LIMIT ?
                 """,
@@ -4596,6 +4639,7 @@ async def _workspace_history_rows(project_id: int | None = None, limit: int = 20
                     datetime(created_at, '+7 hours') AS local_created_at
                 FROM messages
                 WHERE chat_id = ? AND project_id = ?
+                  AND role IN ('user', 'assistant')
                 ORDER BY id DESC
                 LIMIT ?
                 """,
@@ -4616,20 +4660,21 @@ async def _workspace_history_rows(project_id: int | None = None, limit: int = 20
 
 
 async def _workspace_save_chat_messages(project_id: int | None, user_text: str, reply_text: str) -> None:
+    conversation_id = await _workspace_conversation_id(project_id=project_id)
     async with get_db() as db:
         await db.execute(
             """
-            INSERT INTO messages (chat_id, role, content, project_id, source)
-            VALUES (?, ?, ?, ?, 'web')
+            INSERT INTO messages (chat_id, conversation_id, role, content, project_id, source)
+            VALUES (?, ?, ?, ?, ?, 'web')
             """,
-            (_workspace_user_id(), "user", user_text, project_id),
+            (_workspace_user_id(), conversation_id, "user", user_text, project_id),
         )
         await db.execute(
             """
-            INSERT INTO messages (chat_id, role, content, project_id, source)
-            VALUES (?, ?, ?, ?, 'web')
+            INSERT INTO messages (chat_id, conversation_id, role, content, project_id, source)
+            VALUES (?, ?, ?, ?, ?, 'web')
             """,
-            (_workspace_user_id(), "assistant", reply_text, project_id),
+            (_workspace_user_id(), conversation_id, "assistant", reply_text, project_id),
         )
         await db.execute(
             "INSERT INTO audit_logs (action, details) VALUES (?, ?)",
@@ -4985,6 +5030,7 @@ async def workspace_page(
     request: Request,
     tool: str = "chat",
     project_id: int | None = None,
+    scroll: str | None = None,
 ):
     await _require_admin(request)
     from app.core.database import get_system_stats
@@ -4993,6 +5039,7 @@ async def workspace_page(
     if normalized_tool not in _VALID_WORKSPACE_TOOLS:
         normalized_tool = "chat"
     normalized_project_id = _normalize_project_id(project_id)
+    scroll_date = str(scroll or "").strip()[:10] or None
 
     stats = await get_system_stats()
     total_messages, projects = await _workspace_projects_for_page()
@@ -5001,8 +5048,9 @@ async def workspace_page(
     active_model_key = await get_active_model()
     recent_messages = await _workspace_history_rows(
         project_id=normalized_project_id,
-        limit=20,
+        limit=100,
     )
+    chat_dates = await _workspace_chat_dates()
 
     return templates.TemplateResponse(
         "workspace.html",
@@ -5017,6 +5065,8 @@ async def workspace_page(
             "tools": WORKSPACE_TOOLS,
             "recent_messages": recent_messages,
             "project_id": normalized_project_id,
+            "chat_dates": chat_dates,
+            "scroll_date": scroll_date,
         },
     )
 
@@ -5030,11 +5080,16 @@ async def workspace_chat(request: Request):
     if message:
         from app.core.ai_gateway import run_ai
 
+        history = [
+            {"role": row["role"], "content": row["content"]}
+            for row in await _workspace_history_rows(project_id=project_id, limit=50)
+        ]
         await run_ai(
-            source="web",
+            source="telegram",
             external_chat_id=_workspace_user_id(),
             text=message,
             project_id=project_id,
+            history=history,
         )
     redirect_url = "/workspace?tool=chat"
     if project_id is not None:
@@ -5079,9 +5134,10 @@ async def workspace_chat_stream(request: Request):
     import asyncio as _asyncio
 
     user_id = _workspace_user_id()
+    conversation_id = await _workspace_conversation_id(project_id=project_id)
     history = [
         {"role": row["role"], "content": row["content"]}
-        for row in await _workspace_history_rows(project_id=project_id, limit=20)
+        for row in await _workspace_history_rows(project_id=project_id, limit=50)
     ]
     full_reply: list[str] = []
 
@@ -5092,10 +5148,12 @@ async def workspace_chat_stream(request: Request):
             async with get_db() as db:
                 await db.execute(
                     """
-                    INSERT INTO messages (chat_id, role, content, source, project_id)
-                    VALUES (?, ?, ?, 'web', ?)
+                    INSERT INTO messages (
+                        chat_id, conversation_id, role, content, source, project_id
+                    )
+                    VALUES (?, ?, ?, ?, 'web', ?)
                     """,
-                    (user_id, "user", message, project_id),
+                    (user_id, conversation_id, "user", message, project_id),
                 )
                 await db.commit()
 
@@ -5114,10 +5172,12 @@ async def workspace_chat_stream(request: Request):
             async with get_db() as db:
                 await db.execute(
                     """
-                    INSERT INTO messages (chat_id, role, content, source, project_id)
-                    VALUES (?, ?, ?, 'web', ?)
+                    INSERT INTO messages (
+                        chat_id, conversation_id, role, content, source, project_id
+                    )
+                    VALUES (?, ?, ?, ?, 'web', ?)
                     """,
-                    (user_id, "assistant", reply_text, project_id),
+                    (user_id, conversation_id, "assistant", reply_text, project_id),
                 )
                 await db.execute(
                     "INSERT INTO audit_logs (action, details) VALUES (?, ?)",

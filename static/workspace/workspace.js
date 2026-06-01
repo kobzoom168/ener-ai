@@ -67,7 +67,47 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function scrollToBottom() {
-    chatMessages.scrollTop = chatMessages.scrollHeight;
+    const container = document.getElementById('chat-messages') || chatMessages;
+    if (container) container.scrollTop = container.scrollHeight;
+  }
+
+  function dayKeyFromCreatedAt(createdAt) {
+    if (!createdAt) return '';
+    return String(createdAt).slice(0, 10);
+  }
+
+  function formatDayLabel(dayKey) {
+    if (!dayKey) return '';
+    const parts = dayKey.split('-');
+    if (parts.length !== 3) return dayKey;
+    const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+    const month = months[Number(parts[1]) - 1] || parts[1];
+    return `${parts[2]}-${month}-${parts[0]}`.toLowerCase();
+  }
+
+  function ensureDayMarker(dayKey) {
+    if (!dayKey || document.getElementById('chat-day-' + dayKey)) return;
+    const marker = document.createElement('div');
+    marker.id = 'chat-day-' + dayKey;
+    marker.className = 'ws-chat-day-marker';
+    marker.textContent = formatDayLabel(dayKey);
+    chatMessages.appendChild(marker);
+  }
+
+  function scrollToChatDay(dayKey) {
+    if (!dayKey) return false;
+    const marker = document.getElementById('chat-day-' + dayKey);
+    if (!marker) return false;
+    marker.scrollIntoView({behavior: 'smooth', block: 'start'});
+    return true;
+  }
+
+  function scrollChatToTarget() {
+    const scrollDay =
+      window.__WORKSPACE_SCROLL_DATE__ ||
+      new URLSearchParams(window.location.search).get('scroll');
+    if (scrollDay && scrollToChatDay(scrollDay)) return;
+    scrollToBottom();
   }
 
   function setSendButtonState(loading) {
@@ -203,7 +243,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
-  function showPanel(name) {
+  function showPanel(name, options = {}) {
     document.querySelectorAll('.panel').forEach((panel) => {
       panel.classList.remove('active-panel');
       panel.style.display = 'none';
@@ -222,7 +262,7 @@ document.addEventListener('DOMContentLoaded', function() {
     url.searchParams.set('tool', name);
     window.history.replaceState({}, '', url.toString());
 
-    if (name === 'chat') loadChatHistory();
+    if (name === 'chat' && !options.skipHistoryLoad) loadChatHistory();
     if (name === 'notes') loadNotes();
     if (name === 'tasks') loadTasks();
     if (name === 'standup') {
@@ -330,7 +370,10 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   async function loadChatHistory() {
-    const query = window._currentProject ? `?project_id=${window._currentProject}` : '';
+    const params = new URLSearchParams();
+    if (window._currentProject) params.set('project_id', String(window._currentProject));
+    params.set('limit', '200');
+    const query = params.toString() ? `?${params.toString()}` : '';
     const data = await api(`/workspace/chat/history${query}`);
     chatMessages.innerHTML = '';
     const messages = data.messages || [];
@@ -339,7 +382,13 @@ document.addEventListener('DOMContentLoaded', function() {
       updateChatWelcome();
       return;
     }
+    let lastDay = '';
     messages.forEach((msg) => {
+      const day = dayKeyFromCreatedAt(msg.created_at);
+      if (day && day !== lastDay) {
+        ensureDayMarker(day);
+        lastDay = day;
+      }
       if (msg.role === 'user') {
         appendUserBubble(msg.content || '');
       } else {
@@ -348,7 +397,7 @@ document.addEventListener('DOMContentLoaded', function() {
       }
     });
     updateChatWelcome();
-    scrollToBottom();
+    scrollChatToTarget();
   }
 
   function highlightProjectLink() {
@@ -1212,9 +1261,14 @@ document.addEventListener('DOMContentLoaded', function() {
   state.currentProject = window._currentProject;
   loadActiveModelBadge();
   const initialTool = window.__WORKSPACE_TOOL__ || 'chat';
-  showPanel(initialTool);
+  const hasSsrMessages =
+    initialTool === 'chat' && chatMessages && chatMessages.querySelector('.msg-row');
+  showPanel(initialTool, {skipHistoryLoad: Boolean(hasSsrMessages)});
   loadProjects();
-  if (initialTool === 'chat') loadChatHistory();
+  if (hasSsrMessages) {
+    updateChatWelcome();
+    scrollChatToTarget();
+  }
   } catch(err) {
     console.error('WORKSPACE JS ERROR:', err);
     const contentEl = document.getElementById('content');
