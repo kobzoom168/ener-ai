@@ -503,8 +503,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
     const model = (document.getElementById('model-select') || {}).value || 'auto';
     const isLocalQwen = model === 'qwen3b' || model === 'qwen7b';
+    const openRouterModels = new Set([
+      'dolphin', 'deepseek-v4', 'gemini-flash-lite', 'gemini-3-flash',
+      'llama-free', 'mimo', 'hy3',
+    ]);
+    const useJsonSend = isLocalQwen || openRouterModels.has(model);
 
-    if (isLocalQwen) {
+    if (useJsonSend) {
       try {
         const response = await fetch('/workspace/chat/send', {
           method: 'POST',
@@ -522,7 +527,8 @@ document.addEventListener('DOMContentLoaded', function() {
           throw new Error(data.detail || data.error || `Request failed (${response.status})`);
         }
         const reply = String(data.reply || '').trim() || 'ยังไม่มีคำตอบตอนนี้';
-        const aiBubble = appendAiBubble('', 'Ener-AI · Qwen local');
+        const meta = isLocalQwen ? 'Ener-AI · Qwen local' : `Ener-AI · ${model}`;
+        const aiBubble = appendAiBubble('', meta);
         const textEl = aiBubble?.closest('.ai-bubble-wrap')?.querySelector('.msg-text')
           || aiBubble?.querySelector('.msg-text');
         renderAiMessageContent(textEl, reply);

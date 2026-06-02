@@ -56,4 +56,14 @@ def profile_for_model(model: str) -> str:
         return "groq"
     if key in {"qwen3b", "qwen7b"}:
         return key
+    if key in {
+        "dolphin",
+        "deepseek-v4",
+        "gemini-flash-lite",
+        "gemini-3-flash",
+        "mimo",
+        "hy3",
+        "llama-free",
+    }:
+        return "groq"
     return "default"

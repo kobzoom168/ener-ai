@@ -58,9 +58,19 @@
             <div class="ws-composer-trail">
               <label class="ws-model-chip" title="เลือกโมเดล">
                 <select id="model-select" class="ws-model-select" aria-label="เลือกโมเดล">
+                  {% if model_option_groups %}
+                  {% for group_label, group_items in model_option_groups %}
+                  <optgroup label="{{ group_label }}">
+                    {% for key, label in group_items %}
+                    <option value="{{ key }}" {% if active_model_key == key %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                  </optgroup>
+                  {% endfor %}
+                  {% else %}
                   {% for key, label in model_options %}
                   <option value="{{ key }}" {% if active_model_key == key %}selected{% endif %}>{{ label }}</option>
                   {% endfor %}
+                  {% endif %}
                 </select>
                 <svg class="ws-model-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M6 9l6 6 6-6"/>

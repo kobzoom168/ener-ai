@@ -10,6 +10,13 @@ from groq import AsyncGroq
 from app.core.database import get_db
 from app.core.config import settings
 from app.core.policy import BASE_SYSTEM_PROMPT, TASK_MODEL_MAP
+from app.core.openrouter_client import (
+    OPENROUTER_KEYS,
+    OPENROUTER_LABELS,
+    OPENROUTER_MODELS,
+    call_openrouter,
+    openrouter_available,
+)
 
 _PRIMARY_MODEL = "claude-haiku-4-5-20251001"
 _ACTIVE_MODEL_KEY = "active_model"
@@ -28,6 +35,7 @@ _MODEL_LABELS = {
     "kimi": "Kimi K2 (Moonshot)",
     "gpt-4o-mini": "GPT-4o Mini (OpenAI)",
     "gpt-4o": "GPT-4o (OpenAI)",
+    **OPENROUTER_LABELS,
 }
 _OLLAMA_MODEL_MAP = {
     "qwen3b": "qwen2.5:3b",
@@ -44,8 +52,10 @@ _VALID_MODELS = {
     "sonnet", "opus", "gemini-pro", "llama4",
     "grok", "deepseek-direct", "kimi",
     "gpt-4o-mini", "gpt-4o",
+    *OPENROUTER_KEYS,
 }
-_FALLBACK_SEQUENCE = ["groq", "haiku", "qwen3b"]
+_FALLBACK_SEQUENCE = ["gemini-flash-lite", "groq", "haiku", "qwen3b"]
+_STRICT_PREFERRED_MODELS = frozenset({"qwen3b", "qwen7b"}) | OPENROUTER_KEYS
 
 
 def _estimate_cost_thb(model: str, prompt_tokens: int, completion_tokens: int) -> float:
@@ -58,9 +68,13 @@ def _estimate_cost_thb(model: str, prompt_tokens: int, completion_tokens: int) -
 
 def _normalize_model_name(model: str) -> str:
     lowered = str(model or "").strip().lower()
+    if lowered in OPENROUTER_KEYS:
+        return lowered
+    if lowered == "llama-free":
+        return "llama-free"
     if "haiku" in lowered:
         return "haiku"
-    if "groq" in lowered or "llama" in lowered:
+    if "groq" in lowered or ("llama" in lowered and "free" not in lowered):
         return "groq"
     if "gemini" in lowered:
         return "gemini"
@@ -134,6 +148,10 @@ def _anthropic_messages(prompt: str, messages: list[dict[str, str]] | None) -> l
 _LOCAL_ONLY_MODELS = frozenset({"qwen3b", "qwen7b"})
 
 
+def _is_strict_preferred(model: str) -> bool:
+    return str(model or "").strip().lower() in _STRICT_PREFERRED_MODELS
+
+
 def _groq_messages(prompt: str, system: str, messages: list[dict[str, str]] | None) -> list[dict[str, str]]:
     from app.core.context_limits import trim_chat_context
 
@@ -181,6 +199,7 @@ def get_model_availability() -> dict[str, bool]:
         "kimi": bool(settings.moonshot_api_key),
         "gpt-4o-mini": bool(settings.openai_api_key),
         "gpt-4o": bool(settings.openai_api_key),
+        **{key: bool(settings.openrouter_api_key) for key in OPENROUTER_KEYS},
     }
 
 
@@ -191,6 +210,7 @@ async def get_model_availability_async() -> dict[str, bool]:
     deepseek = settings.deepseek_api_key or await get_config("deepseek_api_key", "")
     moonshot = settings.moonshot_api_key or await get_config("moonshot_api_key", "")
     openai = settings.openai_api_key or await get_config("openai_api_key", "")
+    or_key = await openrouter_available()
     return {
         "haiku": bool(settings.anthropic_api_key),
         "groq": bool(settings.groq_api_key),
@@ -206,11 +226,14 @@ async def get_model_availability_async() -> dict[str, bool]:
         "kimi": bool(moonshot),
         "gpt-4o-mini": bool(openai),
         "gpt-4o": bool(openai),
+        **{key: or_key for key in OPENROUTER_KEYS},
     }
 
 
 def _default_model(availability: dict[str, bool] | None = None) -> str:
     available = availability or get_model_availability()
+    if available.get("gemini-flash-lite"):
+        return "gemini-flash-lite"
     if available.get("groq"):
         return "groq"
     if available.get("haiku"):
@@ -929,7 +952,16 @@ def _groq_sdk_response_to_dict(response) -> dict:
 
 
 _OPENAI_TOOL_MODELS = frozenset(
-    {"groq", "llama4", "gpt-4o", "gpt-4o-mini", "deepseek-direct", "kimi", "grok"}
+    {
+        "groq",
+        "llama4",
+        "gpt-4o",
+        "gpt-4o-mini",
+        "deepseek-direct",
+        "kimi",
+        "grok",
+        *OPENROUTER_KEYS,
+    }
 )
 _GEMINI_TOOL_MODELS = frozenset({"gemini", "gemini-pro"})
 _CLAUDE_AGENTIC_MODELS = frozenset({"haiku", "sonnet", "opus"})
@@ -975,6 +1007,20 @@ async def _resolve_openai_compat_api(model_key: str) -> tuple[str, str, str]:
         if not key:
             raise RuntimeError("xAI API key not set")
         return "https://api.x.ai/v1/chat/completions", "grok-3", "grok"
+    if model_key in OPENROUTER_KEYS:
+        from app.core.openrouter_client import (
+            get_openrouter_api_key,
+            openrouter_base_url,
+            resolve_openrouter_model_id,
+        )
+
+        if not await get_openrouter_api_key():
+            raise RuntimeError("OpenRouter API key not set")
+        return (
+            f"{openrouter_base_url()}/chat/completions",
+            resolve_openrouter_model_id(model_key),
+            model_key,
+        )
     raise RuntimeError(f"unsupported openai-compat model: {model_key}")
 
 
@@ -987,6 +1033,10 @@ async def _openai_compat_api_key(model_key: str) -> str:
         return settings.moonshot_api_key or await get_config("moonshot_api_key", "")
     if model_key == "grok":
         return settings.xai_api_key or await get_config("xai_api_key", "")
+    if model_key in OPENROUTER_KEYS:
+        from app.core.openrouter_client import get_openrouter_api_key
+
+        return await get_openrouter_api_key()
     return settings.openai_api_key or await get_config("openai_api_key", "")
 
 
@@ -1052,15 +1102,19 @@ async def _call_openai_compat_with_tools(
             return _groq_sdk_response_to_dict(response)
 
         api_key = await _openai_compat_api_key(model_key)
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        if model_key in OPENROUTER_KEYS:
+            headers["HTTP-Referer"] = "https://my-ener.uk"
+            headers["X-Title"] = "Ener-AI"
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 api_url,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
+                headers=headers,
                 json=payload,
-                timeout=90.0,
+                timeout=120.0,
             )
             resp.raise_for_status()
             return resp.json()
@@ -1297,13 +1351,21 @@ async def stream_chat_response(
     alias_map = {"claude": "haiku", "ollama": "qwen3b"}
     requested_model = alias_map.get(normalized_model, normalized_model)
 
-    strict_local = requested_model in _LOCAL_ONLY_MODELS
+    strict_preferred = _is_strict_preferred(requested_model)
 
-    if strict_local:
+    if strict_preferred:
         candidates = [requested_model]
     elif requested_model == "auto":
         candidates = [active_model] if active_model in _VALID_MODELS else []
-        for candidate in ["haiku", "groq", "gemini", "qwen3b", "qwen7b"]:
+        for candidate in [
+            "gemini-flash-lite",
+            "haiku",
+            "groq",
+            "gemini",
+            "qwen3b",
+            "qwen7b",
+            "dolphin",
+        ]:
             if candidate not in candidates:
                 candidates.append(candidate)
     elif requested_model in _VALID_MODELS:
@@ -1316,12 +1378,30 @@ async def stream_chat_response(
         candidates = ["haiku", "groq", "gemini", "qwen3b", "qwen7b"]
 
     for candidate in candidates:
-        if candidate in {"haiku", "groq", "gemini"} and not availability.get(candidate, False):
+        if candidate in {"haiku", "groq", "gemini"} and not availability.get(
+            candidate, False
+        ):
+            continue
+        if candidate in OPENROUTER_KEYS and not availability.get(candidate, False):
             continue
 
         started_at = time.perf_counter()
         emitted = False
         try:
+            if candidate in OPENROUTER_KEYS:
+                text = await call_openrouter(
+                    candidate,
+                    message,
+                    system_prompt,
+                    history,
+                    agent=agent,
+                )
+                if not str(text or "").strip():
+                    raise RuntimeError("OpenRouter returned empty text")
+                emitted = True
+                yield text
+                return
+
             if candidate == "haiku":
                 client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
                 stream = client.messages.stream(
@@ -1394,12 +1474,15 @@ async def stream_chat_response(
                 yield text
                 return
         except Exception as exc:
-            if strict_local:
-                detail = _format_local_model_error(exc)
-                yield (
-                    "⚠️ Qwen local ไม่ตอบ — ตรวจ Ollama (OLLAMA_BASE_URL / OLLAMA_MODEL ใน .env) "
-                    f"และว่า pull โมเดลแล้ว\nรายละเอียด: {detail}"
-                )
+            if strict_preferred:
+                if candidate in OPENROUTER_KEYS:
+                    yield f"⚠️ OpenRouter ไม่ตอบ ({candidate}): {exc}"
+                else:
+                    detail = _format_local_model_error(exc)
+                    yield (
+                        "⚠️ Qwen local ไม่ตอบ — ตรวจ Ollama (OLLAMA_BASE_URL / OLLAMA_MODEL ใน .env) "
+                        f"และว่า pull โมเดลแล้ว\nรายละเอียด: {detail}"
+                    )
                 return
             if candidate in {"haiku", "groq", "gemini"}:
                 await _log_ai_run(agent, candidate, 0, 0, int((time.perf_counter() - started_at) * 1000), False)
@@ -1408,10 +1491,15 @@ async def stream_chat_response(
         if emitted:
             return
 
-    if strict_local:
-        yield (
-            "⚠️ ไม่สามารถเชื่อม Qwen local ได้ — เปิด Ollama บน server หรือเลือก model อื่น (เช่น Haiku)"
-        )
+    if strict_preferred:
+        if requested_model in OPENROUTER_KEYS:
+            yield (
+                "⚠️ ไม่สามารถเชื่อม OpenRouter ได้ — ตั้ง OPENROUTER_API_KEY ใน .env แล้ว rebuild container"
+            )
+        else:
+            yield (
+                "⚠️ ไม่สามารถเชื่อม Qwen local ได้ — เปิด Ollama บน server หรือเลือก model อื่น"
+            )
         return
 
     result = await chat(
@@ -1445,7 +1533,7 @@ async def chat(
         if preferred_model in _VALID_MODELS
         else _resolve_requested_model(agent, active_model)
     )
-    if strict_model or requested_model in _LOCAL_ONLY_MODELS:
+    if strict_model or _is_strict_preferred(requested_model):
         candidates = [requested_model]
     else:
         candidates = _model_candidates(requested_model)
@@ -1463,6 +1551,10 @@ async def chat(
                 return await _call_groq(prompt, system, messages, agent)
             if candidate == "gemini":
                 return await _call_gemini(prompt, system, messages, agent)
+            if candidate in OPENROUTER_KEYS:
+                return await call_openrouter(
+                    candidate, prompt, system, messages, agent=agent
+                )
             if candidate in {"qwen3b", "qwen7b"}:
                 return await _call_ollama(prompt, system, messages, agent, candidate)
             if candidate == "sonnet":
@@ -1484,7 +1576,11 @@ async def chat(
             if candidate == "gpt-4o":
                 return await _call_openai(prompt, system, messages, agent, "gpt-4o")
         except Exception as exc:
-            if requested_model in _LOCAL_ONLY_MODELS:
+            if _is_strict_preferred(requested_model):
+                if requested_model in OPENROUTER_KEYS:
+                    raise RuntimeError(
+                        f"OpenRouter ({requested_model}) ไม่พร้อม: {exc}"
+                    ) from exc
                 from app.core.ollama_client import ollama_base_url
 
                 detail = _format_local_model_error(exc)
@@ -1494,7 +1590,10 @@ async def chat(
                 ) from exc
             continue
 
-    if (strict_model or requested_model in _LOCAL_ONLY_MODELS) and requested_model in _VALID_MODELS:
+    if (
+        (strict_model or _is_strict_preferred(requested_model))
+        and requested_model in _VALID_MODELS
+    ):
         raise RuntimeError(f"model unavailable: {requested_model}")
 
     default_candidate = _default_model(availability)

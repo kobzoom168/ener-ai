@@ -36,6 +36,7 @@ from app.core.ai import get_active_model, get_model_availability, get_model_labe
 from app.core.agents import COMMAND_AGENT_MAP, SCHEDULER_AGENTS
 from app.core.ai_gateway import get_recent_ai_traces, preview_context, run_ai
 from app.core.config import settings
+from app.core.openrouter_client import OPENROUTER_KEYS as _OPENROUTER_KEYS
 from app.core.database import get_all_config, get_config, get_db, init_db, set_config
 from app.core.diagnostics import log_otp_event
 from app.core.event_log import log_event
@@ -4590,6 +4591,7 @@ async def _workspace_conversation_id(project_id: int | None = None) -> str:
 
 
 _WORKSPACE_LOCAL_MODELS = frozenset({"qwen3b", "qwen7b"})
+_WORKSPACE_JSON_SEND_MODELS = _WORKSPACE_LOCAL_MODELS | _OPENROUTER_KEYS
 
 
 async def _workspace_chat_system_prompt(message: str, memory_context: str) -> str:
@@ -4632,6 +4634,31 @@ async def _workspace_local_qwen_reply(
     )
     system, history = trim_chat_context(system, history, profile=model)
     return await _call_ollama(message, system, history, "MainChatAgent", model)
+
+
+async def _workspace_openrouter_reply(
+    message: str,
+    model: str,
+    *,
+    user_id: str,
+    project_id: int | None,
+) -> str:
+    from app.core.ai import call_openrouter
+    from app.core.context_limits import trim_chat_context
+    from app.core.policy import BASE_SYSTEM_PROMPT
+    from app.core.workspace_memory import build_workspace_history_for_ai
+
+    history = await build_workspace_history_for_ai(
+        user_id, message, project_id=project_id, recent_limit=8
+    )
+    system = (
+        BASE_SYSTEM_PROMPT
+        + "\n\nตอบภาษาไทย เรียก user ว่ากบ เรียกตัวเองว่าพี่ ตอบกระชับ"
+    )
+    system, history = trim_chat_context(system, history, profile=model)
+    return await call_openrouter(
+        model, message, system, history, agent="MainChatAgent"
+    )
 
 
 def _is_simple_cpu_query(message: str) -> bool:
@@ -5141,12 +5168,38 @@ WORKSPACE_TOOLS = [
     ("system", "⚙️ System"),
 ]
 
+WORKSPACE_MODEL_GROUPS = [
+    (
+        "OpenRouter (Cloud)",
+        [
+            ("dolphin", "🐬 Dolphin (No Filter)"),
+            ("deepseek-v4", "⚡ DeepSeek V4 Flash"),
+            ("gemini-flash-lite", "🇹🇭 Gemini 2.5 Flash Lite"),
+            ("gemini-3-flash", "✨ Gemini 3 Flash"),
+            ("llama-free", "🆓 LLaMA 3.1 (Free)"),
+            ("mimo", "🚀 MiMo-V2.5 (Xiaomi)"),
+            ("hy3", "🔮 Hunyuan HY3"),
+        ],
+    ),
+    (
+        "Local (Ollama)",
+        [
+            ("qwen3b", "Qwen 3B"),
+            ("qwen7b", "Qwen 7B"),
+        ],
+    ),
+    (
+        "Direct API",
+        [
+            ("groq", "Groq"),
+            ("haiku", "Claude Haiku"),
+            ("gemini", "Gemini Flash"),
+        ],
+    ),
+]
+
 WORKSPACE_MODEL_OPTIONS = [
-    ("groq", "Groq"),
-    ("haiku", "Claude Haiku"),
-    ("gemini", "Gemini Flash"),
-    ("qwen3b", "Qwen 3B"),
-    ("qwen7b", "Qwen 7B"),
+    item for _group, items in WORKSPACE_MODEL_GROUPS for item in items
 ]
 
 _VALID_WORKSPACE_TOOLS = {tool_id for tool_id, _ in WORKSPACE_TOOLS}
@@ -5228,6 +5281,7 @@ async def workspace_page(
             "active_model": get_model_label(active_model_key or ""),
             "active_model_key": active_model_key or "",
             "model_options": WORKSPACE_MODEL_OPTIONS,
+            "model_option_groups": WORKSPACE_MODEL_GROUPS,
             "tools": WORKSPACE_TOOLS,
             "recent_messages": recent_messages,
             "project_id": normalized_project_id,
@@ -5355,13 +5409,20 @@ async def workspace_chat_send(request: Request):
         raise HTTPException(status_code=400, detail="กรุณาพิมพ์ข้อความ")
     project_id = _normalize_project_id(payload.get("project_id"))
     model = str(payload.get("model", "")).strip().lower() or None
-    if model in _WORKSPACE_LOCAL_MODELS:
+    if model in _WORKSPACE_JSON_SEND_MODELS:
         if _is_simple_cpu_query(text):
             from app.agents.monitor_agent import format_nl_resource_report, get_server_stats
 
             reply = format_nl_resource_report(get_server_stats())
-        else:
+        elif model in _WORKSPACE_LOCAL_MODELS:
             reply = await _workspace_local_qwen_reply(
+                text,
+                model,
+                user_id=_workspace_user_id(),
+                project_id=project_id,
+            )
+        else:
+            reply = await _workspace_openrouter_reply(
                 text,
                 model,
                 user_id=_workspace_user_id(),
@@ -5424,22 +5485,36 @@ async def workspace_chat_stream(request: Request):
                 project_id=project_id,
             )
 
-            if model in _WORKSPACE_LOCAL_MODELS:
-                reply_task = _asyncio.create_task(
-                    _workspace_local_qwen_reply(
-                        message,
-                        model,
-                        user_id=user_id,
-                        project_id=project_id,
+            if model in _WORKSPACE_JSON_SEND_MODELS:
+                if _is_simple_cpu_query(message):
+                    from app.agents.monitor_agent import (
+                        format_nl_resource_report,
+                        get_server_stats,
                     )
-                )
-                while not reply_task.done():
-                    done, _ = await _asyncio.wait({reply_task}, timeout=15.0)
-                    if reply_task in done:
-                        break
-                    yield f"data: {json.dumps({'type': 'ping'})}\n\n"
-                reply_text = reply_task.result()
-                yield f"data: {json.dumps({'type': 'token', 'text': reply_text}, ensure_ascii=False)}\n\n"
+
+                    reply_text = format_nl_resource_report(get_server_stats())
+                    yield f"data: {json.dumps({'type': 'token', 'text': reply_text}, ensure_ascii=False)}\n\n"
+                else:
+                    reply_fn = (
+                        _workspace_local_qwen_reply
+                        if model in _WORKSPACE_LOCAL_MODELS
+                        else _workspace_openrouter_reply
+                    )
+                    reply_task = _asyncio.create_task(
+                        reply_fn(
+                            message,
+                            model,
+                            user_id=user_id,
+                            project_id=project_id,
+                        )
+                    )
+                    while not reply_task.done():
+                        done, _ = await _asyncio.wait({reply_task}, timeout=15.0)
+                        if reply_task in done:
+                            break
+                        yield f"data: {json.dumps({'type': 'ping'})}\n\n"
+                    reply_text = reply_task.result()
+                    yield f"data: {json.dumps({'type': 'token', 'text': reply_text}, ensure_ascii=False)}\n\n"
             elif _is_simple_cpu_query(message):
                 from app.agents.monitor_agent import format_nl_resource_report, get_server_stats
 
@@ -5536,7 +5611,12 @@ async def workspace_chat_stream(request: Request):
         except Exception as exc:
             from app.core.ollama_client import format_ollama_error
 
-            detail = format_ollama_error(exc) if model in _WORKSPACE_LOCAL_MODELS else str(exc)
+            if model in _WORKSPACE_LOCAL_MODELS:
+                detail = format_ollama_error(exc)
+            elif model in _OPENROUTER_KEYS:
+                detail = f"OpenRouter error: {exc}"
+            else:
+                detail = str(exc)
             yield f"data: {json.dumps({'type': 'error', 'text': detail}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
@@ -8103,7 +8183,8 @@ async def admin_config_update(request: Request):
     if not key:
         raise HTTPException(status_code=400, detail="key required")
     if key == "active_model":
-        if value not in {"auto", "haiku", "groq", "gemini", "qwen3b", "qwen7b"}:
+        allowed = {"auto", "haiku", "groq", "gemini", "qwen3b", "qwen7b", *_OPENROUTER_KEYS}
+        if value not in allowed:
             raise HTTPException(status_code=400, detail="active_model ไม่ถูกต้อง")
         if value == "haiku" and not settings.anthropic_api_key:
             raise HTTPException(status_code=400, detail="Claude Haiku ยังไม่มี key")
@@ -8111,6 +8192,8 @@ async def admin_config_update(request: Request):
             raise HTTPException(status_code=400, detail="Groq ยังไม่มี key")
         if value == "gemini" and not settings.gemini_api_key:
             raise HTTPException(status_code=400, detail="Gemini ยังไม่มี key")
+        if value in _OPENROUTER_KEYS and not settings.openrouter_api_key:
+            raise HTTPException(status_code=400, detail="OpenRouter ยังไม่มี key")
     await set_config(key, value)
     async with get_db() as db:
         await db.execute(
@@ -8614,7 +8697,8 @@ async def admin_switch_model(request: Request):
     await _require_admin(request)
     form_data = parse_qs((await request.body()).decode("utf-8"))
     model = form_data.get("model", [""])[0].strip().lower()
-    if model not in {"haiku", "groq", "gemini", "qwen3b", "qwen7b"}:
+    allowed = {"haiku", "groq", "gemini", "qwen3b", "qwen7b", *_OPENROUTER_KEYS}
+    if model not in allowed:
         raise HTTPException(status_code=400, detail="โมเดลไม่ถูกต้อง")
     if model == "haiku" and not settings.anthropic_api_key:
         raise HTTPException(status_code=400, detail="Claude Haiku ยังไม่มี key")
@@ -8622,6 +8706,8 @@ async def admin_switch_model(request: Request):
         raise HTTPException(status_code=400, detail="Groq ยังไม่มี key")
     if model == "gemini" and not settings.gemini_api_key:
         raise HTTPException(status_code=400, detail="Gemini ยังไม่มี key")
+    if model in _OPENROUTER_KEYS and not settings.openrouter_api_key:
+        raise HTTPException(status_code=400, detail="OpenRouter ยังไม่มี key")
 
     await set_config("active_model", model)
     async with get_db() as db:

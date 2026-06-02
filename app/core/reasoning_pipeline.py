@@ -137,7 +137,7 @@ def route_fast(text: str, routing: dict[str, str] | None = None) -> dict:
             r.get("security")
             or r.get("hacking")
             or r.get("exploit")
-            or "qwen7b"
+            or "dolphin"
         )
         return {
             "complexity": "complex",
@@ -155,7 +155,7 @@ def route_fast(text: str, routing: dict[str, str] | None = None) -> dict:
                 "search_memory",
             ],
             "needs_check": False,
-            "reason": "security / pentest — local model without cloud content filter",
+            "reason": "security / pentest — OpenRouter Dolphin (uncensored)",
         }
 
     if any(k in t for k in ["container", "docker ps", "containers", "docker compose", "ปกติไหม"]):
@@ -402,7 +402,7 @@ def route_fast(text: str, routing: dict[str, str] | None = None) -> dict:
     return {
         "complexity": "simple",
         "domain": "chat",
-        "model": r.get("default_chat", "groq"),
+        "model": r.get("default_chat", "gemini-flash-lite"),
         "tools": ["save_task", "save_note",
                   "remember_fact", "search_memory"],
         "needs_check": False,
