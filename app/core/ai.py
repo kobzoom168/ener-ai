@@ -125,7 +125,13 @@ def _anthropic_messages(prompt: str, messages: list[dict[str, str]] | None) -> l
     return payload_messages
 
 
+_LOCAL_ONLY_MODELS = frozenset({"qwen3b", "qwen7b"})
+
+
 def _groq_messages(prompt: str, system: str, messages: list[dict[str, str]] | None) -> list[dict[str, str]]:
+    from app.core.context_limits import trim_chat_context
+
+    system, messages = trim_chat_context(system, messages, profile="groq")
     payload_messages = [{"role": "system", "content": system}]
     if messages:
         for message in messages:
@@ -294,6 +300,9 @@ async def _call_groq(
     messages: list[dict[str, str]] | None,
     agent: str,
 ) -> str:
+    from app.core.context_limits import trim_chat_context
+
+    system, messages = trim_chat_context(system, messages, profile="groq")
     started_at = time.perf_counter()
     try:
         client = AsyncGroq(api_key=settings.groq_api_key)
@@ -779,6 +788,9 @@ async def _call_ollama(
     agent: str,
     model_key: str,
 ) -> str:
+    from app.core.context_limits import trim_chat_context
+
+    system, messages = trim_chat_context(system, messages, profile=model_key)
     payload_messages = [{"role": "system", "content": system}]
     if messages:
         for message in messages:
@@ -1182,6 +1194,34 @@ async def _dispatch_tools_for_model(
     availability = await get_model_availability_async()
     key = str(model_key or "groq").strip().lower()
 
+    if key in _LOCAL_ONLY_MODELS:
+        from app.core.context_limits import trim_chat_context
+        from app.core.universal_tools import run_tools_from_text
+
+        sys_t, hist_t = trim_chat_context(system, messages, profile=key)
+        text = await chat(
+            prompt,
+            system=sys_t,
+            agent=agent,
+            messages=hist_t,
+            preferred_model=key,
+            strict_model=True,
+        )
+        cleaned = await run_tools_from_text(
+            text,
+            prompt=prompt,
+            system=sys_t,
+            messages=hist_t,
+            summarize=lambda user_prompt, **kw: chat(
+                user_prompt,
+                agent=agent,
+                preferred_model=key,
+                strict_model=True,
+                **kw,
+            ),
+        )
+        return {"text": cleaned, "tool_calls": [], "model": key}
+
     if key in _OPENAI_TOOL_MODELS:
         openai_ok = (
             availability.get("groq", False)
@@ -1247,16 +1287,21 @@ async def stream_chat_response(
     alias_map = {"claude": "haiku", "ollama": "qwen3b"}
     requested_model = alias_map.get(normalized_model, normalized_model)
 
-    if requested_model == "auto":
+    strict_local = requested_model in _LOCAL_ONLY_MODELS
+
+    if strict_local:
+        candidates = [requested_model]
+    elif requested_model == "auto":
         candidates = [active_model] if active_model in _VALID_MODELS else []
         for candidate in ["haiku", "groq", "gemini", "qwen3b", "qwen7b"]:
             if candidate not in candidates:
                 candidates.append(candidate)
     elif requested_model in _VALID_MODELS:
         candidates = [requested_model]
-        for candidate in ["haiku", "groq", "gemini", "qwen3b", "qwen7b"]:
-            if candidate != requested_model and candidate not in candidates:
-                candidates.append(candidate)
+        if requested_model != "groq":
+            for candidate in ["haiku", "groq", "gemini", "qwen3b", "qwen7b"]:
+                if candidate != requested_model and candidate not in candidates:
+                    candidates.append(candidate)
     else:
         candidates = ["haiku", "groq", "gemini", "qwen3b", "qwen7b"]
 
@@ -1331,19 +1376,32 @@ async def stream_chat_response(
                 await _log_ai_run(agent, "gemini", 0, 0, int((time.perf_counter() - started_at) * 1000), True)
                 return
 
-            if candidate in {"qwen3b", "qwen7b"}:
-                text = await _call_ollama(message, system_prompt, history[-20:], agent, candidate)
+            if candidate in _LOCAL_ONLY_MODELS:
+                text = await _call_ollama(message, system_prompt, history, agent, candidate)
                 if text:
                     emitted = True
                     yield text
                 return
-        except Exception:
+        except Exception as exc:
+            if strict_local:
+                yield (
+                    "⚠️ Qwen local ไม่ตอบ — ตรวจว่า Ollama รันอยู่และโมเดล "
+                    f"{candidate} ถูก pull แล้ว (OLLAMA_BASE_URL ใน .env). "
+                    f"รายละเอียด: {exc}"
+                )
+                return
             if candidate in {"haiku", "groq", "gemini"}:
                 await _log_ai_run(agent, candidate, 0, 0, int((time.perf_counter() - started_at) * 1000), False)
             continue
 
         if emitted:
             return
+
+    if strict_local:
+        yield (
+            "⚠️ ไม่สามารถเชื่อม Qwen local ได้ — เปิด Ollama บน server หรือเลือก model อื่น (เช่น Haiku)"
+        )
+        return
 
     result = await chat(
         message,
@@ -1376,7 +1434,7 @@ async def chat(
         if preferred_model in _VALID_MODELS
         else _resolve_requested_model(agent, active_model)
     )
-    if strict_model and requested_model in _VALID_MODELS:
+    if strict_model or requested_model in _LOCAL_ONLY_MODELS:
         candidates = [requested_model]
     else:
         candidates = _model_candidates(requested_model)
@@ -1414,10 +1472,14 @@ async def chat(
                 return await _call_openai(prompt, system, messages, agent, "gpt-4o-mini")
             if candidate == "gpt-4o":
                 return await _call_openai(prompt, system, messages, agent, "gpt-4o")
-        except Exception:
+        except Exception as exc:
+            if requested_model in _LOCAL_ONLY_MODELS:
+                raise RuntimeError(
+                    f"Qwen local ({requested_model}) ไม่พร้อม — ตรวจ Ollama ที่ {settings.ollama_base_url}"
+                ) from exc
             continue
 
-    if strict_model and requested_model in _VALID_MODELS:
+    if (strict_model or requested_model in _LOCAL_ONLY_MODELS) and requested_model in _VALID_MODELS:
         raise RuntimeError(f"model unavailable: {requested_model}")
 
     default_candidate = _default_model(availability)

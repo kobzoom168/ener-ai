@@ -5360,10 +5360,15 @@ async def workspace_chat_stream(request: Request):
     memory_context = await build_workspace_conversation_context(
         user_id, message, project_id=project_id
     )
+    hist_limit = 12 if model in {"qwen3b", "qwen7b", "groq"} else 28
     history = await build_workspace_history_for_ai(
-        user_id, message, project_id=project_id
+        user_id, message, project_id=project_id, recent_limit=hist_limit
     )
     system_prompt = await _workspace_chat_system_prompt(message, memory_context)
+    from app.core.context_limits import profile_for_model, trim_chat_context
+
+    profile = profile_for_model(model if model not in ("auto", "") else "default")
+    system_prompt, history = trim_chat_context(system_prompt, history, profile=profile)
     full_reply: list[str] = []
 
     async def generate():
