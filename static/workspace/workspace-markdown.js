@@ -41,9 +41,20 @@
         const token = (tokenOrText && typeof tokenOrText === 'object')
           ? tokenOrText
           : { text: tokenOrText, lang: maybeLang };
-        const code = String(token?.text || '');
+        let code = String(token?.text || '');
         const rawLang = String(token?.lang || maybeLang || '');
         const language = (rawLang || 'text').toLowerCase() || 'text';
+
+        // Some model outputs arrive as fenced raw block where token.text becomes empty.
+        if (!code.trim()) {
+          const raw = String(token?.raw || '');
+          const m = raw.match(/^```[^\n]*\n?([\s\S]*?)```$/);
+          if (m && m[1]) code = String(m[1]);
+        }
+        if (!code.trim()) {
+          code = '// (empty code block from model)';
+        }
+
         let highlighted = escapeHtml(code);
         if (typeof hljs !== 'undefined') {
           try {
