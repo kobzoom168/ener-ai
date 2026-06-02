@@ -16,7 +16,7 @@ from app.core.trace_context import reset_trace_context, set_trace_context
 logger = logging.getLogger(__name__)
 
 # Domains that must keep router-selected model (capabilities / tool loops).
-_KEEP_ROUTER_MODEL = frozenset({"vision", "code_agent", "image_analysis"})
+_KEEP_ROUTER_MODEL = frozenset({"vision", "code_agent", "image_analysis", "security"})
 
 _INTENT_ROUTE_HINTS: dict[str, dict[str, str]] = {
     "content": {"domain": "analysis", "reason": "ener scan / amulet / content"},
@@ -26,6 +26,9 @@ _INTENT_ROUTE_HINTS: dict[str, dict[str, str]] = {
     "code_agent": {"domain": "code_agent", "reason": "autonomous code agent"},
     "gmail": {"domain": "analysis", "reason": "gmail / email"},
     "github": {"domain": "code", "reason": "github / repos"},
+    "security": {"domain": "security", "reason": "security / pentest"},
+    "hacking": {"domain": "security", "reason": "security / pentest"},
+    "exploit": {"domain": "security", "reason": "security / pentest"},
 }
 
 

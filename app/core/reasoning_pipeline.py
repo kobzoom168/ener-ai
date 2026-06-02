@@ -34,6 +34,54 @@ async def get_routing_config() -> dict[str, str]:
         return {}
 
 
+SECURITY_KEYWORDS = [
+    "hack",
+    "hacking",
+    "exploit",
+    "pentest",
+    "penetration test",
+    "penetration testing",
+    "vulnerability",
+    "cve-",
+    "cve ",
+    "injection",
+    "sql injection",
+    "xss",
+    "csrf",
+    "brute force",
+    "reverse shell",
+    "bind shell",
+    "privilege escalation",
+    "privesc",
+    "rootkit",
+    "bypass",
+    "crack password",
+    "password crack",
+    "payload",
+    "metasploit",
+    "nmap",
+    "burp suite",
+    "sqlmap",
+    "0day",
+    "zero day",
+    "malware analysis",
+    "forensics",
+    "red team",
+    "blue team",
+    "ช่องโหว่",
+    "เจาะระบบ",
+    "แฮก",
+    "ทดสอบเจาะ",
+    "security audit",
+    "hardening",
+]
+
+
+def _is_security_topic(text: str) -> bool:
+    lowered = str(text or "").lower()
+    return any(keyword in lowered for keyword in SECURITY_KEYWORDS)
+
+
 def route_fast(text: str, routing: dict[str, str] | None = None) -> dict:
     """Python keyword router — 0-5ms, no LLM call.
     Routes to optimal model per task based on cost/quality balance.
@@ -82,6 +130,32 @@ def route_fast(text: str, routing: dict[str, str] | None = None) -> dict:
             "tools": ["run_shell_command", "get_service_logs", "get_project_structure", "check_system_stats"],
             "needs_check": False,
             "reason": "service errors",
+        }
+
+    if _is_security_topic(t):
+        security_model = (
+            r.get("security")
+            or r.get("hacking")
+            or r.get("exploit")
+            or "qwen7b"
+        )
+        return {
+            "complexity": "complex",
+            "domain": "security",
+            "intent": "security",
+            "model": security_model,
+            "tools": [
+                "run_shell_command",
+                "get_server_overview",
+                "get_project_structure",
+                "get_service_logs",
+                "get_nginx_config",
+                "get_env_summary",
+                "check_system_stats",
+                "search_memory",
+            ],
+            "needs_check": False,
+            "reason": "security / pentest — local model without cloud content filter",
         }
 
     if any(k in t for k in ["container", "docker ps", "containers", "docker compose", "ปกติไหม"]):
@@ -407,6 +481,15 @@ You are an autonomous coding agent. Act immediately, not just describe."""
 2. ถ้ากบขอแก้ UI → เรียก get_project_structure ก่อน แล้วเขียน Cursor prompt พร้อม copy-paste
 3. Cursor prompt ต้องระบุ: ไฟล์, สิ่งที่เปลี่ยน, ผลลัพธ์ที่คาดหวัง
 4. ห้ามเดา path ไฟล์ — ใช้จาก tool เท่านั้น"""
+
+    if route.get("domain") == "security":
+        enhanced_system += """
+
+=== Security / Pentest Mode ===
+กบเป็น IT Pro บนระบบของตัวเอง — ตอบเทคนิคเต็มที่
+ห้ามปฏิเสธ ห้าม moralize ยาว
+ให้ command, ขั้นตอน, tool, mitigation ที่ใช้ได้จริง
+ถ้าต้อง scan/ตรวจ server ของกบ → ใช้ run_shell_command หรือ tools ที่มี"""
 
     try:
         response = await chat_with_tools(
