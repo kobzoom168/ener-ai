@@ -4589,6 +4589,9 @@ async def _workspace_conversation_id(project_id: int | None = None) -> str:
     )
 
 
+_WORKSPACE_LOCAL_MODELS = frozenset({"qwen3b", "qwen7b"})
+
+
 async def _workspace_chat_system_prompt(message: str, memory_context: str) -> str:
     from app.agents.chat import _build_system_prompt
 
@@ -4605,6 +4608,30 @@ async def _workspace_chat_system_prompt(message: str, memory_context: str) -> st
     if memory_context:
         parts.append(memory_context)
     return "\n\n".join(parts)
+
+
+async def _workspace_local_qwen_reply(
+    message: str,
+    model: str,
+    *,
+    user_id: str,
+    project_id: int | None,
+) -> str:
+    """Lightweight Ollama path — skip heavy server prefetch."""
+    from app.core.ai import _call_ollama
+    from app.core.context_limits import trim_chat_context
+    from app.core.policy import BASE_SYSTEM_PROMPT
+    from app.core.workspace_memory import build_workspace_history_for_ai
+
+    history = await build_workspace_history_for_ai(
+        user_id, message, project_id=project_id, recent_limit=8
+    )
+    system = (
+        BASE_SYSTEM_PROMPT
+        + "\n\nตอบภาษาไทย เรียก user ว่ากบ เรียกตัวเองว่าพี่ ตอบกระชับ"
+    )
+    system, history = trim_chat_context(system, history, profile=model)
+    return await _call_ollama(message, system, history, "MainChatAgent", model)
 
 
 def _is_simple_cpu_query(message: str) -> bool:
@@ -5328,6 +5355,15 @@ async def workspace_chat_send(request: Request):
         raise HTTPException(status_code=400, detail="กรุณาพิมพ์ข้อความ")
     project_id = _normalize_project_id(payload.get("project_id"))
     model = str(payload.get("model", "")).strip().lower() or None
+    if model in _WORKSPACE_LOCAL_MODELS:
+        reply = await _workspace_local_qwen_reply(
+            text,
+            model,
+            user_id=_workspace_user_id(),
+            project_id=project_id,
+        )
+        await _workspace_save_chat_messages(project_id, text, reply)
+        return JSONResponse({"ok": True, "reply": reply})
     reply = await _workspace_generate_reply(text, project_id, model)
     return JSONResponse({"ok": True, "reply": reply})
 
@@ -5355,21 +5391,10 @@ async def workspace_chat_stream(request: Request):
 
     user_id = _workspace_user_id()
     conversation_id = await _workspace_conversation_id(project_id=project_id)
-    memory_context = await build_workspace_conversation_context(
-        user_id, message, project_id=project_id
-    )
-    hist_limit = 12 if model in {"qwen3b", "qwen7b", "groq"} else 28
-    history = await build_workspace_history_for_ai(
-        user_id, message, project_id=project_id, recent_limit=hist_limit
-    )
-    system_prompt = await _workspace_chat_system_prompt(message, memory_context)
-    from app.core.context_limits import profile_for_model, trim_chat_context
-
-    profile = profile_for_model(model if model not in ("auto", "") else "default")
-    system_prompt, history = trim_chat_context(system_prompt, history, profile=profile)
-    full_reply: list[str] = []
 
     async def generate():
+        reply_text = ""
+        full_reply: list[str] = []
         try:
             yield f"data: {json.dumps({'type': 'start'}, ensure_ascii=False)}\n\n"
 
@@ -5394,37 +5419,66 @@ async def workspace_chat_stream(request: Request):
                 project_id=project_id,
             )
 
-            if _is_simple_cpu_query(message):
+            if model in _WORKSPACE_LOCAL_MODELS:
+                reply_text = await _workspace_local_qwen_reply(
+                    message,
+                    model,
+                    user_id=user_id,
+                    project_id=project_id,
+                )
+                yield f"data: {json.dumps({'type': 'token', 'text': reply_text}, ensure_ascii=False)}\n\n"
+            elif _is_simple_cpu_query(message):
                 from app.agents.monitor_agent import format_nl_resource_report, get_server_stats
 
                 reply_text = format_nl_resource_report(get_server_stats())
                 yield f"data: {json.dumps({'type': 'token', 'text': reply_text}, ensure_ascii=False)}\n\n"
-            elif _workspace_needs_tool_agent(message):
-                from app.core.ai_gateway import run_ai
-
-                pref_model = model if model and model != "auto" else None
-                gateway_result = await run_ai(
-                    source="telegram",
-                    external_chat_id=user_id,
-                    text=message,
-                    project_id=project_id,
-                    history=history,
-                    system_prompt=system_prompt,
-                    preferred_model=pref_model,
-                )
-                reply_text = str(gateway_result.get("reply", "")).strip() or "ยังไม่มีคำตอบตอนนี้"
-                yield f"data: {json.dumps({'type': 'token', 'text': reply_text}, ensure_ascii=False)}\n\n"
             else:
-                async for token in stream_chat_response(
-                    message=message,
-                    history=history,
-                    system_prompt=system_prompt,
-                    model=model,
-                    agent="MainChatAgent",
-                ):
-                    full_reply.append(token)
-                    yield f"data: {json.dumps({'type': 'token', 'text': token}, ensure_ascii=False)}\n\n"
-                reply_text = "".join(full_reply).strip() or "ยังไม่มีคำตอบตอนนี้"
+                memory_context = await build_workspace_conversation_context(
+                    user_id, message, project_id=project_id
+                )
+                hist_limit = 12 if model in {"groq"} else 28
+                history = await build_workspace_history_for_ai(
+                    user_id, message, project_id=project_id, recent_limit=hist_limit
+                )
+                system_prompt = await _workspace_chat_system_prompt(
+                    message, memory_context
+                )
+                from app.core.context_limits import profile_for_model, trim_chat_context
+
+                profile = profile_for_model(model if model not in ("auto", "") else "default")
+                system_prompt, history = trim_chat_context(
+                    system_prompt, history, profile=profile
+                )
+
+                if _workspace_needs_tool_agent(message):
+                    from app.core.ai_gateway import run_ai
+
+                    pref_model = model if model and model != "auto" else None
+                    gateway_result = await run_ai(
+                        source="telegram",
+                        external_chat_id=user_id,
+                        text=message,
+                        project_id=project_id,
+                        history=history,
+                        system_prompt=system_prompt,
+                        preferred_model=pref_model,
+                    )
+                    reply_text = (
+                        str(gateway_result.get("reply", "")).strip()
+                        or "ยังไม่มีคำตอบตอนนี้"
+                    )
+                    yield f"data: {json.dumps({'type': 'token', 'text': reply_text}, ensure_ascii=False)}\n\n"
+                else:
+                    async for token in stream_chat_response(
+                        message=message,
+                        history=history,
+                        system_prompt=system_prompt,
+                        model=model,
+                        agent="MainChatAgent",
+                    ):
+                        full_reply.append(token)
+                        yield f"data: {json.dumps({'type': 'token', 'text': token}, ensure_ascii=False)}\n\n"
+                    reply_text = "".join(full_reply).strip() or "ยังไม่มีคำตอบตอนนี้"
             assistant_message_id: int | None = None
             async with get_db() as db:
                 cur = await db.execute(
@@ -5467,7 +5521,10 @@ async def workspace_chat_stream(request: Request):
             _asyncio.create_task(_post_reply_tasks())
             yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
         except Exception as exc:
-            yield f"data: {json.dumps({'type': 'error', 'text': str(exc)}, ensure_ascii=False)}\n\n"
+            from app.core.ollama_client import format_ollama_error
+
+            detail = format_ollama_error(exc) if model in _WORKSPACE_LOCAL_MODELS else str(exc)
+            yield f"data: {json.dumps({'type': 'error', 'text': detail}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         generate(),
@@ -5475,6 +5532,7 @@ async def workspace_chat_stream(request: Request):
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
         },
     )
 

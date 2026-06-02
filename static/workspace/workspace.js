@@ -557,14 +557,19 @@ document.addEventListener('DOMContentLoaded', function() {
           }
           if (data.type === 'error') {
             document.getElementById(thinkingId)?.remove();
-            showToast(data.text || 'Streaming error');
+            if (!aiBubble) aiBubble = appendAiBubble('', 'Ener-AI');
+            const errText = data.text || 'Streaming error';
+            renderAiMessageContent(aiBubble.querySelector('.msg-text'), errText);
+            showToast(errText);
           }
         }
       }
     } catch (error) {
       document.getElementById(thinkingId)?.remove();
-      appendAiBubble('Connection error. Please retry.', 'Ener-AI');
-      showToast(error.message || 'Send failed');
+      const errMsg = error.message || 'Send failed';
+      const failBubble = appendAiBubble(errMsg, 'Ener-AI');
+      renderAiMessageContent(failBubble.querySelector('.msg-text'), errMsg);
+      showToast(errMsg);
     } finally {
       state.streaming = false;
       setSendButtonState(false);
