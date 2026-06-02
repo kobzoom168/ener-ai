@@ -4590,7 +4590,7 @@ async def _workspace_conversation_id(project_id: int | None = None) -> str:
     )
 
 
-_WORKSPACE_LOCAL_MODELS = frozenset({"qwen3b", "qwen7b"})
+_WORKSPACE_LOCAL_MODELS = frozenset({"qwen3b", "qwen7b", "dolphin"})
 _WORKSPACE_JSON_SEND_MODELS = _WORKSPACE_LOCAL_MODELS | _OPENROUTER_KEYS
 
 

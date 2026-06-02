@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 QWEN_MODEL_MAP: dict[str, str] = {
     "qwen3b": "qwen2.5:3b",
     "qwen7b": "qwen2.5:7b",
+    "dolphin": "dolphin-mistral:latest",
     "qwen 3b": "qwen2.5:3b",
     "qwen 7b": "qwen2.5:7b",
     "qwen-3b": "qwen2.5:3b",
