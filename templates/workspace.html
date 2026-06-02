@@ -394,6 +394,13 @@
     #panel-chat .msg-text.markdown-body {
       white-space: normal;
     }
+    #panel-chat .msg-text.plain-text {
+      white-space: pre-wrap;
+      font-family: Consolas, Monaco, monospace;
+      font-size: 0.875rem;
+      line-height: 1.5;
+      color: #c9d1d9;
+    }
     #panel-chat .user-bubble .msg-text {
       white-space: pre-wrap;
     }
@@ -702,8 +709,8 @@
   });
 </script>
 <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
-<script src="/static/workspace/workspace-markdown.js?v=openrouter7"></script>
-<script src="/static/workspace/workspace.js?v=openrouter7"></script>
+<script src="/static/workspace/workspace-markdown.js?v=openrouter8"></script>
+<script src="/static/workspace/workspace.js?v=openrouter8"></script>
 <script>
   document.addEventListener('DOMContentLoaded', function() {
     if (window.lucide) lucide.createIcons();

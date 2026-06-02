@@ -133,20 +133,29 @@ document.addEventListener('DOMContentLoaded', function() {
       });
     };
 
-    toolbar.querySelector('.msg-btn-md').addEventListener('click', () => {
-      if (typeof window.setRenderMode === 'function') window.setRenderMode('markdown');
-      setActive('markdown');
-    });
-    toolbar.querySelector('.msg-btn-plain').addEventListener('click', () => {
-      if (typeof window.setRenderMode === 'function') window.setRenderMode('plain');
-      setActive('plain');
-    });
+    const rerender = (mode) => {
+      const raw = textEl?.dataset.raw || textEl?.getAttribute('data-raw') || '';
+      if (!textEl || !raw) return;
+      if (typeof window.renderMarkdownInto === 'function') {
+        window.renderMarkdownInto(textEl, raw, mode);
+      }
+      setActive(mode);
+      try {
+        localStorage.setItem('ws_render_mode', mode);
+      } catch (e) {
+        /* ignore */
+      }
+    };
+
+    toolbar.querySelector('.msg-btn-md').addEventListener('click', () => rerender('markdown'));
+    toolbar.querySelector('.msg-btn-plain').addEventListener('click', () => rerender('plain'));
     toolbar.querySelector('.msg-btn-raw').addEventListener('click', () => {
       if (typeof window.showPlainInto === 'function') window.showPlainInto(textEl);
     });
     toolbar.querySelector('.copy-btn').addEventListener('click', () => copyAiMessage(toolbar.querySelector('.copy-btn')));
 
-    const mode = typeof window.getRenderMode === 'function' ? window.getRenderMode() : 'markdown';
+    const mode = textEl?.dataset.renderMode
+      || (typeof window.getRenderMode === 'function' ? window.getRenderMode() : 'markdown');
     setActive(mode);
     wrap.dataset.toolbarBound = '1';
   }

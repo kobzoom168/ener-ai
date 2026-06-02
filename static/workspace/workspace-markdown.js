@@ -178,15 +178,13 @@
     } catch (e) {
       /* ignore */
     }
-    document.querySelectorAll('.msg-text.markdown-body').forEach((el) => {
+    document.querySelectorAll('.ai-bubble-wrap .msg-text').forEach((el) => {
       const raw = el.dataset.raw || el.getAttribute('data-raw') || '';
       if (!raw) return;
-      if (m === 'plain') {
-        el.classList.remove('markdown-body');
-        el.innerHTML = escapeHtml(raw).replace(/\n/g, '<br>');
-      } else {
-        renderMarkdownInto(el, raw);
-      }
+      renderMarkdownInto(el, raw, m);
+    });
+    document.querySelectorAll('.msg-btn[data-mode]').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.mode === m);
     });
   }
 
@@ -223,15 +221,19 @@
     overlay.querySelector('.raw-modal-body').textContent = raw;
   }
 
-  function renderMarkdownInto(el, rawText) {
+  function renderMarkdownInto(el, rawText, modeOverride) {
     if (!el) return;
     const cleaned = sanitizeAiContent(rawText);
     el.dataset.raw = cleaned;
-    if (getRenderMode() === 'plain') {
+    const mode = modeOverride || el.dataset.renderMode || getRenderMode();
+    el.dataset.renderMode = mode;
+    if (mode === 'plain') {
       el.classList.remove('markdown-body');
-      el.innerHTML = escapeHtml(cleaned).replace(/\n/g, '<br>');
+      el.classList.add('plain-text');
+      el.textContent = cleaned;
       return;
     }
+    el.classList.remove('plain-text');
     el.classList.add('markdown-body');
     el.innerHTML = renderMarkdown(cleaned);
     hydrateEmptyCodeBlocks(el, cleaned);
@@ -240,9 +242,9 @@
 
   function renderAllMarkdownBodies(root) {
     const scope = root || document;
-    scope.querySelectorAll('.markdown-body[data-raw], .msg-text.markdown-body').forEach((el) => {
-      const raw = el.getAttribute('data-raw') ?? el.dataset.raw ?? el.textContent ?? '';
-      if (raw) renderMarkdownInto(el, raw);
+    scope.querySelectorAll('.ai-bubble-wrap .msg-text').forEach((el) => {
+      const raw = el.getAttribute('data-raw') ?? el.dataset.raw ?? '';
+      if (raw) renderMarkdownInto(el, raw, el.dataset.renderMode);
     });
   }
 
