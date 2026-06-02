@@ -5350,7 +5350,7 @@ async def workspace_new_chat(request: Request):
 async def workspace_chat_send(request: Request):
     await _require_admin(request)
     payload = await request.json()
-    text = str(payload.get("text", "")).strip()
+    text = str(payload.get("text", payload.get("message", ""))).strip()
     if not text:
         raise HTTPException(status_code=400, detail="กรุณาพิมพ์ข้อความ")
     project_id = _normalize_project_id(payload.get("project_id"))

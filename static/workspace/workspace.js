@@ -501,6 +501,49 @@ document.addEventListener('DOMContentLoaded', function() {
       return;
     }
 
+    const model = (document.getElementById('model-select') || {}).value || 'auto';
+    const isLocalQwen = model === 'qwen3b' || model === 'qwen7b';
+
+    if (isLocalQwen) {
+      try {
+        const response = await fetch('/workspace/chat/send', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            text: msg,
+            project_id: window._currentProject || null,
+            model,
+          }),
+        });
+        const data = await response.json().catch(() => ({}));
+        document.getElementById(thinkingId)?.remove();
+        if (!response.ok) {
+          throw new Error(data.detail || data.error || `Request failed (${response.status})`);
+        }
+        const reply = String(data.reply || '').trim() || 'ยังไม่มีคำตอบตอนนี้';
+        const aiBubble = appendAiBubble('', 'Ener-AI · Qwen local');
+        const textEl = aiBubble?.closest('.ai-bubble-wrap')?.querySelector('.msg-text')
+          || aiBubble?.querySelector('.msg-text');
+        renderAiMessageContent(textEl, reply);
+        loadProjects().catch(() => {});
+        scrollToBottom();
+      } catch (error) {
+        document.getElementById(thinkingId)?.remove();
+        const errMsg = error.message || 'Qwen local failed';
+        const failBubble = appendAiBubble(errMsg, 'Ener-AI');
+        const textEl = failBubble?.closest('.ai-bubble-wrap')?.querySelector('.msg-text')
+          || failBubble?.querySelector('.msg-text');
+        renderAiMessageContent(textEl, errMsg);
+        showToast(errMsg);
+      } finally {
+        state.streaming = false;
+        setSendButtonState(false);
+        chatInput.focus();
+      }
+      return;
+    }
+
     let aiBubble = null;
     let fullText = '';
 
@@ -512,7 +555,7 @@ document.addEventListener('DOMContentLoaded', function() {
         body: JSON.stringify({
           message: msg,
           project_id: window._currentProject || null,
-          model: (document.getElementById('model-select') || {}).value || 'auto'
+          model,
         })
       });
 
@@ -566,6 +609,15 @@ document.addEventListener('DOMContentLoaded', function() {
             showToast(errText);
           }
         }
+      }
+      if (!fullText.trim()) {
+        document.getElementById(thinkingId)?.remove();
+        const hint = 'การเชื่อมต่อขาดก่อนได้คำตอบ — ลองส่งใหม่หรือเลือกโมเดลอื่น';
+        if (!aiBubble) aiBubble = appendAiBubble('', 'Ener-AI');
+        const textEl = aiBubble?.closest('.ai-bubble-wrap')?.querySelector('.msg-text')
+          || aiBubble?.querySelector('.msg-text');
+        renderAiMessageContent(textEl, hint);
+        showToast(hint);
       }
     } catch (error) {
       document.getElementById(thinkingId)?.remove();
