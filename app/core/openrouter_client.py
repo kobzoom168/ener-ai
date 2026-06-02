@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import time
 from typing import Any
 
@@ -131,6 +132,17 @@ def _parse_completion(data: dict[str, Any]) -> str:
     return str(content).strip()
 
 
+def _looks_like_empty_code_reply(text: str) -> bool:
+    raw = str(text or "")
+    if not raw.strip():
+        return True
+    blocks = re.findall(r"```[^\n\r]*\r?\n?([\s\S]*?)```", raw)
+    if not blocks:
+        return False
+    # All fenced blocks are empty/whitespace -> treat as unusable code reply.
+    return all(not str(block).strip() for block in blocks)
+
+
 def _http_error_detail(exc: httpx.HTTPStatusError) -> str:
     response = exc.response
     status = response.status_code if response is not None else "?"
@@ -188,6 +200,8 @@ async def call_openrouter(
                         )
                         response.raise_for_status()
                         text = _parse_completion(response.json())
+                        if _looks_like_empty_code_reply(text):
+                            raise RuntimeError("empty_code_block_reply")
                         await _log_ai_run(
                             agent,
                             model_key,
@@ -208,8 +222,41 @@ async def call_openrouter(
                     except RuntimeError as exc:
                         detail = str(exc)
                         last_error = f"{model_id} -> {detail}"
-                        transient_hint = "network connection lost" in detail.lower() or "provider_error(code=502)" in detail.lower()
+                        transient_hint = (
+                            "network connection lost" in detail.lower()
+                            or "provider_error(code=502)" in detail.lower()
+                            or "empty_code_block_reply" in detail.lower()
+                        )
                         if attempt == 1 and transient_hint:
+                            # second try asks explicitly for non-empty fenced code.
+                            if "empty_code_block_reply" in detail.lower():
+                                payload = {
+                                    "model": model_id,
+                                    "messages": _build_messages(
+                                        prompt + "\n\nIMPORTANT: if you return code block, include actual code lines inside it.",
+                                        system,
+                                        messages,
+                                    ),
+                                    "max_tokens": max_tokens,
+                                    "temperature": max(0.2, float(temperature)),
+                                }
+                                response = await client.post(
+                                    url,
+                                    headers=_openrouter_headers(api_key),
+                                    json=payload,
+                                )
+                                response.raise_for_status()
+                                text = _parse_completion(response.json())
+                                if not _looks_like_empty_code_reply(text):
+                                    await _log_ai_run(
+                                        agent,
+                                        model_key,
+                                        0,
+                                        0,
+                                        int((time.perf_counter() - started_at) * 1000),
+                                        True,
+                                    )
+                                    return text
                             await asyncio.sleep(0.5)
                             continue
                         break
