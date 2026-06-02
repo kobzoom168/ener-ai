@@ -501,15 +501,8 @@ document.addEventListener('DOMContentLoaded', function() {
       return;
     }
 
-    const model = (document.getElementById('model-select') || {}).value || 'auto';
-    const isLocalModel = model === 'qwen3b' || model === 'qwen7b' || model === 'dolphin';
-    const openRouterModels = new Set([
-      'dolphin', 'deepseek-v4', 'gemini-flash-lite', 'gemini-3-flash',
-      'llama-free', 'mimo', 'hy3',
-    ]);
-    const useJsonSend = isLocalModel || openRouterModels.has(model);
-
-    if (useJsonSend) {
+    const model = (document.getElementById('model-select') || {}).value || 'deepseek/deepseek-v4-flash';
+    {
       try {
         const response = await fetch('/workspace/chat/send', {
           method: 'POST',
@@ -527,7 +520,7 @@ document.addEventListener('DOMContentLoaded', function() {
           throw new Error(data.detail || data.error || `Request failed (${response.status})`);
         }
         const reply = String(data.reply || '').trim() || 'ยังไม่มีคำตอบตอนนี้';
-        const meta = isLocalModel ? 'Ener-AI · Local model' : `Ener-AI · ${model}`;
+        const meta = `Ener-AI · ${model}`;
         const aiBubble = appendAiBubble('', meta);
         const textEl = aiBubble?.closest('.ai-bubble-wrap')?.querySelector('.msg-text')
           || aiBubble?.querySelector('.msg-text');
@@ -536,7 +529,7 @@ document.addEventListener('DOMContentLoaded', function() {
         scrollToBottom();
       } catch (error) {
         document.getElementById(thinkingId)?.remove();
-        const errMsg = error.message || 'Qwen local failed';
+        const errMsg = error.message || 'OpenRouter request failed';
         const failBubble = appendAiBubble(errMsg, 'Ener-AI');
         const textEl = failBubble?.closest('.ai-bubble-wrap')?.querySelector('.msg-text')
           || failBubble?.querySelector('.msg-text');
@@ -548,93 +541,6 @@ document.addEventListener('DOMContentLoaded', function() {
         chatInput.focus();
       }
       return;
-    }
-
-    let aiBubble = null;
-    let fullText = '';
-
-    try {
-      const response = await fetch('/workspace/chat/stream', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        credentials: 'same-origin',
-        body: JSON.stringify({
-          message: msg,
-          project_id: window._currentProject || null,
-          model,
-        })
-      });
-
-      if (!response.ok || !response.body) {
-        throw new Error(`Request failed (${response.status})`);
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const {done, value} = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, {stream: true});
-        const chunks = buffer.split('\n\n');
-        buffer = chunks.pop() || '';
-
-        for (const chunk of chunks) {
-          const line = chunk.split('\n').find((item) => item.startsWith('data: '));
-          if (!line) continue;
-          const data = JSON.parse(line.slice(6));
-
-          if (data.type === 'start') {
-            document.getElementById(thinkingId)?.remove();
-            aiBubble = appendAiBubble('', 'Ener-AI');
-          }
-          if (data.type === 'ping') {
-            /* SSE keepalive while Qwen/Ollama runs */
-          }
-          if (data.type === 'token') {
-            if (!aiBubble) aiBubble = appendAiBubble('', 'Ener-AI');
-            fullText += data.text || '';
-            renderAiMessageContent(aiBubble.querySelector('.msg-text'), fullText);
-            scrollToBottom();
-          }
-          if (data.type === 'done') {
-            loadProjects().catch(() => {});
-            const df = getWorkspaceDateFilter();
-            const today = window.__WORKSPACE_TODAY__ || '';
-            if (df && df !== 'all' && df !== today) {
-              loadChatHistory();
-            }
-          }
-          if (data.type === 'error') {
-            document.getElementById(thinkingId)?.remove();
-            if (!aiBubble) aiBubble = appendAiBubble('', 'Ener-AI');
-            const errText = data.text || 'Streaming error';
-            renderAiMessageContent(aiBubble.querySelector('.msg-text'), errText);
-            showToast(errText);
-          }
-        }
-      }
-      if (!fullText.trim()) {
-        document.getElementById(thinkingId)?.remove();
-        const hint = 'การเชื่อมต่อขาดก่อนได้คำตอบ — ลองส่งใหม่หรือเลือกโมเดลอื่น';
-        if (!aiBubble) aiBubble = appendAiBubble('', 'Ener-AI');
-        const textEl = aiBubble?.closest('.ai-bubble-wrap')?.querySelector('.msg-text')
-          || aiBubble?.querySelector('.msg-text');
-        renderAiMessageContent(textEl, hint);
-        showToast(hint);
-      }
-    } catch (error) {
-      document.getElementById(thinkingId)?.remove();
-      const errMsg = error.message || 'Send failed';
-      const failBubble = appendAiBubble(errMsg, 'Ener-AI');
-      renderAiMessageContent(failBubble.querySelector('.msg-text'), errMsg);
-      showToast(errMsg);
-    } finally {
-      state.streaming = false;
-      setSendButtonState(false);
-      chatInput.focus();
     }
   }
 

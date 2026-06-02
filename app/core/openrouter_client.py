@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from typing import Any
 
 import httpx
@@ -32,6 +33,8 @@ OPENROUTER_LABELS: dict[str, str] = {
     "hy3": "Hunyuan HY3",
     "llama-free": "LLaMA 3.1 (Free)",
 }
+_MODELS_CACHE_TTL_SEC = 600
+_models_cache: tuple[float, list[tuple[str, str]]] = (0.0, [])
 
 
 def openrouter_base_url() -> str:
@@ -280,3 +283,54 @@ async def openrouter_chat_completions(
 
 async def openrouter_available() -> bool:
     return bool(await get_openrouter_api_key())
+
+
+def _pretty_label(model_id: str) -> str:
+    text = str(model_id or "").strip()
+    if not text:
+        return "unknown"
+    if text in OPENROUTER_LABELS:
+        return OPENROUTER_LABELS[text]
+    if "/" in text:
+        return text.split("/", 1)[1]
+    return text
+
+
+async def list_openrouter_models(force_refresh: bool = False) -> list[tuple[str, str]]:
+    """Return [(model_id, label)] from OpenRouter /models with cache."""
+    global _models_cache
+    now = time.time()
+    cached_at, cached_models = _models_cache
+    if not force_refresh and cached_models and now - cached_at < _MODELS_CACHE_TTL_SEC:
+        return cached_models
+
+    api_key = await get_openrouter_api_key()
+    if not api_key:
+        fallback = [(k, OPENROUTER_LABELS.get(k, k)) for k in OPENROUTER_KEYS]
+        _models_cache = (now, fallback)
+        return fallback
+
+    headers = {"Authorization": f"Bearer {api_key}"}
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(f"{openrouter_base_url()}/models", headers=headers)
+            response.raise_for_status()
+            rows = response.json().get("data", [])
+        options: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for row in rows:
+            model_id = str((row or {}).get("id", "")).strip()
+            if not model_id or model_id.startswith("~"):
+                continue
+            if model_id in seen:
+                continue
+            seen.add(model_id)
+            options.append((model_id, _pretty_label(model_id)))
+        if not options:
+            options = [(k, OPENROUTER_LABELS.get(k, k)) for k in OPENROUTER_KEYS]
+        _models_cache = (now, options)
+        return options
+    except Exception:
+        fallback = [(k, OPENROUTER_LABELS.get(k, k)) for k in OPENROUTER_KEYS]
+        _models_cache = (now, fallback)
+        return fallback

@@ -4590,8 +4590,8 @@ async def _workspace_conversation_id(project_id: int | None = None) -> str:
     )
 
 
-_WORKSPACE_LOCAL_MODELS = frozenset({"qwen3b", "qwen7b", "dolphin"})
-_WORKSPACE_JSON_SEND_MODELS = _WORKSPACE_LOCAL_MODELS | _OPENROUTER_KEYS
+_WORKSPACE_LOCAL_MODELS = frozenset()
+_WORKSPACE_JSON_SEND_MODELS = frozenset()
 
 
 async def _workspace_chat_system_prompt(message: str, memory_context: str) -> str:
@@ -5185,39 +5185,8 @@ WORKSPACE_TOOLS = [
     ("system", "⚙️ System"),
 ]
 
-WORKSPACE_MODEL_GROUPS = [
-    (
-        "OpenRouter (Cloud)",
-        [
-            ("dolphin", "🐬 Dolphin (No Filter)"),
-            ("deepseek-v4", "⚡ DeepSeek V4 Flash"),
-            ("gemini-flash-lite", "🇹🇭 Gemini 2.5 Flash Lite"),
-            ("gemini-3-flash", "✨ Gemini 3 Flash"),
-            ("llama-free", "🆓 LLaMA 3.1 (Free)"),
-            ("mimo", "🚀 MiMo-V2.5 (Xiaomi)"),
-            ("hy3", "🔮 Hunyuan HY3"),
-        ],
-    ),
-    (
-        "Local (Ollama)",
-        [
-            ("qwen3b", "Qwen 3B"),
-            ("qwen7b", "Qwen 7B"),
-        ],
-    ),
-    (
-        "Direct API",
-        [
-            ("groq", "Groq"),
-            ("haiku", "Claude Haiku"),
-            ("gemini", "Gemini Flash"),
-        ],
-    ),
-]
-
-WORKSPACE_MODEL_OPTIONS = [
-    item for _group, items in WORKSPACE_MODEL_GROUPS for item in items
-]
+WORKSPACE_MODEL_GROUPS: list[tuple[str, list[tuple[str, str]]]] = []
+WORKSPACE_MODEL_OPTIONS: list[tuple[str, str]] = []
 
 _VALID_WORKSPACE_TOOLS = {tool_id for tool_id, _ in WORKSPACE_TOOLS}
 
@@ -5258,6 +5227,17 @@ async def _workspace_projects_for_page() -> tuple[int, list[dict]]:
     return total_messages, projects
 
 
+async def _workspace_openrouter_model_groups() -> tuple[
+    list[tuple[str, list[tuple[str, str]]]],
+    list[tuple[str, str]],
+]:
+    from app.core.openrouter_client import list_openrouter_models
+
+    options = await list_openrouter_models()
+    groups = [("OpenRouter (Cloud)", options)]
+    return groups, options
+
+
 @app.get("/workspace")
 async def workspace_page(
     request: Request,
@@ -5281,6 +5261,7 @@ async def workspace_page(
     stats = {**stats, "messages": total_messages}
 
     active_model_key = await get_active_model()
+    model_groups, model_options = await _workspace_openrouter_model_groups()
     recent_messages = await _workspace_history_rows(
         project_id=normalized_project_id,
         limit=500 if show_all else 300,
@@ -5297,7 +5278,8 @@ async def workspace_page(
             "projects": projects,
             "active_model": get_model_label(active_model_key or ""),
             "active_model_key": active_model_key or "",
-            "model_options": WORKSPACE_MODEL_OPTIONS,
+            "model_options": model_options,
+            "model_option_groups": model_groups,
             "model_option_groups": WORKSPACE_MODEL_GROUPS,
             "tools": WORKSPACE_TOOLS,
             "recent_messages": recent_messages,
@@ -5425,33 +5407,25 @@ async def workspace_chat_send(request: Request):
     if not text:
         raise HTTPException(status_code=400, detail="กรุณาพิมพ์ข้อความ")
     project_id = _normalize_project_id(payload.get("project_id"))
-    model = str(payload.get("model", "")).strip().lower() or None
-    if model in _WORKSPACE_JSON_SEND_MODELS:
-        try:
-            if _is_simple_cpu_query(text):
-                from app.agents.monitor_agent import format_nl_resource_report, get_server_stats
+    model = str(payload.get("model", "")).strip() or "deepseek/deepseek-v4-flash"
+    if model.lower() == "auto":
+        model = "deepseek/deepseek-v4-flash"
+    try:
+        if _is_simple_cpu_query(text):
+            from app.agents.monitor_agent import format_nl_resource_report, get_server_stats
 
-                reply = format_nl_resource_report(get_server_stats())
-            elif model in _WORKSPACE_LOCAL_MODELS:
-                reply = await _workspace_local_qwen_reply(
-                    text,
-                    model,
-                    user_id=_workspace_user_id(),
-                    project_id=project_id,
-                )
-            else:
-                reply = await _workspace_openrouter_reply(
-                    text,
-                    model,
-                    user_id=_workspace_user_id(),
-                    project_id=project_id,
-                )
-            await _workspace_save_chat_messages(project_id, text, reply)
-            return JSONResponse({"ok": True, "reply": reply})
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-    reply = await _workspace_generate_reply(text, project_id, model)
-    return JSONResponse({"ok": True, "reply": reply})
+            reply = format_nl_resource_report(get_server_stats())
+        else:
+            reply = await _workspace_openrouter_reply(
+                text,
+                model,
+                user_id=_workspace_user_id(),
+                project_id=project_id,
+            )
+        await _workspace_save_chat_messages(project_id, text, reply)
+        return JSONResponse({"ok": True, "reply": reply})
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.post("/workspace/chat/stream")
