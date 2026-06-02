@@ -1,6 +1,7 @@
 """OpenRouter API client (OpenAI-compatible)."""
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Any
 
@@ -11,7 +12,7 @@ from app.core.config import settings
 OPENROUTER_MODELS: dict[str, str] = {
     # NOTE: Dolphin endpoints are not available for this account.
     # Keep key name for UI compatibility, route to a currently-available strong model.
-    "dolphin": "qwen/qwen3.6-35b-a3b",
+    "dolphin": "deepseek/deepseek-v4-flash",
     "deepseek-v4": "deepseek/deepseek-v4-flash",
     "gemini-flash-lite": "google/gemini-3.1-flash-lite",
     "gemini-3-flash": "google/gemini-3.5-flash",
@@ -64,6 +65,24 @@ def resolve_openrouter_model_id(model_key: str) -> str:
     return key
 
 
+def _openrouter_model_candidates(model_key: str) -> list[str]:
+    key = str(model_key or "").strip().lower()
+    primary = resolve_openrouter_model_id(key)
+    if key == "dolphin":
+        candidates = [
+            primary,
+            "qwen/qwen3.6-35b-a3b",
+            "moonshotai/kimi-k2.6",
+            "moonshotai/kimi-k2.6:free",
+        ]
+        out: list[str] = []
+        for model in candidates:
+            if model not in out:
+                out.append(model)
+        return out
+    return [primary]
+
+
 def _build_messages(
     prompt: str,
     system: str,
@@ -96,7 +115,13 @@ def _parse_completion(data: dict[str, Any]) -> str:
     choices = data.get("choices") or []
     if not choices:
         raise RuntimeError(f"OpenRouter empty choices: {data!s:.400}")
-    message = choices[0].get("message") or {}
+    first = choices[0] or {}
+    provider_error = first.get("error") or {}
+    if provider_error:
+        code = provider_error.get("code")
+        msg = provider_error.get("message")
+        raise RuntimeError(f"provider_error(code={code}): {msg}")
+    message = first.get("message") or {}
     content = message.get("content")
     if content is None:
         raise RuntimeError(f"OpenRouter empty content: {data!s:.400}")
@@ -137,34 +162,65 @@ async def call_openrouter(
             "OpenRouter API key not set — add OPENROUTER_API_KEY to .env on server"
         )
 
-    model_id = resolve_openrouter_model_id(model_key)
     url = f"{openrouter_base_url()}/chat/completions"
-    payload = {
-        "model": model_id,
+    model_candidates = _openrouter_model_candidates(model_key)
+    base_payload = {
         "messages": _build_messages(prompt, system, messages),
         "max_tokens": max_tokens,
         "temperature": temperature,
     }
 
     started_at = time.perf_counter()
+    last_error: str | None = None
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(
-                url,
-                headers=_openrouter_headers(api_key),
-                json=payload,
-            )
-            response.raise_for_status()
-            text = _parse_completion(response.json())
+            for model_id in model_candidates:
+                for attempt in (1, 2):
+                    payload = {"model": model_id, **base_payload}
+                    try:
+                        response = await client.post(
+                            url,
+                            headers=_openrouter_headers(api_key),
+                            json=payload,
+                        )
+                        response.raise_for_status()
+                        text = _parse_completion(response.json())
+                        await _log_ai_run(
+                            agent,
+                            model_key,
+                            0,
+                            0,
+                            int((time.perf_counter() - started_at) * 1000),
+                            True,
+                        )
+                        return text
+                    except httpx.HTTPStatusError as exc:
+                        detail = _http_error_detail(exc)
+                        last_error = f"{model_id} -> {detail}"
+                        is_transient = exc.response is not None and exc.response.status_code in {429, 500, 502, 503, 504}
+                        if attempt == 1 and is_transient:
+                            await asyncio.sleep(0.5)
+                            continue
+                        break
+                    except RuntimeError as exc:
+                        detail = str(exc)
+                        last_error = f"{model_id} -> {detail}"
+                        transient_hint = "network connection lost" in detail.lower() or "provider_error(code=502)" in detail.lower()
+                        if attempt == 1 and transient_hint:
+                            await asyncio.sleep(0.5)
+                            continue
+                        break
         await _log_ai_run(
             agent,
             model_key,
             0,
             0,
             int((time.perf_counter() - started_at) * 1000),
-            True,
+            False,
         )
-        return text
+        raise RuntimeError(
+            f"OpenRouter failed after retries: {last_error or 'unknown error'}"
+        )
     except httpx.HTTPStatusError as exc:
         await _log_ai_run(
             agent,
@@ -176,9 +232,7 @@ async def call_openrouter(
         )
         detail = _http_error_detail(exc)
         if exc.response is not None and exc.response.status_code == 404:
-            raise RuntimeError(
-                f"OpenRouter model not found ({model_id}). {detail}"
-            ) from exc
+            raise RuntimeError(f"OpenRouter model not found. {detail}") from exc
         raise RuntimeError(f"OpenRouter request failed: {detail}") from exc
     except Exception:
         await _log_ai_run(
