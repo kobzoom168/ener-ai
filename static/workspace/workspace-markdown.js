@@ -48,9 +48,10 @@
         // Some model outputs arrive as fenced raw block where token.text becomes empty.
         if (!code.trim()) {
           const raw = String(token?.raw || '');
-          const m = raw.match(/^```[^\n]*\n?([\s\S]*?)```$/);
+          const m = raw.match(/```[^\n\r]*\r?\n?([\s\S]*?)```/);
           if (m && m[1]) code = String(m[1]);
         }
+        code = code.replace(/\r\n/g, '\n');
         if (!code.trim()) {
           code = '// (empty code block from model)';
         }
