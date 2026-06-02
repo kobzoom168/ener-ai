@@ -137,12 +137,39 @@
     });
   }
 
+  function extractFencedBlocks(text) {
+    const out = [];
+    const raw = String(text || '');
+    const re = /```[^\n\r]*\r?\n?([\s\S]*?)```/g;
+    let m;
+    while ((m = re.exec(raw)) !== null) {
+      out.push(String(m[1] || '').replace(/\r\n/g, '\n'));
+    }
+    return out;
+  }
+
+  function hydrateEmptyCodeBlocks(root, sourceText) {
+    if (!root) return;
+    const blocks = extractFencedBlocks(sourceText);
+    const codeEls = root.querySelectorAll('.code-block code, pre code');
+    codeEls.forEach((el, idx) => {
+      const current = String(el.textContent || '').trim();
+      if (current) return;
+      const fallback = (blocks[idx] || '').trim() || '// (empty code block from model)';
+      el.textContent = fallback;
+      if (typeof hljs !== 'undefined') {
+        try { hljs.highlightElement(el); } catch (e) {}
+      }
+    });
+  }
+
   function renderMarkdownInto(el, rawText) {
     if (!el) return;
     const cleaned = sanitizeAiContent(rawText);
     el.dataset.raw = cleaned;
     el.classList.add('markdown-body');
     el.innerHTML = renderMarkdown(cleaned);
+    hydrateEmptyCodeBlocks(el, cleaned);
     bindCodeCopyButtons(el);
   }
 
