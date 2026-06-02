@@ -541,6 +541,9 @@ document.addEventListener('DOMContentLoaded', function() {
             document.getElementById(thinkingId)?.remove();
             aiBubble = appendAiBubble('', 'Ener-AI');
           }
+          if (data.type === 'ping') {
+            /* SSE keepalive while Qwen/Ollama runs */
+          }
           if (data.type === 'token') {
             if (!aiBubble) aiBubble = appendAiBubble('', 'Ener-AI');
             fullText += data.text || '';

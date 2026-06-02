@@ -5420,12 +5420,20 @@ async def workspace_chat_stream(request: Request):
             )
 
             if model in _WORKSPACE_LOCAL_MODELS:
-                reply_text = await _workspace_local_qwen_reply(
-                    message,
-                    model,
-                    user_id=user_id,
-                    project_id=project_id,
+                reply_task = _asyncio.create_task(
+                    _workspace_local_qwen_reply(
+                        message,
+                        model,
+                        user_id=user_id,
+                        project_id=project_id,
+                    )
                 )
+                while not reply_task.done():
+                    done, _ = await _asyncio.wait({reply_task}, timeout=15.0)
+                    if reply_task in done:
+                        break
+                    yield f"data: {json.dumps({'type': 'ping'})}\n\n"
+                reply_text = reply_task.result()
                 yield f"data: {json.dumps({'type': 'token', 'text': reply_text}, ensure_ascii=False)}\n\n"
             elif _is_simple_cpu_query(message):
                 from app.agents.monitor_agent import format_nl_resource_report, get_server_stats
