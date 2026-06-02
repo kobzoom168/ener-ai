@@ -9,13 +9,13 @@ import httpx
 from app.core.config import settings
 
 OPENROUTER_MODELS: dict[str, str] = {
-    "dolphin": "cognitivecomputations/dolphin-mistral-24b-venice-edition",
-    "deepseek-v4": "deepseek/deepseek-chat-v4-5",
+    "dolphin": "cognitivecomputations/dolphin-mistral-24b-venice-edition:free",
+    "deepseek-v4": "deepseek/deepseek-v4-flash",
     "gemini-flash-lite": "google/gemini-2.5-flash-lite",
     "gemini-3-flash": "google/gemini-3-flash-preview",
-    "mimo": "xiaomi/mimonext-v2-5",
+    "mimo": "xiaomi/mimo-v2.5",
     "hy3": "tencent/hy3-preview",
-    "llama-free": "meta-llama/llama-3.1-8b-instruct:free",
+    "llama-free": "meta-llama/llama-3.3-70b-instruct:free",
 }
 
 OPENROUTER_KEYS = frozenset(OPENROUTER_MODELS.keys())
