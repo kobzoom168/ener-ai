@@ -834,11 +834,12 @@ async def _call_ollama(
     payload_messages.append({"role": "user", "content": prompt})
 
     started_at = time.perf_counter()
+    timeout_s = 240.0 if str(model_key or "").strip().lower() == "dolphin" else 120.0
     try:
         text = await ollama_chat(
             messages=payload_messages,
             model_key=model_key,
-            timeout=120.0,
+            timeout=timeout_s,
         )
         await _log_ai_run(
             agent,

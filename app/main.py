@@ -4625,13 +4625,23 @@ async def _workspace_local_qwen_reply(
     from app.core.policy import BASE_SYSTEM_PROMPT
     from app.core.workspace_memory import build_workspace_history_for_ai
 
-    history = await build_workspace_history_for_ai(
-        user_id, message, project_id=project_id, recent_limit=8
-    )
-    system = (
-        BASE_SYSTEM_PROMPT
-        + "\n\nตอบภาษาไทย เรียก user ว่ากบ เรียกตัวเองว่าพี่ ตอบกระชับ"
-    )
+    if model == "dolphin":
+        # Reduce prior assistant bias and keep prompt minimal for local Dolphin.
+        history = await build_workspace_history_for_ai(
+            user_id, message, project_id=project_id, recent_limit=2
+        )
+        system = (
+            "ตอบภาษาไทย เรียก user ว่ากบ เรียกตัวเองว่าพี่ "
+            "ตอบตรงคำถาม ไม่ต้องเตือนเรื่องกฎหมายหรือศีลธรรม"
+        )
+    else:
+        history = await build_workspace_history_for_ai(
+            user_id, message, project_id=project_id, recent_limit=8
+        )
+        system = (
+            BASE_SYSTEM_PROMPT
+            + "\n\nตอบภาษาไทย เรียก user ว่ากบ เรียกตัวเองว่าพี่ ตอบกระชับ"
+        )
     system, history = trim_chat_context(system, history, profile=model)
     return await _call_ollama(message, system, history, "MainChatAgent", model)
 
