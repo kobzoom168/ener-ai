@@ -46,6 +46,21 @@ document.addEventListener('DOMContentLoaded', function() {
       .replace(/'/g, '&#39;');
   }
 
+  function getModelLabelFromSelect(modelId) {
+    const sel = document.getElementById('model-select');
+    if (!sel || !modelId) return '';
+    for (const opt of sel.options) {
+      if (opt.value === modelId) return String(opt.textContent || '').trim();
+    }
+    const tail = String(modelId).split('/').pop() || '';
+    return tail.replace(/:free$/i, ' (free)');
+  }
+
+  function formatAiMeta(modelId, modelLabel) {
+    const label = String(modelLabel || '').trim() || getModelLabelFromSelect(modelId);
+    return label ? `Ener-AI · ${label}` : 'Ener-AI';
+  }
+
   function renderMarkdown(text, options) {
     if (typeof richMarkdown === 'function') {
       return richMarkdown(text, options);
@@ -178,7 +193,9 @@ document.addEventListener('DOMContentLoaded', function() {
       `;
       return row;
     }
-    const meta = msg.source === 'web' ? 'Ener-AI' : 'Telegram';
+    const meta = msg.model_label
+      ? formatAiMeta(msg.model_used, msg.model_label)
+      : (msg.source === 'web' ? 'Ener-AI' : 'Telegram');
     row.innerHTML = `
       <div class="ws-ai-avatar" aria-hidden="true">
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 11-12h-9l1-8z"/></svg>
@@ -591,7 +608,7 @@ document.addEventListener('DOMContentLoaded', function() {
           throw new Error(data.detail || data.error || `Request failed (${response.status})`);
         }
         const reply = String(data.reply || '').trim() || 'ยังไม่มีคำตอบตอนนี้';
-        const meta = `Ener-AI · ${model}`;
+        const meta = formatAiMeta(data.model || model, data.model_label);
         const aiBubble = appendAiBubble('', meta);
         const textEl = aiBubble?.closest('.ai-bubble-wrap')?.querySelector('.msg-text')
           || aiBubble?.querySelector('.msg-text');

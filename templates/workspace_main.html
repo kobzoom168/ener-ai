@@ -31,7 +31,7 @@
             <div class="ai-bubble-wrap">
               <div class="msg-bubble ai-bubble">
                 <div class="msg-text markdown-body" data-raw='{{ msg.content | tojson }}'></div>
-                <div class="msg-meta">Ener-AI</div>
+                <div class="msg-meta">{% if msg.model_label %}Ener-AI · {{ msg.model_label }}{% else %}Ener-AI{% endif %}</div>
               </div>
               <button type="button" class="copy-btn" aria-label="Copy message">Copy</button>
             </div>

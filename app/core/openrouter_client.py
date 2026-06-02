@@ -343,6 +343,19 @@ def _pretty_label(model_id: str) -> str:
     return text
 
 
+async def openrouter_model_label(model_id: str) -> str:
+    """Human-readable label for a model id (uses cached OpenRouter list when possible)."""
+    mid = str(model_id or "").strip()
+    if not mid:
+        return "Ener-AI"
+    if mid == "system":
+        return "System"
+    for key, label in await list_openrouter_models():
+        if key == mid:
+            return label
+    return _pretty_label(mid)
+
+
 async def list_openrouter_models(force_refresh: bool = False) -> list[tuple[str, str]]:
     """Return [(model_id, label)] from OpenRouter /models with cache."""
     global _models_cache

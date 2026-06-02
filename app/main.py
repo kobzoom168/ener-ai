@@ -4795,6 +4795,26 @@ def _normalize_project_id(value: object) -> int | None:
     return project_id if project_id > 0 else None
 
 
+async def _workspace_enrich_message_models(messages: list[dict]) -> None:
+    from app.core.openrouter_client import openrouter_model_label
+
+    _, model_options = await _workspace_openrouter_model_groups()
+    label_cache: dict[str, str] = {key: label for key, label in model_options}
+    label_cache["system"] = "System"
+    for msg in messages:
+        if msg.get("role") != "assistant":
+            continue
+        used = str(msg.get("model_used") or "").strip()
+        if not used:
+            continue
+        if used in label_cache:
+            msg["model_label"] = label_cache[used]
+            continue
+        resolved = await openrouter_model_label(used)
+        label_cache[used] = resolved
+        msg["model_label"] = resolved
+
+
 async def _workspace_history_rows(
     project_id: int | None = None,
     limit: int = 200,
@@ -4816,6 +4836,7 @@ async def _workspace_history_rows(
                     content,
                     COALESCE(source, 'telegram') AS source,
                     project_id,
+                    model_used,
                     datetime(created_at, '+7 hours') AS local_created_at
                 FROM messages
                 WHERE chat_id = ?
@@ -4835,6 +4856,7 @@ async def _workspace_history_rows(
                     content,
                     COALESCE(source, 'telegram') AS source,
                     project_id,
+                    model_used,
                     datetime(created_at, '+7 hours') AS local_created_at
                 FROM messages
                 WHERE chat_id = ? AND project_id = ?
@@ -4853,13 +4875,20 @@ async def _workspace_history_rows(
             "content": str(row["content"] or ""),
             "source": str(row["source"] or "telegram"),
             "project_id": row["project_id"],
+            "model_used": str(row["model_used"] or "").strip() if row["model_used"] else "",
             "created_at": str(row["local_created_at"] or ""),
         }
         for row in reversed(rows)
     ]
 
 
-async def _workspace_save_chat_messages(project_id: int | None, user_text: str, reply_text: str) -> None:
+async def _workspace_save_chat_messages(
+    project_id: int | None,
+    user_text: str,
+    reply_text: str,
+    *,
+    model_used: str | None = None,
+) -> None:
     conversation_id = await _workspace_conversation_id(project_id=project_id)
     async with get_db() as db:
         await db.execute(
@@ -4871,10 +4900,19 @@ async def _workspace_save_chat_messages(project_id: int | None, user_text: str, 
         )
         await db.execute(
             """
-            INSERT INTO messages (chat_id, conversation_id, role, content, project_id, source)
-            VALUES (?, ?, ?, ?, ?, 'web')
+            INSERT INTO messages (
+                chat_id, conversation_id, role, content, project_id, source, model_used
+            )
+            VALUES (?, ?, ?, ?, ?, 'web', ?)
             """,
-            (_workspace_user_id(), conversation_id, "assistant", reply_text, project_id),
+            (
+                _workspace_user_id(),
+                conversation_id,
+                "assistant",
+                reply_text,
+                project_id,
+                str(model_used or "").strip() or None,
+            ),
         )
         await db.execute(
             "INSERT INTO audit_logs (action, details) VALUES (?, ?)",
@@ -5272,6 +5310,7 @@ async def workspace_page(
         limit=500 if show_all else 300,
         chat_date=None if show_all else selected_date,
     )
+    await _workspace_enrich_message_models(recent_messages)
     chat_dates = await _workspace_chat_dates()
 
     return templates.TemplateResponse(
@@ -5416,10 +5455,12 @@ async def workspace_chat_send(request: Request):
     if model.lower() == "auto":
         model = "deepseek/deepseek-v4-flash"
     try:
+        model_used = model
         if _is_simple_cpu_query(text):
             from app.agents.monitor_agent import format_nl_resource_report, get_server_stats
 
             reply = format_nl_resource_report(get_server_stats())
+            model_used = "system"
         else:
             reply = await _workspace_openrouter_reply(
                 text,
@@ -5427,8 +5468,20 @@ async def workspace_chat_send(request: Request):
                 user_id=_workspace_user_id(),
                 project_id=project_id,
             )
-        await _workspace_save_chat_messages(project_id, text, reply)
-        return JSONResponse({"ok": True, "reply": reply})
+        from app.core.openrouter_client import openrouter_model_label
+
+        model_label = await openrouter_model_label(model_used)
+        await _workspace_save_chat_messages(
+            project_id, text, reply, model_used=model_used
+        )
+        return JSONResponse(
+            {
+                "ok": True,
+                "reply": reply,
+                "model": model_used,
+                "model_label": model_label,
+            }
+        )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -5641,6 +5694,7 @@ async def workspace_chat_history(request: Request):
         limit=500 if show_all else max(limit, 300),
         chat_date=None if show_all else selected_date,
     )
+    await _workspace_enrich_message_models(messages)
     return JSONResponse(
         {
             "messages": messages,
