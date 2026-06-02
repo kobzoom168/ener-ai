@@ -137,8 +137,16 @@ async def call_openrouter(
                 headers=_openrouter_headers(api_key),
                 json=payload,
             )
+            if response.status_code == 429:
+                body = response.json()
+                retry = body.get("metadata", {}).get("retry_after_seconds", 30)
+                raise ValueError(f"⏳ model นี้ rate limited — รอ {int(retry)} วิ แล้วลองใหม่ หรือเติม credit ที่ openrouter.ai เพื่อใช้ได้ต่อเนื่อง")
             response.raise_for_status()
-            text = _parse_completion(response.json())
+            body = response.json()
+            if "error" in body:
+                err_msg = body["error"].get("message", str(body["error"]))
+                raise ValueError(f"OpenRouter error: {err_msg}")
+            text = _parse_completion(body)
         await _log_ai_run(
             agent,
             model_key,
