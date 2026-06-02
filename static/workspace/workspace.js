@@ -105,12 +105,55 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
+  function attachMessageToolbar(wrap) {
+    if (!wrap || wrap.dataset.toolbarBound === '1') return;
+    const textEl = wrap.querySelector('.msg-text');
+    let actions = wrap.querySelector('.msg-actions');
+    if (!actions) {
+      actions = document.createElement('div');
+      actions.className = 'msg-actions';
+      wrap.appendChild(actions);
+    }
+    wrap.querySelectorAll(':scope > .copy-btn').forEach((btn) => btn.remove());
+    actions.querySelectorAll('.copy-btn').forEach((btn) => btn.remove());
+
+    const toolbar = document.createElement('div');
+    toolbar.className = 'msg-toolbar';
+    toolbar.innerHTML = `
+      <button type="button" class="msg-btn msg-btn-md" data-mode="markdown">MD</button>
+      <button type="button" class="msg-btn msg-btn-plain" data-mode="plain">Plain</button>
+      <button type="button" class="msg-btn msg-btn-raw">Raw</button>
+      <button type="button" class="copy-btn" aria-label="Copy message">Copy</button>
+    `;
+    actions.appendChild(toolbar);
+
+    const setActive = (mode) => {
+      toolbar.querySelectorAll('.msg-btn[data-mode]').forEach((b) => {
+        b.classList.toggle('active', b.dataset.mode === mode);
+      });
+    };
+
+    toolbar.querySelector('.msg-btn-md').addEventListener('click', () => {
+      if (typeof window.setRenderMode === 'function') window.setRenderMode('markdown');
+      setActive('markdown');
+    });
+    toolbar.querySelector('.msg-btn-plain').addEventListener('click', () => {
+      if (typeof window.setRenderMode === 'function') window.setRenderMode('plain');
+      setActive('plain');
+    });
+    toolbar.querySelector('.msg-btn-raw').addEventListener('click', () => {
+      if (typeof window.showPlainInto === 'function') window.showPlainInto(textEl);
+    });
+    toolbar.querySelector('.copy-btn').addEventListener('click', () => copyAiMessage(toolbar.querySelector('.copy-btn')));
+
+    const mode = typeof window.getRenderMode === 'function' ? window.getRenderMode() : 'markdown';
+    setActive(mode);
+    wrap.dataset.toolbarBound = '1';
+  }
+
   function attachCopyButton(wrap) {
-    if (!wrap || wrap.dataset.copyBound === '1') return;
-    const btn = wrap.querySelector('.copy-btn');
-    if (!btn) return;
-    btn.addEventListener('click', () => copyAiMessage(btn));
-    wrap.dataset.copyBound = '1';
+    if (!wrap || wrap.dataset.toolbarBound === '1') return;
+    attachMessageToolbar(wrap);
   }
 
   function renderChatMessage(msg) {
@@ -136,7 +179,9 @@ document.addEventListener('DOMContentLoaded', function() {
           <div class="msg-text markdown-body"></div>
           <div class="msg-meta">${escapeHtml(meta)}</div>
         </div>
-        <button type="button" class="copy-btn" aria-label="Copy message">Copy</button>
+        <div class="msg-actions">
+          <button type="button" class="copy-btn" aria-label="Copy message">Copy</button>
+        </div>
       </div>
     `;
     const textEl = row.querySelector('.msg-text');
@@ -166,12 +211,9 @@ document.addEventListener('DOMContentLoaded', function() {
         wrap.className = 'ai-bubble-wrap';
         bubble.parentNode.insertBefore(wrap, bubble);
         wrap.appendChild(bubble);
-        const copyBtn = document.createElement('button');
-        copyBtn.type = 'button';
-        copyBtn.className = 'copy-btn';
-        copyBtn.setAttribute('aria-label', 'Copy message');
-        copyBtn.textContent = 'Copy';
-        wrap.appendChild(copyBtn);
+        const actions = document.createElement('div');
+        actions.className = 'msg-actions';
+        wrap.appendChild(actions);
       }
 
       let raw = textEl.getAttribute('data-raw') || textEl.dataset.raw || textEl.textContent || '';

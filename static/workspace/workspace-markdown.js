@@ -163,10 +163,75 @@
     });
   }
 
+  function getRenderMode() {
+    try {
+      return localStorage.getItem('ws_render_mode') === 'plain' ? 'plain' : 'markdown';
+    } catch (e) {
+      return 'markdown';
+    }
+  }
+
+  function setRenderMode(mode) {
+    const m = mode === 'plain' ? 'plain' : 'markdown';
+    try {
+      localStorage.setItem('ws_render_mode', m);
+    } catch (e) {
+      /* ignore */
+    }
+    document.querySelectorAll('.msg-text.markdown-body').forEach((el) => {
+      const raw = el.dataset.raw || el.getAttribute('data-raw') || '';
+      if (!raw) return;
+      if (m === 'plain') {
+        el.classList.remove('markdown-body');
+        el.innerHTML = escapeHtml(raw).replace(/\n/g, '<br>');
+      } else {
+        renderMarkdownInto(el, raw);
+      }
+    });
+  }
+
+  function showPlainInto(el) {
+    if (!el) return;
+    const raw = el.dataset.raw || el.getAttribute('data-raw') || el.textContent || '';
+    const overlay = document.createElement('div');
+    overlay.className = 'raw-modal-overlay';
+    overlay.innerHTML = `
+      <div class="raw-modal">
+        <div class="raw-modal-header">
+          <strong>Raw message</strong>
+          <button type="button" class="raw-modal-close" aria-label="Close">×</button>
+        </div>
+        <pre class="raw-modal-body"></pre>
+        <div class="raw-modal-actions">
+          <button type="button" class="raw-copy-btn">Copy raw</button>
+        </div>
+      </div>
+    `;
+    overlay.querySelector('.raw-modal-close').addEventListener('click', () => overlay.remove());
+    overlay.querySelector('.raw-copy-btn').addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(raw);
+        if (typeof window.showToast === 'function') window.showToast('Copied raw');
+      } catch (e) {
+        if (typeof window.showToast === 'function') window.showToast('Copy failed');
+      }
+    });
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+    document.body.appendChild(overlay);
+    overlay.querySelector('.raw-modal-body').textContent = raw;
+  }
+
   function renderMarkdownInto(el, rawText) {
     if (!el) return;
     const cleaned = sanitizeAiContent(rawText);
     el.dataset.raw = cleaned;
+    if (getRenderMode() === 'plain') {
+      el.classList.remove('markdown-body');
+      el.innerHTML = escapeHtml(cleaned).replace(/\n/g, '<br>');
+      return;
+    }
     el.classList.add('markdown-body');
     el.innerHTML = renderMarkdown(cleaned);
     hydrateEmptyCodeBlocks(el, cleaned);
@@ -186,6 +251,9 @@
   window.bindCodeCopyButtons = bindCodeCopyButtons;
   window.renderMarkdownInto = renderMarkdownInto;
   window.renderAllMarkdownBodies = renderAllMarkdownBodies;
+  window.getRenderMode = getRenderMode;
+  window.setRenderMode = setRenderMode;
+  window.showPlainInto = showPlainInto;
   window.copyCode = function(id) {
     const el = document.getElementById(id);
     if (!el) return;

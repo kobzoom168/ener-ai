@@ -329,25 +329,45 @@
       min-width: 0;
       width: 100%;
       max-width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
     }
+    #panel-chat .msg-actions {
+      display: flex;
+      justify-content: flex-end;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    #panel-chat .ai-bubble-wrap:hover .msg-actions,
+    #panel-chat .msg-actions:focus-within {
+      opacity: 1;
+    }
+    #panel-chat .msg-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.25rem;
+    }
+    #panel-chat .msg-btn,
     #panel-chat .copy-btn {
-      position: absolute;
-      top: 0.25rem;
-      right: 0;
-      z-index: 2;
-      padding: 0.25rem 0.625rem;
+      padding: 0.25rem 0.5rem;
       border-radius: 6px;
       border: 1px solid var(--border);
       background: oklch(0.2 0.01 250 / 0.85);
       color: var(--muted-foreground);
       font-size: 0.6875rem;
       cursor: pointer;
-      opacity: 0;
-      transition: opacity 0.2s, background 0.2s, color 0.2s;
+      transition: background 0.2s, color 0.2s, border-color 0.2s;
     }
-    #panel-chat .ai-bubble-wrap:hover .copy-btn,
-    #panel-chat .copy-btn:focus-visible {
-      opacity: 1;
+    #panel-chat .msg-btn:hover,
+    #panel-chat .copy-btn:hover {
+      color: var(--foreground);
+      background: oklch(0.25 0.01 250);
+    }
+    #panel-chat .msg-btn.active {
+      color: #e6edf3;
+      border-color: #7c3aed;
+      background: oklch(0.28 0.08 300 / 0.5);
     }
     #panel-chat .copy-btn.copied {
       color: #a78bfa;
@@ -456,6 +476,61 @@
       color: #e6edf3;
       white-space: pre;
       display: block;
+    }
+
+    .raw-modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.65);
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .raw-modal {
+      width: min(900px, 90vw);
+      max-height: 80vh;
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 10px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .raw-modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 14px;
+      border-bottom: 1px solid #30363d;
+    }
+
+    .raw-modal-body {
+      margin: 0;
+      padding: 14px;
+      overflow: auto;
+      white-space: pre-wrap;
+      font-family: Consolas, Monaco, monospace;
+      font-size: 12px;
+      color: #e6edf3;
+    }
+
+    .raw-modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 10px 14px;
+      border-top: 1px solid #30363d;
+    }
+
+    .raw-modal-close {
+      background: transparent;
+      border: none;
+      color: #8b949e;
+      font-size: 20px;
+      cursor: pointer;
     }
     .ws-chat-history { margin-top: 1rem; }
     .ws-chat-date-link {
@@ -627,8 +702,8 @@
   });
 </script>
 <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
-<script src="/static/workspace/workspace-markdown.js?v=openrouter6"></script>
-<script src="/static/workspace/workspace.js?v=openrouter6"></script>
+<script src="/static/workspace/workspace-markdown.js?v=openrouter7"></script>
+<script src="/static/workspace/workspace.js?v=openrouter7"></script>
 <script>
   document.addEventListener('DOMContentLoaded', function() {
     if (window.lucide) lucide.createIcons();
