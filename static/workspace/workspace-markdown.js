@@ -36,14 +36,19 @@
     marked.setOptions({ breaks: true, gfm: true });
 
     const renderer = {
-      code({ text, lang }) {
-        const code = String(text || '');
-        const language = (lang || 'text').toLowerCase() || 'text';
+      code(tokenOrText, maybeLang) {
+        // marked v9 may pass a token object, older versions pass (code, infostring).
+        const token = (tokenOrText && typeof tokenOrText === 'object')
+          ? tokenOrText
+          : { text: tokenOrText, lang: maybeLang };
+        const code = String(token?.text || '');
+        const rawLang = String(token?.lang || maybeLang || '');
+        const language = (rawLang || 'text').toLowerCase() || 'text';
         let highlighted = escapeHtml(code);
         if (typeof hljs !== 'undefined') {
           try {
-            if (lang && hljs.getLanguage(lang)) {
-              highlighted = hljs.highlight(code, { language: lang }).value;
+            if (rawLang && hljs.getLanguage(rawLang)) {
+              highlighted = hljs.highlight(code, { language: rawLang }).value;
             } else {
               highlighted = hljs.highlightAuto(code).value;
             }

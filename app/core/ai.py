@@ -87,7 +87,7 @@ def _normalize_model_name(model: str) -> str:
 
 def get_model_label(model_key: str) -> str:
     normalized = _normalize_model_name(model_key)
-    return _MODEL_LABELS.get(normalized, "Claude Haiku")
+    return _MODEL_LABELS.get(normalized, str(model_key or "").strip() or "Claude Haiku")
 
 
 async def get_active_model() -> str:
@@ -100,7 +100,7 @@ async def get_active_model() -> str:
     if not row:
         return ""
     model_key = str(row["value"]).strip().lower()
-    if model_key in _VALID_MODELS:
+    if model_key in _VALID_MODELS or "/" in model_key:
         return model_key
     return ""
 

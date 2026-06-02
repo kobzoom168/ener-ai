@@ -323,11 +323,29 @@ document.addEventListener('DOMContentLoaded', function() {
       </div>
       <div class="msg-bubble ai-bubble thinking">
         <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <div class="thinking-status">กำลังส่งคำขอ...</div>
       </div>
     `;
     chatMessages.appendChild(row);
     scrollToBottom();
     return row;
+  }
+
+  function startThinkingStatus(thinkingId) {
+    const steps = [
+      'กำลังส่งคำขอ...',
+      'กำลังรอโมเดลตอบกลับ...',
+      'กำลังประมวลผลคำตอบ...',
+      'ใกล้เสร็จแล้ว...'
+    ];
+    let idx = 0;
+    const timer = setInterval(() => {
+      const el = document.querySelector(`#${thinkingId} .thinking-status`);
+      if (!el) return;
+      idx = (idx + 1) % steps.length;
+      el.textContent = steps[idx];
+    }, 1800);
+    return () => clearInterval(timer);
   }
 
   async function api(url, options={}) {
@@ -464,6 +482,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     const thinkingId = 'thinking-' + Date.now();
     appendThinkingBubble(thinkingId);
+    const stopThinkingStatus = startThinkingStatus(thinkingId);
 
     state.streaming = true;
     setSendButtonState(true);
@@ -494,6 +513,7 @@ document.addEventListener('DOMContentLoaded', function() {
         appendAiBubble('ไม่สามารถวิเคราะห์รูปได้ กรุณาลองใหม่', 'Ener-AI');
         showToast(error.message || 'Vision request failed');
       } finally {
+        stopThinkingStatus();
         state.streaming = false;
         setSendButtonState(false);
         chatInput.focus();
@@ -536,6 +556,7 @@ document.addEventListener('DOMContentLoaded', function() {
         renderAiMessageContent(textEl, errMsg);
         showToast(errMsg);
       } finally {
+        stopThinkingStatus();
         state.streaming = false;
         setSendButtonState(false);
         chatInput.focus();

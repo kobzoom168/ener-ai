@@ -5191,6 +5191,11 @@ WORKSPACE_MODEL_OPTIONS: list[tuple[str, str]] = []
 _VALID_WORKSPACE_TOOLS = {tool_id for tool_id, _ in WORKSPACE_TOOLS}
 
 
+def _is_openrouter_model_id(model: str) -> bool:
+    key = str(model or "").strip().lower()
+    return bool(key and ("/" in key or key in _OPENROUTER_KEYS))
+
+
 async def _workspace_projects_for_page() -> tuple[int, list[dict]]:
     async with get_db() as db:
         total_cursor = await db.execute(
@@ -8177,16 +8182,10 @@ async def admin_config_update(request: Request):
     if not key:
         raise HTTPException(status_code=400, detail="key required")
     if key == "active_model":
-        allowed = {"auto", "haiku", "groq", "gemini", "qwen3b", "qwen7b", *_OPENROUTER_KEYS}
-        if value not in allowed:
+        allowed = {"auto"}
+        if value not in allowed and not _is_openrouter_model_id(value):
             raise HTTPException(status_code=400, detail="active_model ไม่ถูกต้อง")
-        if value == "haiku" and not settings.anthropic_api_key:
-            raise HTTPException(status_code=400, detail="Claude Haiku ยังไม่มี key")
-        if value == "groq" and not settings.groq_api_key:
-            raise HTTPException(status_code=400, detail="Groq ยังไม่มี key")
-        if value == "gemini" and not settings.gemini_api_key:
-            raise HTTPException(status_code=400, detail="Gemini ยังไม่มี key")
-        if value in _OPENROUTER_KEYS and not settings.openrouter_api_key:
+        if value != "auto" and not settings.openrouter_api_key:
             raise HTTPException(status_code=400, detail="OpenRouter ยังไม่มี key")
     await set_config(key, value)
     async with get_db() as db:
@@ -8691,16 +8690,9 @@ async def admin_switch_model(request: Request):
     await _require_admin(request)
     form_data = parse_qs((await request.body()).decode("utf-8"))
     model = form_data.get("model", [""])[0].strip().lower()
-    allowed = {"haiku", "groq", "gemini", "qwen3b", "qwen7b", *_OPENROUTER_KEYS}
-    if model not in allowed:
+    if not _is_openrouter_model_id(model):
         raise HTTPException(status_code=400, detail="โมเดลไม่ถูกต้อง")
-    if model == "haiku" and not settings.anthropic_api_key:
-        raise HTTPException(status_code=400, detail="Claude Haiku ยังไม่มี key")
-    if model == "groq" and not settings.groq_api_key:
-        raise HTTPException(status_code=400, detail="Groq ยังไม่มี key")
-    if model == "gemini" and not settings.gemini_api_key:
-        raise HTTPException(status_code=400, detail="Gemini ยังไม่มี key")
-    if model in _OPENROUTER_KEYS and not settings.openrouter_api_key:
+    if not settings.openrouter_api_key:
         raise HTTPException(status_code=400, detail="OpenRouter ยังไม่มี key")
 
     await set_config("active_model", model)
