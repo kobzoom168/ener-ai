@@ -9,13 +9,13 @@ import httpx
 from app.core.config import settings
 
 OPENROUTER_MODELS: dict[str, str] = {
-    "dolphin": "cognitivecomputations/dolphin-mistral-24b-venice-edition:free",
-    "deepseek-v4": "deepseek/deepseek-v4-flash",
+    "dolphin": "cognitivecomputations/dolphin3.0-r1-mistral-24b",
+    "deepseek-v4": "deepseek/deepseek-chat-v4-5",
     "gemini-flash-lite": "google/gemini-2.5-flash-lite",
     "gemini-3-flash": "google/gemini-3-flash-preview",
-    "mimo": "xiaomi/mimo-v2.5",
+    "mimo": "xiaomi/mimonext-v2-5",
     "hy3": "tencent/hy3-preview",
-    "llama-free": "meta-llama/llama-3.3-70b-instruct:free",
+    "llama-free": "meta-llama/llama-3.1-8b-instruct:free",
 }
 
 OPENROUTER_KEYS = frozenset(OPENROUTER_MODELS.keys())
@@ -101,6 +101,21 @@ def _parse_completion(data: dict[str, Any]) -> str:
     return str(content).strip()
 
 
+def _http_error_detail(exc: httpx.HTTPStatusError) -> str:
+    response = exc.response
+    status = response.status_code if response is not None else "?"
+    if response is None:
+        return f"HTTP {status}"
+    body = ""
+    try:
+        body = response.text.strip()
+    except Exception:
+        body = ""
+    if not body:
+        return f"HTTP {status}"
+    return f"HTTP {status}: {body[:500]}"
+
+
 async def call_openrouter(
     model_key: str,
     prompt: str,
@@ -137,16 +152,8 @@ async def call_openrouter(
                 headers=_openrouter_headers(api_key),
                 json=payload,
             )
-            if response.status_code == 429:
-                body = response.json()
-                retry = body.get("metadata", {}).get("retry_after_seconds", 30)
-                raise ValueError(f"⏳ model นี้ rate limited — รอ {int(retry)} วิ แล้วลองใหม่ หรือเติม credit ที่ openrouter.ai เพื่อใช้ได้ต่อเนื่อง")
             response.raise_for_status()
-            body = response.json()
-            if "error" in body:
-                err_msg = body["error"].get("message", str(body["error"]))
-                raise ValueError(f"OpenRouter error: {err_msg}")
-            text = _parse_completion(body)
+            text = _parse_completion(response.json())
         await _log_ai_run(
             agent,
             model_key,
@@ -156,6 +163,21 @@ async def call_openrouter(
             True,
         )
         return text
+    except httpx.HTTPStatusError as exc:
+        await _log_ai_run(
+            agent,
+            model_key,
+            0,
+            0,
+            int((time.perf_counter() - started_at) * 1000),
+            False,
+        )
+        detail = _http_error_detail(exc)
+        if exc.response is not None and exc.response.status_code == 404:
+            raise RuntimeError(
+                f"OpenRouter model not found ({model_id}). {detail}"
+            ) from exc
+        raise RuntimeError(f"OpenRouter request failed: {detail}") from exc
     except Exception:
         await _log_ai_run(
             agent,

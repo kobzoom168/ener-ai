@@ -5410,26 +5410,29 @@ async def workspace_chat_send(request: Request):
     project_id = _normalize_project_id(payload.get("project_id"))
     model = str(payload.get("model", "")).strip().lower() or None
     if model in _WORKSPACE_JSON_SEND_MODELS:
-        if _is_simple_cpu_query(text):
-            from app.agents.monitor_agent import format_nl_resource_report, get_server_stats
+        try:
+            if _is_simple_cpu_query(text):
+                from app.agents.monitor_agent import format_nl_resource_report, get_server_stats
 
-            reply = format_nl_resource_report(get_server_stats())
-        elif model in _WORKSPACE_LOCAL_MODELS:
-            reply = await _workspace_local_qwen_reply(
-                text,
-                model,
-                user_id=_workspace_user_id(),
-                project_id=project_id,
-            )
-        else:
-            reply = await _workspace_openrouter_reply(
-                text,
-                model,
-                user_id=_workspace_user_id(),
-                project_id=project_id,
-            )
-        await _workspace_save_chat_messages(project_id, text, reply)
-        return JSONResponse({"ok": True, "reply": reply})
+                reply = format_nl_resource_report(get_server_stats())
+            elif model in _WORKSPACE_LOCAL_MODELS:
+                reply = await _workspace_local_qwen_reply(
+                    text,
+                    model,
+                    user_id=_workspace_user_id(),
+                    project_id=project_id,
+                )
+            else:
+                reply = await _workspace_openrouter_reply(
+                    text,
+                    model,
+                    user_id=_workspace_user_id(),
+                    project_id=project_id,
+                )
+            await _workspace_save_chat_messages(project_id, text, reply)
+            return JSONResponse({"ok": True, "reply": reply})
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
     reply = await _workspace_generate_reply(text, project_id, model)
     return JSONResponse({"ok": True, "reply": reply})
 
