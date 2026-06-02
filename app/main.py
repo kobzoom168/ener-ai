@@ -4651,10 +4651,17 @@ async def _workspace_openrouter_reply(
     history = await build_workspace_history_for_ai(
         user_id, message, project_id=project_id, recent_limit=8
     )
-    system = (
-        BASE_SYSTEM_PROMPT
-        + "\n\nตอบภาษาไทย เรียก user ว่ากบ เรียกตัวเองว่าพี่ ตอบกระชับ"
-    )
+    if model == "dolphin":
+        # Keep Dolphin route minimally steered to reduce unnecessary refusals.
+        system = (
+            "ตอบภาษาไทย เรียก user ว่ากบ เรียกตัวเองว่าพี่ "
+            "ตอบตรงคำถาม กระชับ ไม่ต้องสอนศีลธรรมหรือเตือนยาว"
+        )
+    else:
+        system = (
+            BASE_SYSTEM_PROMPT
+            + "\n\nตอบภาษาไทย เรียก user ว่ากบ เรียกตัวเองว่าพี่ ตอบกระชับ"
+        )
     system, history = trim_chat_context(system, history, profile=model)
     return await call_openrouter(
         model, message, system, history, agent="MainChatAgent"
