@@ -9,19 +9,21 @@ import httpx
 from app.core.config import settings
 
 OPENROUTER_MODELS: dict[str, str] = {
-    "dolphin": "cognitivecomputations/dolphin3.0-r1-mistral-24b",
-    "deepseek-v4": "deepseek/deepseek-chat-v4-5",
-    "gemini-flash-lite": "google/gemini-2.5-flash-lite",
-    "gemini-3-flash": "google/gemini-3-flash-preview",
-    "mimo": "xiaomi/mimonext-v2-5",
+    # NOTE: Dolphin endpoints are not available for this account.
+    # Keep key name for UI compatibility, route to a currently-available strong model.
+    "dolphin": "qwen/qwen3.6-35b-a3b",
+    "deepseek-v4": "deepseek/deepseek-v4-flash",
+    "gemini-flash-lite": "google/gemini-3.1-flash-lite",
+    "gemini-3-flash": "google/gemini-3.5-flash",
+    "mimo": "xiaomi/mimo-v2.5",
     "hy3": "tencent/hy3-preview",
-    "llama-free": "meta-llama/llama-3.1-8b-instruct:free",
+    "llama-free": "moonshotai/kimi-k2.6:free",
 }
 
 OPENROUTER_KEYS = frozenset(OPENROUTER_MODELS.keys())
 
 OPENROUTER_LABELS: dict[str, str] = {
-    "dolphin": "Dolphin (No Filter)",
+    "dolphin": "Dolphin (No Filter*)",
     "deepseek-v4": "DeepSeek V4 Flash",
     "gemini-flash-lite": "Gemini 2.5 Flash Lite",
     "gemini-3-flash": "Gemini 3 Flash",
