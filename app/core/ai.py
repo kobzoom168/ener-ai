@@ -33,6 +33,12 @@ _OLLAMA_MODEL_MAP = {
     "qwen3b": "qwen2.5:3b",
     "qwen7b": "qwen2.5:7b",
 }
+
+
+def _format_local_model_error(exc: BaseException) -> str:
+    from app.core.ollama_client import format_ollama_error
+
+    return format_ollama_error(exc)
 _VALID_MODELS = {
     "haiku", "groq", "gemini", "qwen3b", "qwen7b",
     "sonnet", "opus", "gemini-pro", "llama4",
@@ -789,39 +795,38 @@ async def _call_ollama(
     model_key: str,
 ) -> str:
     from app.core.context_limits import trim_chat_context
+    from app.core.ollama_client import ollama_chat, ollama_base_url, resolve_ollama_model
 
     system, messages = trim_chat_context(system, messages, profile=model_key)
-    payload_messages = [{"role": "system", "content": system}]
+    payload_messages: list[dict[str, str]] = []
+    if system.strip():
+        payload_messages.append({"role": "system", "content": system})
     if messages:
         for message in messages:
             role = message.get("role", "user")
             if role in {"user", "assistant"}:
-                payload_messages.append({"role": role, "content": message.get("content", "")})
+                content = str(message.get("content", "") or "").strip()
+                if content:
+                    payload_messages.append({"role": role, "content": content})
     payload_messages.append({"role": "user", "content": prompt})
-    model_name = _OLLAMA_MODEL_MAP.get(model_key, settings.ollama_model)
-    payload = {
-        "model": model_name,
-        "messages": payload_messages,
-        "stream": False,
-    }
+
     started_at = time.perf_counter()
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
-                f"{settings.ollama_base_url}/api/chat",
-                json=payload,
-            )
-            response.raise_for_status()
-            await _log_ai_run(
-                agent,
-                model_key,
-                0,
-                0,
-                int((time.perf_counter() - started_at) * 1000),
-                True,
-            )
-            return response.json()["message"]["content"]
-    except Exception:
+        text = await ollama_chat(
+            messages=payload_messages,
+            model_key=model_key,
+            timeout=120.0,
+        )
+        await _log_ai_run(
+            agent,
+            model_key,
+            0,
+            0,
+            int((time.perf_counter() - started_at) * 1000),
+            True,
+        )
+        return text
+    except Exception as exc:
         await _log_ai_run(
             agent,
             model_key,
@@ -830,7 +835,12 @@ async def _call_ollama(
             int((time.perf_counter() - started_at) * 1000),
             False,
         )
-        raise
+        detail = _format_local_model_error(exc)
+        base = ollama_base_url()
+        model_name = resolve_ollama_model(model_key)
+        raise RuntimeError(
+            f"Qwen local ไม่ตอบ ({base}, model={model_name}): {detail}"
+        ) from exc
 
 
 async def _call_anthropic_with_tools(
@@ -1378,16 +1388,17 @@ async def stream_chat_response(
 
             if candidate in _LOCAL_ONLY_MODELS:
                 text = await _call_ollama(message, system_prompt, history, agent, candidate)
-                if text:
-                    emitted = True
-                    yield text
+                if not str(text or "").strip():
+                    raise RuntimeError("Ollama returned empty text")
+                emitted = True
+                yield text
                 return
         except Exception as exc:
             if strict_local:
+                detail = _format_local_model_error(exc)
                 yield (
-                    "⚠️ Qwen local ไม่ตอบ — ตรวจว่า Ollama รันอยู่และโมเดล "
-                    f"{candidate} ถูก pull แล้ว (OLLAMA_BASE_URL ใน .env). "
-                    f"รายละเอียด: {exc}"
+                    "⚠️ Qwen local ไม่ตอบ — ตรวจ Ollama (OLLAMA_BASE_URL / OLLAMA_MODEL ใน .env) "
+                    f"และว่า pull โมเดลแล้ว\nรายละเอียด: {detail}"
                 )
                 return
             if candidate in {"haiku", "groq", "gemini"}:
@@ -1474,8 +1485,12 @@ async def chat(
                 return await _call_openai(prompt, system, messages, agent, "gpt-4o")
         except Exception as exc:
             if requested_model in _LOCAL_ONLY_MODELS:
+                from app.core.ollama_client import ollama_base_url
+
+                detail = _format_local_model_error(exc)
                 raise RuntimeError(
-                    f"Qwen local ({requested_model}) ไม่พร้อม — ตรวจ Ollama ที่ {settings.ollama_base_url}"
+                    f"Qwen local ({requested_model}) ไม่พร้อม — "
+                    f"Ollama {ollama_base_url()}: {detail}"
                 ) from exc
             continue
 

@@ -653,12 +653,10 @@ async def _check_webhook_status() -> str:
 
 
 async def _check_ollama_status() -> str:
-    try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            response = await client.get(f"{settings.ollama_base_url}/api/tags")
-            return "OK" if response.status_code == 200 else "FAIL"
-    except Exception:
-        return "FAIL"
+    from app.core.ollama_client import ollama_health_check
+
+    ok, message = await ollama_health_check()
+    return "OK" if ok else "FAIL"
 
 
 async def _load_admin_status() -> dict:
