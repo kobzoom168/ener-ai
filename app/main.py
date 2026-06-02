@@ -5492,7 +5492,9 @@ async def workspace_chat_stream(request: Request):
     body = await request.json()
     message = str(body.get("message", body.get("text", ""))).strip()
     project_id = _normalize_project_id(body.get("project_id"))
-    model = str(body.get("model", "auto")).strip().lower() or "auto"
+    model = str(body.get("model", "auto")).strip() or "deepseek/deepseek-v4-flash"
+    if model.lower() == "auto":
+        model = "deepseek/deepseek-v4-flash"
 
     if not message:
         raise HTTPException(status_code=400, detail="empty message")
@@ -5536,6 +5538,100 @@ async def workspace_chat_stream(request: Request):
                 content=message,
                 project_id=project_id,
             )
+
+            model_used = model
+            if _is_openrouter_model_id(model):
+                from app.core.context_limits import trim_chat_context
+                from app.core.openrouter_client import openrouter_model_label, stream_openrouter
+                from app.core.policy import BASE_SYSTEM_PROMPT
+                from app.core.workspace_memory import build_workspace_history_for_ai
+
+                if _is_simple_cpu_query(message):
+                    from app.agents.monitor_agent import (
+                        format_nl_resource_report,
+                        get_server_stats,
+                    )
+
+                    reply_text = format_nl_resource_report(get_server_stats())
+                    model_used = "system"
+                    yield f"data: {json.dumps({'type': 'token', 'text': reply_text}, ensure_ascii=False)}\n\n"
+                else:
+                    history = await build_workspace_history_for_ai(
+                        user_id, message, project_id=project_id, recent_limit=8
+                    )
+                    if model == "dolphin":
+                        system = (
+                            "ตอบภาษาไทย เรียก user ว่ากบ เรียกตัวเองว่าพี่ "
+                            "ตอบตรงคำถาม กระชับ ไม่ต้องสอนศีลธรรมหรือเตือนยาว"
+                        )
+                    else:
+                        system = (
+                            BASE_SYSTEM_PROMPT
+                            + "\n\nตอบภาษาไทย เรียก user ว่ากบ เรียกตัวเองว่าพี่ ตอบกระชับ"
+                        )
+                    system, history = trim_chat_context(system, history, profile=model)
+                    streamed: list[str] = []
+                    async for token in stream_openrouter(
+                        model,
+                        message,
+                        system,
+                        history,
+                        agent="MainChatAgent",
+                    ):
+                        streamed.append(token)
+                        yield f"data: {json.dumps({'type': 'token', 'text': token}, ensure_ascii=False)}\n\n"
+                    reply_text = "".join(streamed).strip() or "ยังไม่มีคำตอบตอนนี้"
+
+                assistant_message_id: int | None = None
+                async with get_db() as db:
+                    cur = await db.execute(
+                        """
+                        INSERT INTO messages (
+                            chat_id, conversation_id, role, content, project_id, source, model_used
+                        )
+                        VALUES (?, ?, ?, ?, ?, 'web', ?)
+                        """,
+                        (
+                            user_id,
+                            conversation_id,
+                            "assistant",
+                            reply_text,
+                            project_id,
+                            model_used,
+                        ),
+                    )
+                    assistant_message_id = cur.lastrowid
+                    await db.execute(
+                        "INSERT INTO audit_logs (action, details) VALUES (?, ?)",
+                        ("workspace_chat_stream_saved", f"project_id={project_id or 'all'}"),
+                    )
+                    await db.commit()
+                await index_workspace_message(
+                    message_id=assistant_message_id,
+                    chat_id=user_id,
+                    role="assistant",
+                    content=reply_text,
+                    project_id=project_id,
+                )
+
+                async def _post_openrouter_tasks() -> None:
+                    try:
+                        async with get_db() as db:
+                            await db.execute(
+                                "DELETE FROM memories WHERE key = 'model_handoff_context'"
+                            )
+                            await db.commit()
+                    except Exception:
+                        pass
+                    try:
+                        await extract_and_store_long_term_memories(message, reply_text)
+                    except Exception:
+                        pass
+
+                _asyncio.create_task(_post_openrouter_tasks())
+                model_label = await openrouter_model_label(model_used)
+                yield f"data: {json.dumps({'type': 'done', 'model': model_used, 'model_label': model_label}, ensure_ascii=False)}\n\n"
+                return
 
             if model in _WORKSPACE_JSON_SEND_MODELS:
                 if _is_simple_cpu_query(message):
@@ -5624,11 +5720,18 @@ async def workspace_chat_stream(request: Request):
                 cur = await db.execute(
                     """
                     INSERT INTO messages (
-                        chat_id, conversation_id, role, content, source, project_id
+                        chat_id, conversation_id, role, content, project_id, source, model_used
                     )
-                    VALUES (?, ?, ?, ?, 'web', ?)
+                    VALUES (?, ?, ?, ?, ?, 'web', ?)
                     """,
-                    (user_id, conversation_id, "assistant", reply_text, project_id),
+                    (
+                        user_id,
+                        conversation_id,
+                        "assistant",
+                        reply_text,
+                        project_id,
+                        model_used if _is_openrouter_model_id(model) else None,
+                    ),
                 )
                 assistant_message_id = cur.lastrowid
                 await db.execute(
@@ -5665,7 +5768,7 @@ async def workspace_chat_stream(request: Request):
 
             if model in _WORKSPACE_LOCAL_MODELS:
                 detail = format_ollama_error(exc)
-            elif model in _OPENROUTER_KEYS:
+            elif model in _OPENROUTER_KEYS or _is_openrouter_model_id(model):
                 detail = f"OpenRouter error: {exc}"
             else:
                 detail = str(exc)

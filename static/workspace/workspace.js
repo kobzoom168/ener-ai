@@ -399,6 +399,114 @@ document.addEventListener('DOMContentLoaded', function() {
     return row;
   }
 
+  async function streamWorkspaceChat(msg, model, thinkingId) {
+    let meta = formatAiMeta(model, getModelLabelFromSelect(model));
+    const response = await fetch('/workspace/chat/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({
+        text: msg,
+        message: msg,
+        project_id: window._currentProject || null,
+        model,
+      }),
+    });
+
+    if (!response.ok) {
+      const errBody = await response.text().catch(() => '');
+      let detail = errBody;
+      try {
+        const parsed = JSON.parse(errBody);
+        detail = parsed.detail || parsed.error || errBody;
+      } catch (e) {
+        /* keep raw body */
+      }
+      throw new Error(detail || `Request failed (${response.status})`);
+    }
+    if (!response.body) {
+      throw new Error('Streaming not supported');
+    }
+
+    document.getElementById(thinkingId)?.remove();
+    const aiBubble = appendAiBubble('', meta);
+    const wrap = aiBubble?.closest('.ai-bubble-wrap');
+    const textEl = wrap?.querySelector('.msg-text') || aiBubble?.querySelector('.msg-text');
+    if (textEl) {
+      textEl.classList.add('plain-text', 'streaming-live');
+      textEl.classList.remove('markdown-body');
+      textEl.dataset.raw = '';
+      textEl.textContent = '';
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let sseBuf = '';
+    let accumulated = '';
+    let scrollQueued = false;
+
+    const queueScroll = () => {
+      if (scrollQueued) return;
+      scrollQueued = true;
+      requestAnimationFrame(() => {
+        scrollQueued = false;
+        scrollToBottom();
+      });
+    };
+
+    const handlePayload = (payload) => {
+      if (!payload || !payload.type) return;
+      if (payload.type === 'token' && payload.text) {
+        accumulated += payload.text;
+        if (textEl) {
+          textEl.dataset.raw = accumulated;
+          textEl.textContent = accumulated;
+        }
+        queueScroll();
+        return;
+      }
+      if (payload.type === 'done') {
+        meta = formatAiMeta(payload.model || model, payload.model_label);
+        const metaEl = wrap?.querySelector('.msg-meta') || aiBubble?.querySelector('.msg-meta');
+        if (metaEl) metaEl.textContent = meta;
+        return;
+      }
+      if (payload.type === 'error') {
+        throw new Error(payload.text || 'Stream failed');
+      }
+    };
+
+    const parseSseChunk = (chunk) => {
+      for (const line of chunk.split('\n')) {
+        if (!line.startsWith('data:')) continue;
+        const jsonText = line.replace(/^data:\s*/, '').trim();
+        if (!jsonText) continue;
+        try {
+          handlePayload(JSON.parse(jsonText));
+        } catch (err) {
+          if (err instanceof SyntaxError) continue;
+          throw err;
+        }
+      }
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      sseBuf += decoder.decode(value, { stream: true });
+      const parts = sseBuf.split('\n\n');
+      sseBuf = parts.pop() || '';
+      parts.forEach(parseSseChunk);
+    }
+    if (sseBuf.trim()) parseSseChunk(sseBuf);
+
+    if (textEl) textEl.classList.remove('streaming-live');
+    const finalText = accumulated.trim() || 'ยังไม่มีคำตอบตอนนี้';
+    if (textEl) renderAiMessageContent(textEl, finalText);
+    loadProjects().catch(() => {});
+    scrollToBottom();
+  }
+
   function startThinkingStatus(thinkingId) {
     const steps = [
       'กำลังส่งคำขอ...',
@@ -590,47 +698,23 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     const model = (document.getElementById('model-select') || {}).value || 'deepseek/deepseek-v4-flash';
-    {
-      try {
-        const response = await fetch('/workspace/chat/send', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          credentials: 'same-origin',
-          body: JSON.stringify({
-            text: msg,
-            project_id: window._currentProject || null,
-            model,
-          }),
-        });
-        const data = await response.json().catch(() => ({}));
-        document.getElementById(thinkingId)?.remove();
-        if (!response.ok) {
-          throw new Error(data.detail || data.error || `Request failed (${response.status})`);
-        }
-        const reply = String(data.reply || '').trim() || 'ยังไม่มีคำตอบตอนนี้';
-        const meta = formatAiMeta(data.model || model, data.model_label);
-        const aiBubble = appendAiBubble('', meta);
-        const textEl = aiBubble?.closest('.ai-bubble-wrap')?.querySelector('.msg-text')
-          || aiBubble?.querySelector('.msg-text');
-        renderAiMessageContent(textEl, reply);
-        loadProjects().catch(() => {});
-        scrollToBottom();
-      } catch (error) {
-        document.getElementById(thinkingId)?.remove();
-        const errMsg = error.message || 'OpenRouter request failed';
-        const failBubble = appendAiBubble(errMsg, 'Ener-AI');
-        const textEl = failBubble?.closest('.ai-bubble-wrap')?.querySelector('.msg-text')
-          || failBubble?.querySelector('.msg-text');
-        renderAiMessageContent(textEl, errMsg);
-        showToast(errMsg);
-      } finally {
-        stopThinkingStatus();
-        state.streaming = false;
-        setSendButtonState(false);
-        chatInput.focus();
-      }
-      return;
+    try {
+      await streamWorkspaceChat(msg, model, thinkingId);
+    } catch (error) {
+      document.getElementById(thinkingId)?.remove();
+      const errMsg = error.message || 'OpenRouter request failed';
+      const failBubble = appendAiBubble(errMsg, 'Ener-AI');
+      const textEl = failBubble?.closest('.ai-bubble-wrap')?.querySelector('.msg-text')
+        || failBubble?.querySelector('.msg-text');
+      renderAiMessageContent(textEl, errMsg);
+      showToast(errMsg);
+    } finally {
+      stopThinkingStatus();
+      state.streaming = false;
+      setSendButtonState(false);
+      chatInput.focus();
     }
+    return;
   }
 
   async function loadChatHistory() {

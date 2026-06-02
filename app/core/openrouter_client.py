@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import time
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
@@ -294,6 +296,116 @@ async def call_openrouter(
             False,
         )
         raise
+
+
+def _stream_delta_text(delta: dict[str, Any]) -> str:
+    content = (delta or {}).get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text":
+                parts.append(str(part.get("text", "")))
+        return "".join(parts)
+    return ""
+
+
+async def stream_openrouter(
+    model_key: str,
+    prompt: str,
+    system: str = "",
+    messages: list[dict[str, str]] | None = None,
+    *,
+    agent: str = "OpenRouter",
+    max_tokens: int = 2048,
+    temperature: float = 0.7,
+) -> AsyncIterator[str]:
+    """Stream completion tokens from OpenRouter (SSE)."""
+    from app.core.ai import _log_ai_run
+
+    api_key = await get_openrouter_api_key()
+    if not api_key:
+        raise RuntimeError(
+            "OpenRouter API key not set — add OPENROUTER_API_KEY to .env on server"
+        )
+
+    url = f"{openrouter_base_url()}/chat/completions"
+    model_candidates = _openrouter_model_candidates(model_key)
+    base_payload = {
+        "messages": _build_messages(prompt, system, messages),
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "stream": True,
+    }
+
+    started_at = time.perf_counter()
+    last_error: str | None = None
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        for model_id in model_candidates:
+            payload = {"model": model_id, **base_payload}
+            try:
+                async with client.stream(
+                    "POST",
+                    url,
+                    headers=_openrouter_headers(api_key),
+                    json=payload,
+                ) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if not data or data == "[DONE]":
+                            if data == "[DONE]":
+                                break
+                            continue
+                        try:
+                            chunk = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+                        choices = chunk.get("choices") or []
+                        if not choices:
+                            continue
+                        first = choices[0] or {}
+                        provider_error = first.get("error") or {}
+                        if provider_error:
+                            code = provider_error.get("code")
+                            msg = provider_error.get("message")
+                            raise RuntimeError(f"provider_error(code={code}): {msg}")
+                        delta = first.get("delta") or {}
+                        text = _stream_delta_text(delta)
+                        if text:
+                            yield text
+                await _log_ai_run(
+                    agent,
+                    model_key,
+                    0,
+                    0,
+                    int((time.perf_counter() - started_at) * 1000),
+                    True,
+                )
+                return
+            except httpx.HTTPStatusError as exc:
+                last_error = f"{model_id} -> {_http_error_detail(exc)}"
+                if exc.response is not None and exc.response.status_code in {404, 429}:
+                    continue
+                break
+            except Exception as exc:
+                last_error = f"{model_id} -> {exc}"
+                break
+
+    await _log_ai_run(
+        agent,
+        model_key,
+        0,
+        0,
+        int((time.perf_counter() - started_at) * 1000),
+        False,
+    )
+    raise RuntimeError(
+        f"OpenRouter failed after retries: {last_error or 'unknown error'}"
+    )
 
 
 async def openrouter_chat_completions(

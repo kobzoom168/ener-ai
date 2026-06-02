@@ -401,6 +401,15 @@
       line-height: 1.5;
       color: #c9d1d9;
     }
+    #panel-chat .msg-text.streaming-live::after {
+      content: '▍';
+      color: #a78bfa;
+      animation: ws-cursor-blink 1s step-end infinite;
+      margin-left: 2px;
+    }
+    @keyframes ws-cursor-blink {
+      50% { opacity: 0; }
+    }
     #panel-chat .user-bubble .msg-text {
       white-space: pre-wrap;
     }
@@ -709,8 +718,8 @@
   });
 </script>
 <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
-<script src="/static/workspace/workspace-markdown.js?v=openrouter9"></script>
-<script src="/static/workspace/workspace.js?v=openrouter9"></script>
+<script src="/static/workspace/workspace-markdown.js?v=openrouter10"></script>
+<script src="/static/workspace/workspace.js?v=openrouter10"></script>
 <script>
   document.addEventListener('DOMContentLoaded', function() {
     if (window.lucide) lucide.createIcons();
