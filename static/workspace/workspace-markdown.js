@@ -154,8 +154,8 @@
     const codeEls = root.querySelectorAll('.code-block code, pre code');
     codeEls.forEach((el, idx) => {
       const current = String(el.textContent || '').trim();
-      if (current) return;
       const fallback = (blocks[idx] || '').trim() || '// (empty code block from model)';
+      if (current && current.toLowerCase() !== 'code') return;
       el.textContent = fallback;
       if (typeof hljs !== 'undefined') {
         try { hljs.highlightElement(el); } catch (e) {}
