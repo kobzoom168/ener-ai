@@ -604,6 +604,36 @@ document.addEventListener('DOMContentLoaded', function() {
     if (name === 'system') loadSystem();
     if (name === 'benchmark') loadBenchmark();
     if (name === 'code') loadCodePanel();
+    if (name === 'office') startOfficeAutoRefresh();
+    else stopOfficeAutoRefresh();
+  }
+
+  function openOfficeAgentChat(el) {
+    const cmd = el && el.getAttribute ? (el.getAttribute('data-chat-cmd') || '') : '';
+    if (cmd) sessionStorage.setItem('ws_office_prefill', cmd);
+    window.location.href = '/workspace?tool=chat';
+    return false;
+  }
+
+  function applyOfficeChatPrefill() {
+    const prefill = sessionStorage.getItem('ws_office_prefill');
+    if (!prefill || !chatInput) return;
+    chatInput.value = prefill;
+    chatInput.dispatchEvent(new Event('input'));
+    chatInput.focus();
+    sessionStorage.removeItem('ws_office_prefill');
+  }
+
+  function startOfficeAutoRefresh() {
+    stopOfficeAutoRefresh();
+    window.__officeRefreshTimer = setInterval(() => location.reload(), 30000);
+  }
+
+  function stopOfficeAutoRefresh() {
+    if (window.__officeRefreshTimer) {
+      clearInterval(window.__officeRefreshTimer);
+      window.__officeRefreshTimer = null;
+    }
   }
 
   function newChat() {
@@ -1644,6 +1674,7 @@ document.addEventListener('DOMContentLoaded', function() {
   window.saveCodeMemory = saveCodeMemory;
 
   window.showPanel = showPanel;
+  window.openOfficeAgentChat = openOfficeAgentChat;
   window.newChat = newChat;
   window.sendMessage = sendMessage;
   window.clearPendingImage = clearPendingImage;
@@ -1685,6 +1716,7 @@ document.addEventListener('DOMContentLoaded', function() {
   const hasSsrMessages =
     initialTool === 'chat' && chatMessages && chatMessages.querySelector('.msg-row');
   showPanel(initialTool, {skipHistoryLoad: Boolean(hasSsrMessages)});
+  applyOfficeChatPrefill();
   loadProjects();
   if (hasSsrMessages) {
     enhanceSsrChatMessages();

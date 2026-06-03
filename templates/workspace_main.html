@@ -286,13 +286,16 @@
 
           <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:10px; margin-bottom:1.5rem;">
             {% for ag in office.agents %}
-            <div class="rounded-xl p-3" style="background:oklch(0.17 0.01 250); border:1px solid {% if ag.status=='active' %}oklch(0.35 0.12 150){% elif ag.status=='idle' %}oklch(0.30 0.05 80){% else %}oklch(0.25 0.01 250){% endif %};">
+            <a href="/workspace?tool=chat"
+               class="rounded-xl p-3 office-agent-card office-agent-card--{{ ag.status }}"
+               data-chat-cmd="{{ ag.chat_cmd }}"
+               onclick="return openOfficeAgentChat(this);">
               <div class="flex items-center gap-2 mb-1.5">
                 <span style="font-size:20px; line-height:1;">{{ ag.emoji }}</span>
                 <div>
                   <p style="font-size:12px; font-weight:600; color:var(--foreground); margin:0;">{{ ag.short }}</p>
                   <div class="flex items-center gap-1">
-                    <span style="width:6px;height:6px;border-radius:50%;display:inline-block;background:{% if ag.status=='active' %}oklch(0.65 0.20 150){% elif ag.status=='idle' %}oklch(0.65 0.15 80){% else %}oklch(0.40 0.01 250){% endif %};"></span>
+                    <span class="office-agent-dot office-agent-dot--{{ ag.status }}"></span>
                     <span style="font-size:9px; color:var(--muted-foreground);">{% if ag.status=='active' %}Active{% elif ag.status=='idle' %}Idle{% else %}Offline{% endif %}</span>
                   </div>
                 </div>
@@ -301,7 +304,7 @@
               <p style="font-size:9px; color:{% if ag.runs_today > 0 %}oklch(0.65 0.10 200){% else %}oklch(0.45 0.01 250){% endif %}; margin:0;">
                 {% if ag.runs_today > 0 %}{{ ag.runs_today }}x วันนี้{% else %}{{ ag.last_label }}{% endif %}
               </p>
-            </div>
+            </a>
             {% endfor %}
           </div>
 
@@ -313,6 +316,9 @@
               <span style="font-size:10px; padding:1px 6px; border-radius:4px; background:{% if t.priority=='high' %}oklch(0.30 0.12 30){% else %}oklch(0.22 0.01 250){% endif %}; color:{% if t.priority=='high' %}oklch(0.75 0.15 30){% else %}var(--muted-foreground){% endif %};">{{ t.priority }}</span>
               <span style="font-size:12px; flex:1; color:var(--foreground);">{{ t.title }}</span>
               <span style="font-size:10px; padding:1px 5px; border-radius:4px; background:oklch(0.20 0.02 250); color:var(--muted-foreground);">{{ t.status }}</span>
+              <form method="post" action="/workspace/task/{{ t.id }}/done" style="margin:0;">
+                <button type="submit" class="office-task-done-btn">✓ Done</button>
+              </form>
             </div>
             {% endfor %}
           </div>

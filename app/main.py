@@ -5481,7 +5481,7 @@ async def _workspace_sidebar_stats() -> dict:
 async def _load_office_status() -> dict:
     import datetime
 
-    from app.core.agents import OFFICE_AGENTS
+    from app.core.agents import OFFICE_AGENTS, OFFICE_AGENT_CHAT_CMDS
 
     async with get_db() as db:
         cur = await db.execute(
@@ -5549,6 +5549,7 @@ async def _load_office_status() -> dict:
                 "status": status,
                 "last_label": last_label,
                 "runs_today": int(stats.get("runs_today") or 0),
+                "chat_cmd": OFFICE_AGENT_CHAT_CMDS.get(name, ""),
             }
         )
 
@@ -6175,6 +6176,15 @@ async def workspace_tasks_done(task_id: int, request: Request):
 
     result = await complete_task(task_id)
     return JSONResponse({"ok": True, "message": result})
+
+
+@app.post("/workspace/task/{task_id}/done")
+async def workspace_task_done(request: Request, task_id: int):
+    await _require_admin(request)
+    from app.agents.task import complete_task
+
+    await complete_task(task_id)
+    return RedirectResponse("/workspace?tool=office", status_code=303)
 
 
 @app.post("/workspace/tasks/{task_id}/status")

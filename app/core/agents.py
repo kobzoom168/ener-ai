@@ -73,6 +73,25 @@ OFFICE_AGENTS = [
     ("ThinkTeam", "🧩", "Think", "brainstorm, วิเคราะห์"),
 ]
 
+OFFICE_AGENT_CHAT_CMDS: dict[str, str] = {
+    "MainChatAgent": "",
+    "CodeAgent": "/code ",
+    "NewsAgent": "/news ",
+    "GmailAgent": "/email ",
+    "MemoryAgent": "/memory ",
+    "MonitorAgent": "/logs ",
+    "EnerAgent": "/ener ",
+    "ContentAgent": "/content ",
+    "DigestAgent": "/today ",
+    "TarotAgent": "/tarot ",
+    "TaskAgent": "/tasks ",
+    "SessionAgent": "",
+    "BriefingAgent": "",
+    "GithubAgent": "",
+    "LogKeeper": "/logs ",
+    "ThinkTeam": "/think ",
+}
+
 _AGENT_AI_MAP = {
     "NoteAgent": "brain",
     "MainChatAgent": "chat",
