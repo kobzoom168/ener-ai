@@ -657,8 +657,7 @@
       </div>
     </div>
 
-    {% if featherless_stats and (featherless_stats.calls > 0 or featherless_stats.calls_today > 0) %}
-    <div class="mx-3 mb-3 rounded-lg px-3 py-2.5" style="background: oklch(0.19 0.02 280); border: 1px solid oklch(0.30 0.05 280);">
+    <div id="ws-widget-featherless" class="mx-3 mb-3 rounded-lg px-3 py-2.5{% if not featherless_stats or (featherless_stats.calls <= 0 and featherless_stats.calls_today <= 0) %} hidden{% endif %}" style="background: oklch(0.19 0.02 280); border: 1px solid oklch(0.30 0.05 280);">
       <div class="flex items-center gap-1.5 mb-1.5">
         <span style="font-size:10px; background: oklch(0.45 0.20 280); color:white; border-radius:4px; padding:1px 5px; font-weight:600; letter-spacing:0.03em;">F</span>
         <span style="font-size:11px; font-weight:600; color: oklch(0.85 0.05 280);">Featherless</span>
@@ -666,39 +665,31 @@
       </div>
       <div class="flex justify-between" style="font-size:10px; color: var(--muted-foreground);">
         <span>วันนี้</span>
-        <span style="color: oklch(0.80 0.05 280);">{{ featherless_stats.calls_today }} calls</span>
+        <span id="ws-fl-calls-today" style="color: oklch(0.80 0.05 280);">{{ featherless_stats.calls_today if featherless_stats else 0 }} calls</span>
       </div>
       <div class="flex justify-between mt-0.5" style="font-size:10px; color: var(--muted-foreground);">
         <span>รวม</span>
-        <span style="color: oklch(0.75 0.03 280);">{{ featherless_stats.calls }} calls · {{ "{:,}".format(featherless_stats.in_tokens + featherless_stats.out_tokens) }} tok</span>
+        <span id="ws-fl-calls-total" style="color: oklch(0.75 0.03 280);">{{ featherless_stats.calls if featherless_stats else 0 }} calls · {{ "{:,}".format((featherless_stats.in_tokens + featherless_stats.out_tokens) if featherless_stats else 0) }} tok</span>
       </div>
     </div>
-    {% endif %}
 
-    {% if openrouter_stats %}
-    <div class="mx-3 mb-2 rounded-lg px-3 py-2.5" style="background: oklch(0.19 0.02 250); border: 1px solid oklch(0.30 0.03 250);">
+    <div id="ws-widget-openrouter" class="mx-3 mb-2 rounded-lg px-3 py-2.5" style="background: oklch(0.19 0.02 250); border: 1px solid oklch(0.30 0.03 250);">
       <div class="flex items-center gap-1.5 mb-1.5">
         <span style="font-size:10px; background: oklch(0.40 0.15 250); color:white; border-radius:4px; padding:1px 5px; font-weight:600; letter-spacing:0.03em;">OR</span>
         <span style="font-size:11px; font-weight:600; color: oklch(0.85 0.03 250);">OpenRouter</span>
-        {% if openrouter_stats.credits_usd is not none %}
-        <span style="font-size:9px; color: oklch(0.65 0.10 150); margin-left:auto;">${{ "%.2f"|format(openrouter_stats.credits_usd) }} left</span>
-        {% elif openrouter_stats.usage_usd is not none %}
-        <span style="font-size:9px; color: oklch(0.60 0.05 250); margin-left:auto;">used ${{ "%.4f"|format(openrouter_stats.usage_usd) }}</span>
-        {% endif %}
+        <span id="ws-or-badge" style="font-size:9px; margin-left:auto;{% if openrouter_stats and openrouter_stats.credits_usd is not none %} color: oklch(0.65 0.10 150);{% elif openrouter_stats and openrouter_stats.usage_usd is not none %} color: oklch(0.60 0.05 250);{% else %} display:none;{% endif %}">{% if openrouter_stats and openrouter_stats.credits_usd is not none %}${{ "%.2f"|format(openrouter_stats.credits_usd) }} left{% elif openrouter_stats and openrouter_stats.usage_usd is not none %}used ${{ "%.4f"|format(openrouter_stats.usage_usd) }}{% endif %}</span>
       </div>
       <div class="flex justify-between" style="font-size:10px; color: var(--muted-foreground);">
         <span>วันนี้</span>
-        <span style="color: oklch(0.80 0.03 250);">{{ openrouter_stats.calls_today }} calls · {{ "{:,}".format(openrouter_stats.out_tokens) }} tok</span>
+        <span id="ws-or-today" style="color: oklch(0.80 0.03 250);">{{ openrouter_stats.calls_today if openrouter_stats else 0 }} calls · {{ "{:,}".format(openrouter_stats.out_tokens if openrouter_stats else 0) }} tok</span>
       </div>
       <div class="flex justify-between mt-0.5" style="font-size:10px; color: var(--muted-foreground);">
         <span>รวม</span>
-        <span style="color: oklch(0.70 0.02 250);">{{ openrouter_stats.calls }} calls</span>
+        <span id="ws-or-total" style="color: oklch(0.70 0.02 250);">{{ openrouter_stats.calls if openrouter_stats else 0 }} calls</span>
       </div>
     </div>
-    {% endif %}
 
-    {% if system_resource_stats %}
-    <div class="mx-3 mb-2 rounded-lg px-3 py-2.5" style="background: oklch(0.19 0.02 150); border: 1px solid oklch(0.30 0.04 150);">
+    <div id="ws-widget-system" class="mx-3 mb-2 rounded-lg px-3 py-2.5" style="background: oklch(0.19 0.02 150); border: 1px solid oklch(0.30 0.04 150);">
       <div class="flex items-center gap-1.5 mb-1.5">
         <span style="font-size:10px; background: oklch(0.42 0.12 150); color:white; border-radius:4px; padding:1px 5px; font-weight:600; letter-spacing:0.03em;">SYS</span>
         <span style="font-size:11px; font-weight:600; color: oklch(0.85 0.04 150);">Server</span>
@@ -706,18 +697,17 @@
       </div>
       <div class="flex justify-between" style="font-size:10px; color: var(--muted-foreground);">
         <span>CPU</span>
-        <span style="color: oklch(0.80 0.04 150);">{{ system_resource_stats.cpu_percent }}%</span>
+        <span id="ws-sys-cpu" style="color: oklch(0.80 0.04 150);">{{ system_resource_stats.cpu_percent if system_resource_stats else 0 }}%</span>
       </div>
       <div class="flex justify-between mt-0.5" style="font-size:10px; color: var(--muted-foreground);">
         <span>RAM</span>
-        <span style="color: oklch(0.78 0.03 150);">{{ system_resource_stats.ram_percent }}% · {{ system_resource_stats.ram_used_gb }}/{{ system_resource_stats.ram_total_gb }} GB</span>
+        <span id="ws-sys-ram" style="color: oklch(0.78 0.03 150);">{{ system_resource_stats.ram_percent if system_resource_stats else 0 }}% · {{ system_resource_stats.ram_used_gb if system_resource_stats else 0 }}/{{ system_resource_stats.ram_total_gb if system_resource_stats else 0 }} GB</span>
       </div>
       <div class="flex justify-between mt-0.5" style="font-size:10px; color: var(--muted-foreground);">
         <span>Disk</span>
-        <span style="color: oklch(0.72 0.02 150);">{{ system_resource_stats.disk_percent }}% · {{ system_resource_stats.disk_used_gb }}/{{ system_resource_stats.disk_total_gb }} GB</span>
+        <span id="ws-sys-disk" style="color: oklch(0.72 0.02 150);">{{ system_resource_stats.disk_percent if system_resource_stats else 0 }}% · {{ system_resource_stats.disk_used_gb if system_resource_stats else 0 }}/{{ system_resource_stats.disk_total_gb if system_resource_stats else 0 }} GB</span>
       </div>
     </div>
-    {% endif %}
 
     <div class="border-t p-3" style="border-color: var(--border);">
       <span id="active-model-badge" class="ws-model-pill">{{ active_model }}</span>
@@ -777,11 +767,77 @@
         }
       });
     }
+
+    function wsFormatNumber(value) {
+      return Number(value || 0).toLocaleString('en-US');
+    }
+
+    function wsUpdateOpenRouterBadge(stats) {
+      const badge = document.getElementById('ws-or-badge');
+      if (!badge || !stats) return;
+      if (stats.credits_usd != null) {
+        badge.style.display = '';
+        badge.style.color = 'oklch(0.65 0.10 150)';
+        badge.textContent = '$' + Number(stats.credits_usd).toFixed(2) + ' left';
+      } else if (stats.usage_usd != null) {
+        badge.style.display = '';
+        badge.style.color = 'oklch(0.60 0.05 250)';
+        badge.textContent = 'used $' + Number(stats.usage_usd).toFixed(4);
+      } else {
+        badge.style.display = 'none';
+        badge.textContent = '';
+      }
+    }
+
+    function wsApplySidebarStats(data) {
+      if (!data) return;
+      const fl = data.featherless_stats || {};
+      const flWidget = document.getElementById('ws-widget-featherless');
+      const flToday = document.getElementById('ws-fl-calls-today');
+      const flTotal = document.getElementById('ws-fl-calls-total');
+      if (flWidget) {
+        flWidget.classList.toggle('hidden', !(fl.calls > 0 || fl.calls_today > 0));
+      }
+      if (flToday) flToday.textContent = fl.calls_today + ' calls';
+      if (flTotal) {
+        flTotal.textContent = fl.calls + ' calls · ' + wsFormatNumber((fl.in_tokens || 0) + (fl.out_tokens || 0)) + ' tok';
+      }
+
+      const or = data.openrouter_stats || {};
+      wsUpdateOpenRouterBadge(or);
+      const orToday = document.getElementById('ws-or-today');
+      const orTotal = document.getElementById('ws-or-total');
+      if (orToday) orToday.textContent = or.calls_today + ' calls · ' + wsFormatNumber(or.out_tokens || 0) + ' tok';
+      if (orTotal) orTotal.textContent = or.calls + ' calls';
+
+      const sys = data.system_resource_stats || {};
+      const sysCpu = document.getElementById('ws-sys-cpu');
+      const sysRam = document.getElementById('ws-sys-ram');
+      const sysDisk = document.getElementById('ws-sys-disk');
+      if (sysCpu) sysCpu.textContent = sys.cpu_percent + '%';
+      if (sysRam) sysRam.textContent = sys.ram_percent + '% · ' + sys.ram_used_gb + '/' + sys.ram_total_gb + ' GB';
+      if (sysDisk) sysDisk.textContent = sys.disk_percent + '% · ' + sys.disk_used_gb + '/' + sys.disk_total_gb + ' GB';
+    }
+
+    async function refreshSidebarStats() {
+      try {
+        const res = await fetch('/workspace/sidebar/stats', { credentials: 'same-origin' });
+        if (!res.ok) return;
+        const data = await res.json();
+        wsApplySidebarStats(data);
+      } catch (err) {
+        console.debug('sidebar stats refresh failed', err);
+      }
+    }
+
+    window.refreshSidebarStats = refreshSidebarStats;
+    refreshSidebarStats();
+    window.__wsSidebarStatsTimer = setInterval(refreshSidebarStats, 5000);
   });
 </script>
 <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 <script src="/static/workspace/workspace-markdown.js?v=openrouter10"></script>
-<script src="/static/workspace/workspace.js?v=openrouter10"></script>
+<script src="/static/workspace/workspace.js?v=openrouter11"></script>
 <script>
   document.addEventListener('DOMContentLoaded', function() {
     if (window.lucide) lucide.createIcons();

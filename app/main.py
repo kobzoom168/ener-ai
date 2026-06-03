@@ -5388,25 +5388,7 @@ async def _workspace_openrouter_model_groups() -> tuple[
     return groups, flat
 
 
-@app.get("/workspace")
-async def workspace_page(
-    request: Request,
-    tool: str = "chat",
-    project_id: int | None = None,
-    date: str | None = None,
-    scroll: str | None = None,
-):
-    await _require_admin(request)
-    from app.core.database import get_system_stats
-
-    normalized_tool = str(tool or "chat").strip().lower()
-    if normalized_tool not in _VALID_WORKSPACE_TOOLS:
-        normalized_tool = "chat"
-    normalized_project_id = _normalize_project_id(project_id)
-    selected_date, show_all = _resolve_workspace_chat_date(date, scroll)
-    today_key = _workspace_today_key()
-
-    stats = await get_system_stats()
+async def _workspace_sidebar_stats() -> dict:
     async with get_db() as db:
         fl_cur = await db.execute(
             """
@@ -5453,12 +5435,7 @@ async def workspace_page(
             or_model_keys,
         )
         or_today_row = await or_today_cur.fetchone()
-    featherless_stats = {
-        "calls": int(fl_row["calls"] or 0) if fl_row else 0,
-        "calls_today": int(fl_today_row["calls"] or 0) if fl_today_row else 0,
-        "in_tokens": int(fl_row["in_tokens"] or 0) if fl_row else 0,
-        "out_tokens": int(fl_row["out_tokens"] or 0) if fl_row else 0,
-    }
+
     or_credits_usd: float | None = None
     or_usage_usd: float | None = None
     try:
@@ -5477,17 +5454,52 @@ async def workspace_page(
                         or_credits_usd = float(or_limit) - or_usage_usd
     except Exception:
         pass
-    openrouter_stats = {
-        "calls": int(or_row["calls"] or 0) if or_row else 0,
-        "calls_today": int(or_today_row["calls"] or 0) if or_today_row else 0,
-        "in_tokens": int(or_row["in_tokens"] or 0) if or_row else 0,
-        "out_tokens": int(or_today_row["in_tokens"] or 0) + int(or_today_row["out_tokens"] or 0)
-        if or_today_row
-        else 0,
-        "usage_usd": round(or_usage_usd, 4) if or_usage_usd is not None else None,
-        "credits_usd": round(or_credits_usd, 2) if or_credits_usd is not None else None,
+
+    return {
+        "featherless_stats": {
+            "calls": int(fl_row["calls"] or 0) if fl_row else 0,
+            "calls_today": int(fl_today_row["calls"] or 0) if fl_today_row else 0,
+            "in_tokens": int(fl_row["in_tokens"] or 0) if fl_row else 0,
+            "out_tokens": int(fl_row["out_tokens"] or 0) if fl_row else 0,
+        },
+        "openrouter_stats": {
+            "calls": int(or_row["calls"] or 0) if or_row else 0,
+            "calls_today": int(or_today_row["calls"] or 0) if or_today_row else 0,
+            "in_tokens": int(or_row["in_tokens"] or 0) if or_row else 0,
+            "out_tokens": int(or_today_row["in_tokens"] or 0)
+            + int(or_today_row["out_tokens"] or 0)
+            if or_today_row
+            else 0,
+            "usage_usd": round(or_usage_usd, 4) if or_usage_usd is not None else None,
+            "credits_usd": round(or_credits_usd, 2) if or_credits_usd is not None else None,
+        },
+        "system_resource_stats": _workspace_resource_stats(),
     }
-    system_resource_stats = _workspace_resource_stats()
+
+
+@app.get("/workspace")
+async def workspace_page(
+    request: Request,
+    tool: str = "chat",
+    project_id: int | None = None,
+    date: str | None = None,
+    scroll: str | None = None,
+):
+    await _require_admin(request)
+    from app.core.database import get_system_stats
+
+    normalized_tool = str(tool or "chat").strip().lower()
+    if normalized_tool not in _VALID_WORKSPACE_TOOLS:
+        normalized_tool = "chat"
+    normalized_project_id = _normalize_project_id(project_id)
+    selected_date, show_all = _resolve_workspace_chat_date(date, scroll)
+    today_key = _workspace_today_key()
+
+    stats = await get_system_stats()
+    sidebar_stats = await _workspace_sidebar_stats()
+    featherless_stats = sidebar_stats["featherless_stats"]
+    openrouter_stats = sidebar_stats["openrouter_stats"]
+    system_resource_stats = sidebar_stats["system_resource_stats"]
     total_messages, projects = await _workspace_projects_for_page()
     stats = {**stats, "messages": total_messages}
 
@@ -5528,6 +5540,12 @@ async def workspace_page(
             "today_label": _format_chat_date_label(today_key),
         },
     )
+
+
+@app.get("/workspace/sidebar/stats")
+async def workspace_sidebar_stats(request: Request):
+    await _require_admin(request)
+    return JSONResponse(await _workspace_sidebar_stats())
 
 
 async def _read_workspace_image_from_form(form) -> tuple[str | None, str]:

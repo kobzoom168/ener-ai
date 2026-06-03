@@ -504,6 +504,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const finalText = accumulated.trim() || 'ยังไม่มีคำตอบตอนนี้';
     if (textEl) renderAiMessageContent(textEl, finalText);
     loadProjects().catch(() => {});
+    if (typeof window.refreshSidebarStats === 'function') window.refreshSidebarStats();
     scrollToBottom();
   }
 
