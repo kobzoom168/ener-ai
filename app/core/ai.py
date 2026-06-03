@@ -23,6 +23,12 @@ from app.core.venice_client import (
     call_venice,
     venice_available,
 )
+from app.core.featherless_client import (
+    FEATHERLESS_KEYS,
+    FEATHERLESS_LABELS,
+    call_featherless,
+    featherless_available,
+)
 
 _PRIMARY_MODEL = "claude-haiku-4-5-20251001"
 _ACTIVE_MODEL_KEY = "active_model"
@@ -43,6 +49,7 @@ _MODEL_LABELS = {
     "gpt-4o": "GPT-4o (OpenAI)",
     **OPENROUTER_LABELS,
     **VENICE_LABELS,
+    **FEATHERLESS_LABELS,
 }
 _OLLAMA_MODEL_MAP = {
     "qwen3b": "qwen2.5:3b",
@@ -61,9 +68,12 @@ _VALID_MODELS = {
     "gpt-4o-mini", "gpt-4o",
     *OPENROUTER_KEYS,
     *VENICE_KEYS,
+    *FEATHERLESS_KEYS,
 }
 _FALLBACK_SEQUENCE = ["gemini-flash-lite", "groq", "haiku", "qwen3b"]
-_STRICT_PREFERRED_MODELS = frozenset({"qwen3b", "qwen7b"}) | OPENROUTER_KEYS | VENICE_KEYS
+_STRICT_PREFERRED_MODELS = (
+    frozenset({"qwen3b", "qwen7b"}) | OPENROUTER_KEYS | VENICE_KEYS | FEATHERLESS_KEYS
+)
 
 
 def _estimate_cost_thb(model: str, prompt_tokens: int, completion_tokens: int) -> float:
@@ -79,6 +89,8 @@ def _normalize_model_name(model: str) -> str:
     if lowered in OPENROUTER_KEYS:
         return lowered
     if lowered in VENICE_KEYS:
+        return lowered
+    if lowered in FEATHERLESS_KEYS:
         return lowered
     if lowered == "llama-free":
         return "llama-free"
@@ -211,6 +223,7 @@ def get_model_availability() -> dict[str, bool]:
         "gpt-4o": bool(settings.openai_api_key),
         **{key: bool(settings.openrouter_api_key) for key in OPENROUTER_KEYS},
         **{key: bool(settings.venice_api_key) for key in VENICE_KEYS},
+        **{key: bool(settings.featherless_api_key) for key in FEATHERLESS_KEYS},
     }
 
 
@@ -223,6 +236,7 @@ async def get_model_availability_async() -> dict[str, bool]:
     openai = settings.openai_api_key or await get_config("openai_api_key", "")
     or_key = await openrouter_available()
     venice_key = await venice_available()
+    featherless_key = await featherless_available()
     return {
         "haiku": bool(settings.anthropic_api_key),
         "groq": bool(settings.groq_api_key),
@@ -240,6 +254,7 @@ async def get_model_availability_async() -> dict[str, bool]:
         "gpt-4o": bool(openai),
         **{key: or_key for key in OPENROUTER_KEYS},
         **{key: venice_key for key in VENICE_KEYS},
+        **{key: featherless_key for key in FEATHERLESS_KEYS},
     }
 
 
@@ -1045,6 +1060,20 @@ async def _resolve_openai_compat_api(model_key: str) -> tuple[str, str, str]:
             resolve_venice_model_id(model_key),
             model_key,
         )
+    if model_key in FEATHERLESS_KEYS:
+        from app.core.featherless_client import (
+            featherless_base_url,
+            get_featherless_api_key,
+            resolve_featherless_model_id,
+        )
+
+        if not await get_featherless_api_key():
+            raise RuntimeError("Featherless API key not set")
+        return (
+            f"{featherless_base_url()}/chat/completions",
+            resolve_featherless_model_id(model_key),
+            model_key,
+        )
     raise RuntimeError(f"unsupported openai-compat model: {model_key}")
 
 
@@ -1065,6 +1094,10 @@ async def _openai_compat_api_key(model_key: str) -> str:
         from app.core.venice_client import get_venice_api_key
 
         return await get_venice_api_key()
+    if model_key in FEATHERLESS_KEYS:
+        from app.core.featherless_client import get_featherless_api_key
+
+        return await get_featherless_api_key()
     return settings.openai_api_key or await get_config("openai_api_key", "")
 
 
@@ -1414,10 +1447,28 @@ async def stream_chat_response(
             continue
         if candidate in VENICE_KEYS and not availability.get(candidate, False):
             continue
+        if candidate in FEATHERLESS_KEYS and not availability.get(candidate, False):
+            continue
 
         started_at = time.perf_counter()
         emitted = False
         try:
+            if candidate in FEATHERLESS_KEYS:
+                from app.core.featherless_client import stream_featherless
+
+                async for token in stream_featherless(
+                    candidate,
+                    message,
+                    system_prompt,
+                    history,
+                    agent=agent,
+                ):
+                    if token:
+                        emitted = True
+                        yield token
+                await _log_ai_run(agent, candidate, 0, 0, int((time.perf_counter() - started_at) * 1000), True)
+                return
+
             if candidate in VENICE_KEYS:
                 from app.core.venice_client import stream_venice
 
@@ -1521,7 +1572,9 @@ async def stream_chat_response(
                 return
         except Exception as exc:
             if strict_preferred:
-                if candidate in VENICE_KEYS:
+                if candidate in FEATHERLESS_KEYS:
+                    yield f"⚠️ Featherless ไม่ตอบ ({candidate}): {exc}"
+                elif candidate in VENICE_KEYS:
                     yield f"⚠️ Venice ไม่ตอบ ({candidate}): {exc}"
                 elif candidate in OPENROUTER_KEYS:
                     yield f"⚠️ OpenRouter ไม่ตอบ ({candidate}): {exc}"
@@ -1540,7 +1593,11 @@ async def stream_chat_response(
             return
 
     if strict_preferred:
-        if requested_model in VENICE_KEYS:
+        if requested_model in FEATHERLESS_KEYS:
+            yield (
+                "⚠️ ไม่สามารถเชื่อม Featherless ได้ — ตั้ง FEATHERLESS_API_KEY ใน .env แล้ว rebuild container"
+            )
+        elif requested_model in VENICE_KEYS:
             yield (
                 "⚠️ ไม่สามารถเชื่อม Venice ได้ — ตั้ง VENICE_API_KEY ใน .env แล้ว rebuild container"
             )
@@ -1603,6 +1660,10 @@ async def chat(
                 return await _call_groq(prompt, system, messages, agent)
             if candidate == "gemini":
                 return await _call_gemini(prompt, system, messages, agent)
+            if candidate in FEATHERLESS_KEYS:
+                return await call_featherless(
+                    candidate, prompt, system, messages, agent=agent
+                )
             if candidate in VENICE_KEYS:
                 return await call_venice(
                     candidate, prompt, system, messages, agent=agent
@@ -1633,6 +1694,10 @@ async def chat(
                 return await _call_openai(prompt, system, messages, agent, "gpt-4o")
         except Exception as exc:
             if _is_strict_preferred(requested_model):
+                if requested_model in FEATHERLESS_KEYS:
+                    raise RuntimeError(
+                        f"Featherless ({requested_model}) ไม่พร้อม: {exc}"
+                    ) from exc
                 if requested_model in VENICE_KEYS:
                     raise RuntimeError(
                         f"Venice ({requested_model}) ไม่พร้อม: {exc}"

@@ -38,6 +38,7 @@ from app.core.ai_gateway import get_recent_ai_traces, preview_context, run_ai
 from app.core.config import settings
 from app.core.openrouter_client import OPENROUTER_KEYS as _OPENROUTER_KEYS
 from app.core.venice_client import VENICE_KEYS as _VENICE_KEYS
+from app.core.featherless_client import FEATHERLESS_KEYS as _FEATHERLESS_KEYS
 from app.core.database import get_all_config, get_config, get_db, init_db, set_config
 from app.core.diagnostics import log_otp_event
 from app.core.event_log import log_event
@@ -4650,7 +4651,12 @@ async def _workspace_local_qwen_reply(
 def _workspace_chat_system(model: str) -> str:
     from app.core.policy import BASE_SYSTEM_PROMPT
 
-    if model in {"dolphin", "venice-abliterated"}:
+    if model in {
+        "dolphin",
+        "venice-abliterated",
+        "featherless-abliterated",
+        "featherless-gemma",
+    }:
         return (
             "ตอบภาษาไทย เรียก user ว่ากบ เรียกตัวเองว่าพี่ "
             "ตอบตรงคำถาม กระชับ ไม่ต้องสอนศีลธรรมหรือเตือนยาว"
@@ -4670,6 +4676,7 @@ async def _workspace_cloud_reply(
 ) -> str:
     from app.core.ai import call_openrouter
     from app.core.context_limits import trim_chat_context
+    from app.core.featherless_client import call_featherless, is_featherless_model
     from app.core.venice_client import call_venice, is_venice_model
     from app.core.workspace_memory import build_workspace_history_for_ai
 
@@ -4678,6 +4685,10 @@ async def _workspace_cloud_reply(
     )
     system = _workspace_chat_system(model)
     system, history = trim_chat_context(system, history, profile=model)
+    if is_featherless_model(model):
+        return await call_featherless(
+            model, message, system, history, agent="MainChatAgent"
+        )
     if is_venice_model(model):
         return await call_venice(
             model, message, system, history, agent="MainChatAgent"
@@ -4817,11 +4828,13 @@ def _normalize_project_id(value: object) -> int | None:
 
 
 async def _workspace_enrich_message_models(messages: list[dict]) -> None:
+    from app.core.featherless_client import FEATHERLESS_LABELS
     from app.core.venice_client import VENICE_LABELS
 
     _, model_options = await _workspace_openrouter_model_groups()
     label_cache: dict[str, str] = {key: label for key, label in model_options}
     label_cache.update(VENICE_LABELS)
+    label_cache.update(FEATHERLESS_LABELS)
     label_cache["system"] = "System"
     for msg in messages:
         if msg.get("role") != "assistant":
@@ -5257,16 +5270,27 @@ def _is_venice_model_id(model: str) -> bool:
     return is_venice_model(model)
 
 
+def _is_featherless_model_id(model: str) -> bool:
+    from app.core.featherless_client import is_featherless_model
+
+    return is_featherless_model(model)
+
+
 def _is_openrouter_model_id(model: str) -> bool:
     key = str(model or "").strip().lower()
     return bool(key and ("/" in key or key in _OPENROUTER_KEYS))
 
 
 def _is_cloud_llm_model_id(model: str) -> bool:
-    return _is_venice_model_id(model) or _is_openrouter_model_id(model)
+    return (
+        _is_featherless_model_id(model)
+        or _is_venice_model_id(model)
+        or _is_openrouter_model_id(model)
+    )
 
 
 async def _workspace_model_label(model_used: str) -> str:
+    from app.core.featherless_client import featherless_model_label
     from app.core.openrouter_client import openrouter_model_label
     from app.core.venice_client import venice_model_label
 
@@ -5275,6 +5299,8 @@ async def _workspace_model_label(model_used: str) -> str:
         return "Ener-AI"
     if mid == "system":
         return "System"
+    if _is_featherless_model_id(mid):
+        return await featherless_model_label(mid)
     if _is_venice_model_id(mid):
         return await venice_model_label(mid)
     return await openrouter_model_label(mid)
@@ -5320,19 +5346,30 @@ async def _workspace_openrouter_model_groups() -> tuple[
     list[tuple[str, list[tuple[str, str]]]],
     list[tuple[str, str]],
 ]:
+    from app.core.featherless_client import (
+        FEATHERLESS_KEYS,
+        FEATHERLESS_LABELS,
+        featherless_available,
+    )
     from app.core.openrouter_client import list_openrouter_models
     from app.core.venice_client import VENICE_KEYS, VENICE_LABELS, venice_available
 
+    groups: list[tuple[str, list[tuple[str, str]]]] = []
+    flat: list[tuple[str, str]] = []
+
+    featherless_options = [(k, FEATHERLESS_LABELS[k]) for k in FEATHERLESS_KEYS]
+    if await featherless_available():
+        groups.append(("Featherless.ai (Uncensored)", featherless_options))
+        flat.extend(featherless_options)
+
     venice_options = [(k, VENICE_LABELS[k]) for k in VENICE_KEYS]
     if await venice_available():
-        groups: list[tuple[str, list[tuple[str, str]]]] = [
-            ("Venice.ai (Uncensored)", venice_options),
-        ]
-    else:
-        groups = []
+        groups.append(("Venice.ai (Uncensored)", venice_options))
+        flat.extend(venice_options)
+
     options = await list_openrouter_models()
     groups.append(("OpenRouter (Cloud)", options))
-    flat = venice_options + options
+    flat.extend(options)
     return groups, flat
 
 
@@ -5595,6 +5632,10 @@ async def workspace_chat_stream(request: Request):
             model_used = model
             if _is_cloud_llm_model_id(model):
                 from app.core.context_limits import trim_chat_context
+                from app.core.featherless_client import (
+                    is_featherless_model,
+                    stream_featherless,
+                )
                 from app.core.openrouter_client import stream_openrouter
                 from app.core.venice_client import is_venice_model, stream_venice
                 from app.core.workspace_memory import build_workspace_history_for_ai
@@ -5615,7 +5656,12 @@ async def workspace_chat_stream(request: Request):
                     system = _workspace_chat_system(model)
                     system, history = trim_chat_context(system, history, profile=model)
                     streamed: list[str] = []
-                    stream_fn = stream_venice if is_venice_model(model) else stream_openrouter
+                    if is_featherless_model(model):
+                        stream_fn = stream_featherless
+                    elif is_venice_model(model):
+                        stream_fn = stream_venice
+                    else:
+                        stream_fn = stream_openrouter
                     async for token in stream_fn(
                         model,
                         message,
@@ -5813,6 +5859,8 @@ async def workspace_chat_stream(request: Request):
 
             if model in _WORKSPACE_LOCAL_MODELS:
                 detail = format_ollama_error(exc)
+            elif _is_featherless_model_id(model):
+                detail = f"Featherless error: {exc}"
             elif _is_venice_model_id(model):
                 detail = f"Venice error: {exc}"
             elif model in _OPENROUTER_KEYS or _is_openrouter_model_id(model):
@@ -8390,9 +8438,13 @@ async def admin_config_update(request: Request):
         if value not in allowed and not _is_cloud_llm_model_id(value):
             raise HTTPException(status_code=400, detail="active_model ไม่ถูกต้อง")
         if value != "auto":
+            from app.core.featherless_client import featherless_available
             from app.core.venice_client import venice_available
 
-            if _is_venice_model_id(value):
+            if _is_featherless_model_id(value):
+                if not await featherless_available():
+                    raise HTTPException(status_code=400, detail="Featherless ยังไม่มี key")
+            elif _is_venice_model_id(value):
                 if not await venice_available():
                     raise HTTPException(status_code=400, detail="Venice ยังไม่มี key")
             elif not settings.openrouter_api_key:
@@ -8902,7 +8954,12 @@ async def admin_switch_model(request: Request):
     model = form_data.get("model", [""])[0].strip().lower()
     if not _is_cloud_llm_model_id(model):
         raise HTTPException(status_code=400, detail="โมเดลไม่ถูกต้อง")
-    if _is_venice_model_id(model):
+    if _is_featherless_model_id(model):
+        from app.core.featherless_client import featherless_available
+
+        if not await featherless_available():
+            raise HTTPException(status_code=400, detail="Featherless ยังไม่มี key")
+    elif _is_venice_model_id(model):
         from app.core.venice_client import venice_available
 
         if not await venice_available():
