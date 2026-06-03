@@ -4977,11 +4977,113 @@ async def _workspace_save_chat_messages(
         await db.commit()
 
 
+def _workspace_parse_slash_command(text: str) -> tuple[str, str] | None:
+    import re
+
+    match = re.match(r"^/(\w+)(?:\s+(.*))?$", str(text or "").strip(), re.DOTALL)
+    if not match:
+        return None
+    return match.group(1).lower(), (match.group(2) or "").strip()
+
+
+async def _workspace_run_slash_command(text: str, project_id: int | None) -> str | None:
+    """Route /command messages to the matching agent. Returns None if not a slash command."""
+    parsed = _workspace_parse_slash_command(text)
+    if not parsed:
+        return None
+
+    cmd_key, cmd_args = parsed
+    from app.core.agents import COMMAND_AGENT_MAP
+
+    if cmd_key not in COMMAND_AGENT_MAP:
+        return None
+
+    chat_id = _workspace_user_id()
+
+    if cmd_key == "logs":
+        from app.agents.monitor_agent import cmd_logs
+
+        lines = 20
+        if cmd_args.isdigit():
+            lines = max(5, min(int(cmd_args), 200))
+        return await cmd_logs(lines=lines)
+
+    if cmd_key == "errors":
+        from app.agents.monitor_agent import cmd_errors
+
+        return await cmd_errors()
+
+    if cmd_key == "server":
+        from app.agents.monitor_agent import cmd_server
+
+        return await cmd_server()
+
+    if cmd_key == "status":
+        from app.agents.monitor_agent import cmd_status
+
+        return await cmd_status()
+
+    if cmd_key in {"tarot", "ไพ่", "ดวง"}:
+        from app.agents.tarot_agent import read_cards
+
+        spread = "single"
+        lowered = cmd_args.lower()
+        if "3" in cmd_args or "สาม" in cmd_args or "three" in lowered:
+            spread = "three"
+        elif "5" in cmd_args or "ห้า" in cmd_args or "celtic" in lowered:
+            spread = "celtic"
+        return await read_cards(question=cmd_args, spread=spread)
+
+    if cmd_key == "email":
+        from app.agents import gmail_agent
+        from app.core.ai_gateway import run_ai
+
+        if not cmd_args:
+            emails = await gmail_agent.fetch_unread_emails()
+            if not emails:
+                return "📭 ไม่มีอีเมลใหม่"
+            return await gmail_agent.summarize_emails()
+
+        parts = cmd_args.split(None, 2)
+        sub = parts[0].lower()
+        if sub == "ask" and len(parts) > 1:
+            result = await run_ai(
+                source="telegram",
+                external_chat_id=chat_id,
+                text=" ".join(parts[1:]).strip(),
+                intent="gmail",
+                project_id=project_id,
+            )
+            return str(result.get("reply", "")).strip() or "ยังไม่มีคำตอบตอนนี้"
+        if sub == "draft" and len(parts) > 1:
+            return await gmail_agent.draft_reply(parts[1].strip())
+        if sub == "reply" and len(parts) > 2:
+            return await gmail_agent.reply_email(parts[1].strip(), parts[2].strip())
+        return await gmail_agent.summarize_emails()
+
+    if cmd_key == "content":
+        from app.core.ai_gateway import run_ai
+
+        result = await run_ai(
+            source="telegram",
+            external_chat_id=chat_id,
+            text=cmd_args or "สร้าง content สำหรับ TikTok/FB",
+            intent="content",
+            project_id=project_id,
+        )
+        return str(result.get("reply", "")).strip() or "ยังไม่มีคำตอบตอนนี้"
+
+    from app.agents.main_agent import MAIN_AGENT
+
+    return await MAIN_AGENT.handle(cmd_key, cmd_args, chat_id)
+
+
 async def _workspace_generate_reply(
     text: str,
     project_id: int | None,
     preferred_model: str | None = None,
 ) -> str:
+    from app.core.agents import COMMAND_AGENT_MAP
     from app.core.ai import _call_anthropic_with_tools, _call_groq_with_tools, chat, get_model_availability
     from app.core.memory import extract_and_store_long_term_memories
     from app.core.tools import TOOLS, execute_tool
@@ -4990,6 +5092,29 @@ async def _workspace_generate_reply(
         build_workspace_conversation_context,
         build_workspace_history_for_ai,
     )
+
+    try:
+        slash_reply = await _workspace_run_slash_command(text, project_id)
+    except Exception as exc:
+        parsed = _workspace_parse_slash_command(text)
+        agent_name = COMMAND_AGENT_MAP.get(parsed[0], "Agent") if parsed else "Agent"
+        slash_reply = f"⚠️ {agent_name} ทำงานไม่สำเร็จ: {exc}"
+
+    if slash_reply is not None:
+        final_reply = str(slash_reply).strip() or "ยังไม่มีคำตอบตอนนี้"
+        parsed = _workspace_parse_slash_command(text)
+        agent_model = COMMAND_AGENT_MAP.get(parsed[0], "agent") if parsed else "agent"
+        await _workspace_save_chat_messages(
+            project_id,
+            text,
+            final_reply,
+            model_used=agent_model,
+        )
+        try:
+            await extract_and_store_long_term_memories(text, final_reply)
+        except Exception:
+            pass
+        return final_reply
 
     chat_id = _workspace_user_id()
     memory_context = await build_workspace_conversation_context(
@@ -5830,6 +5955,67 @@ async def workspace_chat_stream(request: Request):
                 content=message,
                 project_id=project_id,
             )
+
+            from app.core.agents import COMMAND_AGENT_MAP
+
+            slash_reply: str | None = None
+            slash_agent = ""
+            try:
+                slash_reply = await _workspace_run_slash_command(message, project_id)
+                parsed = _workspace_parse_slash_command(message)
+                if parsed:
+                    slash_agent = COMMAND_AGENT_MAP.get(parsed[0], "agent")
+            except Exception as exc:
+                parsed = _workspace_parse_slash_command(message)
+                slash_agent = COMMAND_AGENT_MAP.get(parsed[0], "Agent") if parsed else "Agent"
+                slash_reply = f"⚠️ {slash_agent} ทำงานไม่สำเร็จ: {exc}"
+
+            if slash_reply is not None:
+                reply_text = str(slash_reply).strip() or "ยังไม่มีคำตอบตอนนี้"
+                model_used = slash_agent or "agent"
+                yield f"data: {json.dumps({'type': 'token', 'text': reply_text}, ensure_ascii=False)}\n\n"
+                assistant_message_id: int | None = None
+                async with get_db() as db:
+                    cur = await db.execute(
+                        """
+                        INSERT INTO messages (
+                            chat_id, conversation_id, role, content, project_id, source, model_used
+                        )
+                        VALUES (?, ?, ?, ?, ?, 'web', ?)
+                        """,
+                        (
+                            user_id,
+                            conversation_id,
+                            "assistant",
+                            reply_text,
+                            project_id,
+                            model_used,
+                        ),
+                    )
+                    assistant_message_id = cur.lastrowid
+                    await db.execute(
+                        "INSERT INTO audit_logs (action, details) VALUES (?, ?)",
+                        ("workspace_chat_stream_saved", f"project_id={project_id or 'all'}"),
+                    )
+                    await db.commit()
+                await index_workspace_message(
+                    message_id=assistant_message_id,
+                    chat_id=user_id,
+                    role="assistant",
+                    content=reply_text,
+                    project_id=project_id,
+                )
+
+                async def _post_slash_tasks() -> None:
+                    try:
+                        await extract_and_store_long_term_memories(message, reply_text)
+                    except Exception:
+                        pass
+
+                _asyncio.create_task(_post_slash_tasks())
+                model_label = slash_agent or "Agent"
+                yield f"data: {json.dumps({'type': 'done', 'model': model_used, 'model_label': model_label}, ensure_ascii=False)}\n\n"
+                return
 
             model_used = model
             if _is_cloud_llm_model_id(model):
