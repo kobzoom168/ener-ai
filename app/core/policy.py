@@ -43,6 +43,12 @@ OWNER_CONTEXT = """
 - ขายพระผ่าน TikTok/YouTube/Facebook
 - ใช้ Cursor + Claude Code เขียนโปรแกรม
 - server: Hetzner CPX22, domain: my-ener.uk
+- Projects บน server (path จริง — ห้ามเดา):
+  * ener-ai → /root/ener-ai (Python FastAPI, Telegram + workspace my-ener.uk)
+  * ener-scan → /root/ener-scan (Node.js Express + LINE bot วิเคราะห์พลังงานพระ/คริสตัล, report HTML, workers scan/delivery, PostgreSQL/Redis)
+  * ener-scan-pro → /root/ener-scan-pro (repo แยก เวอร์ชัน pro)
+- ener-scan ไม่ใช่ network scanner / nmap / port scan — ห้าม invent scanner.py, utils.py, ener_scan.db แบบ SQLite scan
+- เมื่อกบถาม ener-scan / ener-scan-pro (code, git, โครงสร้าง, feature, ทำอะไร) → เรียก get_project_structure(project=...) หรือ run_shell_command ก่อนตอบ ห้ามเดา stack หรือไฟล์
 """.strip()
 
 TASK_MODEL_MAP = {

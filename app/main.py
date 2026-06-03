@@ -5277,6 +5277,7 @@ WORKSPACE_TOOLS = [
     ("benchmark", "🏆 Benchmark"),
     ("code", "💻 Code"),
     ("system", "⚙️ System"),
+    ("office", "🏢 Office"),
 ]
 
 WORKSPACE_MODEL_GROUPS: list[tuple[str, list[tuple[str, str]]]] = []
@@ -5477,6 +5478,88 @@ async def _workspace_sidebar_stats() -> dict:
     }
 
 
+async def _load_office_status() -> dict:
+    import datetime
+
+    from app.core.agents import OFFICE_AGENTS
+
+    async with get_db() as db:
+        cur = await db.execute(
+            """
+            SELECT agent_name,
+                   MAX(created_at) AS last_run,
+                   COUNT(*) AS total_runs,
+                   SUM(CASE WHEN success=1 THEN 1 ELSE 0 END) AS success_count,
+                   SUM(CASE WHEN DATE(created_at)=DATE('now') THEN 1 ELSE 0 END) AS runs_today
+            FROM agent_runs
+            GROUP BY agent_name
+            """
+        )
+        rows = await cur.fetchall()
+        agent_stats = {r["agent_name"]: dict(r) for r in rows}
+
+        task_cur = await db.execute(
+            "SELECT status, COUNT(*) AS cnt FROM tasks GROUP BY status"
+        )
+        task_rows = await task_cur.fetchall()
+        task_summary = {r["status"]: r["cnt"] for r in task_rows}
+
+        open_cur = await db.execute(
+            """
+            SELECT id, title, priority, status, tags FROM tasks
+            WHERE status NOT IN ('done', 'cancelled')
+            ORDER BY CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END
+            LIMIT 10
+            """
+        )
+        open_tasks = [dict(r) for r in await open_cur.fetchall()]
+
+    now = datetime.datetime.utcnow()
+    agents_out = []
+    for name, emoji, short, role in OFFICE_AGENTS:
+        stats = agent_stats.get(name, {})
+        last_run_str = stats.get("last_run")
+        if last_run_str:
+            try:
+                last_dt = datetime.datetime.fromisoformat(str(last_run_str).replace("Z", ""))
+                diff_min = (now - last_dt).total_seconds() / 60
+                if diff_min < 60:
+                    status = "active"
+                elif diff_min < 1440:
+                    status = "idle"
+                else:
+                    status = "offline"
+                last_label = (
+                    f"{int(diff_min)}m ago"
+                    if diff_min < 60
+                    else f"{int(diff_min / 60)}h ago"
+                )
+            except Exception:
+                status = "offline"
+                last_label = "-"
+        else:
+            status = "offline"
+            last_label = "ไม่เคยรัน"
+        agents_out.append(
+            {
+                "name": name,
+                "emoji": emoji,
+                "short": short,
+                "role": role,
+                "status": status,
+                "last_label": last_label,
+                "runs_today": int(stats.get("runs_today") or 0),
+            }
+        )
+
+    return {
+        "agents": agents_out,
+        "task_open": int(task_summary.get("open", 0) or 0),
+        "task_pending": int(task_summary.get("pending_approval", 0) or 0),
+        "open_tasks": open_tasks,
+    }
+
+
 @app.get("/workspace")
 async def workspace_page(
     request: Request,
@@ -5512,6 +5595,7 @@ async def workspace_page(
     )
     await _workspace_enrich_message_models(recent_messages)
     chat_dates = await _workspace_chat_dates()
+    office = await _load_office_status()
 
     return templates.TemplateResponse(
         "workspace.html",
@@ -5538,6 +5622,7 @@ async def workspace_page(
             "show_all": show_all,
             "today_key": today_key,
             "today_label": _format_chat_date_label(today_key),
+            "office": office,
         },
     )
 

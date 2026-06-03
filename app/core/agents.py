@@ -54,6 +54,25 @@ SCHEDULER_AGENTS = {
     "news_discovery": "NewsDiscoveryAgent",
 }
 
+OFFICE_AGENTS = [
+    ("MainChatAgent", "💬", "Chat", "ตอบคำถาม, คุยทั่วไป"),
+    ("CodeAgent", "💻", "Code", "เขียน/แก้ code, Cursor prompt"),
+    ("NewsAgent", "📰", "News", "ดึงข่าว AI/Tech/Security"),
+    ("GmailAgent", "📧", "Gmail", "อ่าน/สรุป email"),
+    ("MemoryAgent", "🧠", "Memory", "จำ, ค้นหา, memory"),
+    ("MonitorAgent", "🖥️", "Monitor", "ตรวจ server, logs, errors"),
+    ("EnerAgent", "⚡", "Ener", "วิเคราะห์พระ, ener scan"),
+    ("ContentAgent", "✍️", "Content", "เขียน content TikTok/FB"),
+    ("DigestAgent", "📋", "Digest", "สรุปวัน, weekly review"),
+    ("TarotAgent", "🔮", "Tarot", "ไพ่ทาโรต์, ดวง"),
+    ("TaskAgent", "✅", "Tasks", "จัดการ tasks, todo"),
+    ("SessionAgent", "📅", "Session", "บันทึก session log"),
+    ("BriefingAgent", "📊", "Briefing", "สรุปสถานการณ์"),
+    ("GithubAgent", "🐙", "GitHub", "ดู repos, commits"),
+    ("LogKeeper", "📝", "Logs", "บันทึก health log"),
+    ("ThinkTeam", "🧩", "Think", "brainstorm, วิเคราะห์"),
+]
+
 _AGENT_AI_MAP = {
     "NoteAgent": "brain",
     "MainChatAgent": "chat",
