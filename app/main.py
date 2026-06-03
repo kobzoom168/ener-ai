@@ -339,6 +339,24 @@ def _realtime_metrics() -> dict:
     }
 
 
+def _workspace_resource_stats() -> dict:
+    memory = psutil.virtual_memory()
+    disk = psutil.disk_usage("/")
+
+    def _gb(value: int | float) -> float:
+        return round(float(value) / (1024**3), 1)
+
+    return {
+        "cpu_percent": round(float(psutil.cpu_percent()), 1),
+        "ram_percent": round(float(memory.percent), 1),
+        "ram_used_gb": _gb(memory.used),
+        "ram_total_gb": _gb(memory.total),
+        "disk_percent": round(float(disk.percent), 1),
+        "disk_used_gb": _gb(disk.used),
+        "disk_total_gb": _gb(disk.total),
+    }
+
+
 def _admin_unauthorized() -> HTTPException:
     return HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": "Basic"})
 
@@ -5469,6 +5487,7 @@ async def workspace_page(
         "usage_usd": round(or_usage_usd, 4) if or_usage_usd is not None else None,
         "credits_usd": round(or_credits_usd, 2) if or_credits_usd is not None else None,
     }
+    system_resource_stats = _workspace_resource_stats()
     total_messages, projects = await _workspace_projects_for_page()
     stats = {**stats, "messages": total_messages}
 
@@ -5490,6 +5509,7 @@ async def workspace_page(
             "stats": stats,
             "featherless_stats": featherless_stats,
             "openrouter_stats": openrouter_stats,
+            "system_resource_stats": system_resource_stats,
             "projects": projects,
             "active_model": get_model_label(active_model_key or ""),
             "active_model_key": active_model_key or "",
