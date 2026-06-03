@@ -5346,26 +5346,20 @@ async def _workspace_openrouter_model_groups() -> tuple[
     list[tuple[str, list[tuple[str, str]]]],
     list[tuple[str, str]],
 ]:
-    from app.core.featherless_client import (
-        FEATHERLESS_KEYS,
-        FEATHERLESS_LABELS,
-        featherless_available,
-    )
+    from app.core.featherless_client import FEATHERLESS_KEYS, FEATHERLESS_LABELS
     from app.core.openrouter_client import list_openrouter_models
-    from app.core.venice_client import VENICE_KEYS, VENICE_LABELS, venice_available
+    from app.core.venice_client import VENICE_KEYS, VENICE_LABELS
 
     groups: list[tuple[str, list[tuple[str, str]]]] = []
     flat: list[tuple[str, str]] = []
 
     featherless_options = [(k, FEATHERLESS_LABELS[k]) for k in FEATHERLESS_KEYS]
-    if await featherless_available():
-        groups.append(("Featherless.ai (Uncensored)", featherless_options))
-        flat.extend(featherless_options)
+    groups.append(("Featherless.ai (Uncensored)", featherless_options))
+    flat.extend(featherless_options)
 
     venice_options = [(k, VENICE_LABELS[k]) for k in VENICE_KEYS]
-    if await venice_available():
-        groups.append(("Venice.ai (Uncensored)", venice_options))
-        flat.extend(venice_options)
+    groups.append(("Venice.ai (Uncensored)", venice_options))
+    flat.extend(venice_options)
 
     options = await list_openrouter_models()
     groups.append(("OpenRouter (Cloud)", options))
@@ -5416,7 +5410,6 @@ async def workspace_page(
             "active_model_key": active_model_key or "",
             "model_options": model_options,
             "model_option_groups": model_groups,
-            "model_option_groups": WORKSPACE_MODEL_GROUPS,
             "tools": WORKSPACE_TOOLS,
             "recent_messages": recent_messages,
             "project_id": normalized_project_id,
