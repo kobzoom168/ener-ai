@@ -644,6 +644,36 @@ document.addEventListener('DOMContentLoaded', function() {
     if (previewImg) previewImg.src = '';
   }
 
+  function extractClipboardImageFile(clipboardData) {
+    if (!clipboardData) return null;
+    const items = clipboardData.items;
+    if (items) {
+      for (let i = 0; i < items.length; i += 1) {
+        const item = items[i];
+        if (item.kind === 'file' && String(item.type || '').startsWith('image/')) {
+          return item.getAsFile();
+        }
+      }
+    }
+    const files = clipboardData.files;
+    if (files && files.length) {
+      for (let i = 0; i < files.length; i += 1) {
+        if (String(files[i].type || '').startsWith('image/')) return files[i];
+      }
+    }
+    return null;
+  }
+
+  function attachClipboardImagePaste(el) {
+    if (!el) return;
+    el.addEventListener('paste', (event) => {
+      const file = extractClipboardImageFile(event.clipboardData);
+      if (!file) return;
+      event.preventDefault();
+      setPendingImage(file);
+    });
+  }
+
   async function sendMessage() {
     if (!chatInput) return;
     const msg = chatInput.value.trim();
@@ -1359,6 +1389,8 @@ document.addEventListener('DOMContentLoaded', function() {
       if (file) setPendingImage(file);
     });
   }
+
+  attachClipboardImagePaste(chatInput);
 
   window.clearImage = clearPendingImage;
   window.previewImage = function(input) {
