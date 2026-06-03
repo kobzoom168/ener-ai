@@ -110,6 +110,28 @@ def _http_error_detail(exc: httpx.HTTPStatusError) -> str:
     return f"HTTP {status}: {body[:500]}"
 
 
+def _usage_counts(data: dict[str, Any]) -> tuple[int, int]:
+    usage = data.get("usage") or {}
+    prompt_tokens = int(usage.get("prompt_tokens") or 0)
+    completion_tokens = int(usage.get("completion_tokens") or 0)
+    return prompt_tokens, completion_tokens
+
+
+def _apply_usage_from_chunk(
+    chunk: dict[str, Any],
+    prompt_tokens: int,
+    completion_tokens: int,
+) -> tuple[int, int]:
+    usage = chunk.get("usage") or {}
+    if not usage:
+        return prompt_tokens, completion_tokens
+    if usage.get("prompt_tokens") is not None:
+        prompt_tokens = int(usage.get("prompt_tokens") or 0)
+    if usage.get("completion_tokens") is not None:
+        completion_tokens = int(usage.get("completion_tokens") or 0)
+    return prompt_tokens, completion_tokens
+
+
 def _stream_delta_text(delta: dict[str, Any]) -> str:
     content = (delta or {}).get("content")
     if isinstance(content, str):
@@ -174,12 +196,14 @@ async def call_featherless(
                 json=payload,
             )
             response.raise_for_status()
-            text = _parse_completion(response.json())
+            data = response.json()
+            text = _parse_completion(data)
+            prompt_tokens, completion_tokens = _usage_counts(data)
         await _log_ai_run(
             agent,
             model_key,
-            0,
-            0,
+            prompt_tokens,
+            completion_tokens,
             int((time.perf_counter() - started_at) * 1000),
             True,
         )
@@ -239,6 +263,8 @@ async def stream_featherless(
     }
 
     started_at = time.perf_counter()
+    prompt_tokens = 0
+    completion_tokens = 0
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             async with client.stream(
@@ -260,6 +286,9 @@ async def stream_featherless(
                         chunk = json.loads(data)
                     except json.JSONDecodeError:
                         continue
+                    prompt_tokens, completion_tokens = _apply_usage_from_chunk(
+                        chunk, prompt_tokens, completion_tokens
+                    )
                     choices = chunk.get("choices") or []
                     if not choices:
                         continue
@@ -271,8 +300,8 @@ async def stream_featherless(
         await _log_ai_run(
             agent,
             model_key,
-            0,
-            0,
+            prompt_tokens,
+            completion_tokens,
             int((time.perf_counter() - started_at) * 1000),
             True,
         )

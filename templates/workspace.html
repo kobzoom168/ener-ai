@@ -657,6 +657,24 @@
       </div>
     </div>
 
+    {% if featherless_stats and (featherless_stats.calls > 0 or featherless_stats.calls_today > 0) %}
+    <div class="mx-3 mb-3 rounded-lg px-3 py-2.5" style="background: oklch(0.19 0.02 280); border: 1px solid oklch(0.30 0.05 280);">
+      <div class="flex items-center gap-1.5 mb-1.5">
+        <span style="font-size:10px; background: oklch(0.45 0.20 280); color:white; border-radius:4px; padding:1px 5px; font-weight:600; letter-spacing:0.03em;">F</span>
+        <span style="font-size:11px; font-weight:600; color: oklch(0.85 0.05 280);">Featherless</span>
+        <span style="font-size:9px; color: oklch(0.55 0.15 280); margin-left:auto;">Unlimited</span>
+      </div>
+      <div class="flex justify-between" style="font-size:10px; color: var(--muted-foreground);">
+        <span>วันนี้</span>
+        <span style="color: oklch(0.80 0.05 280);">{{ featherless_stats.calls_today }} calls</span>
+      </div>
+      <div class="flex justify-between mt-0.5" style="font-size:10px; color: var(--muted-foreground);">
+        <span>รวม</span>
+        <span style="color: oklch(0.75 0.03 280);">{{ featherless_stats.calls }} calls · {{ "{:,}".format(featherless_stats.in_tokens + featherless_stats.out_tokens) }} tok</span>
+      </div>
+    </div>
+    {% endif %}
+
     <div class="border-t p-3" style="border-color: var(--border);">
       <span id="active-model-badge" class="ws-model-pill">{{ active_model }}</span>
     </div>

@@ -5386,6 +5386,32 @@ async def workspace_page(
     today_key = _workspace_today_key()
 
     stats = await get_system_stats()
+    async with get_db() as db:
+        fl_cur = await db.execute(
+            """
+            SELECT COUNT(*) AS calls,
+                   COALESCE(SUM(prompt_tokens), 0) AS in_tokens,
+                   COALESCE(SUM(completion_tokens), 0) AS out_tokens
+            FROM ai_runs
+            WHERE model IN ('featherless-abliterated', 'featherless-gemma')
+            """
+        )
+        fl_row = await fl_cur.fetchone()
+        fl_today_cur = await db.execute(
+            """
+            SELECT COUNT(*) AS calls
+            FROM ai_runs
+            WHERE model IN ('featherless-abliterated', 'featherless-gemma')
+              AND DATE(created_at) = DATE('now')
+            """
+        )
+        fl_today_row = await fl_today_cur.fetchone()
+    featherless_stats = {
+        "calls": int(fl_row["calls"] or 0) if fl_row else 0,
+        "calls_today": int(fl_today_row["calls"] or 0) if fl_today_row else 0,
+        "in_tokens": int(fl_row["in_tokens"] or 0) if fl_row else 0,
+        "out_tokens": int(fl_row["out_tokens"] or 0) if fl_row else 0,
+    }
     total_messages, projects = await _workspace_projects_for_page()
     stats = {**stats, "messages": total_messages}
 
@@ -5405,6 +5431,7 @@ async def workspace_page(
             "request": request,
             "tool": normalized_tool,
             "stats": stats,
+            "featherless_stats": featherless_stats,
             "projects": projects,
             "active_model": get_model_label(active_model_key or ""),
             "active_model_key": active_model_key or "",
