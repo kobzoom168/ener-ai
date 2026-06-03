@@ -50,7 +50,7 @@ TASK_MODEL_MAP = {
     "security": "dolphin",
     "hacking": "dolphin",
     "exploit": "dolphin",
-    "uncensored": "dolphin",
+    "uncensored": "venice-abliterated",
     "news": "gemini-3-flash",
     "newsdiscovery": "haiku",
     "gmail": "gemini-flash-lite",

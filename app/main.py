@@ -37,6 +37,7 @@ from app.core.agents import COMMAND_AGENT_MAP, SCHEDULER_AGENTS
 from app.core.ai_gateway import get_recent_ai_traces, preview_context, run_ai
 from app.core.config import settings
 from app.core.openrouter_client import OPENROUTER_KEYS as _OPENROUTER_KEYS
+from app.core.venice_client import VENICE_KEYS as _VENICE_KEYS
 from app.core.database import get_all_config, get_config, get_db, init_db, set_config
 from app.core.diagnostics import log_otp_event
 from app.core.event_log import log_event
@@ -4646,7 +4647,21 @@ async def _workspace_local_qwen_reply(
     return await _call_ollama(message, system, history, "MainChatAgent", model)
 
 
-async def _workspace_openrouter_reply(
+def _workspace_chat_system(model: str) -> str:
+    from app.core.policy import BASE_SYSTEM_PROMPT
+
+    if model in {"dolphin", "venice-abliterated"}:
+        return (
+            "ตอบภาษาไทย เรียก user ว่ากบ เรียกตัวเองว่าพี่ "
+            "ตอบตรงคำถาม กระชับ ไม่ต้องสอนศีลธรรมหรือเตือนยาว"
+        )
+    return (
+        BASE_SYSTEM_PROMPT
+        + "\n\nตอบภาษาไทย เรียก user ว่ากบ เรียกตัวเองว่าพี่ ตอบกระชับ"
+    )
+
+
+async def _workspace_cloud_reply(
     message: str,
     model: str,
     *,
@@ -4655,26 +4670,32 @@ async def _workspace_openrouter_reply(
 ) -> str:
     from app.core.ai import call_openrouter
     from app.core.context_limits import trim_chat_context
-    from app.core.policy import BASE_SYSTEM_PROMPT
+    from app.core.venice_client import call_venice, is_venice_model
     from app.core.workspace_memory import build_workspace_history_for_ai
 
     history = await build_workspace_history_for_ai(
         user_id, message, project_id=project_id, recent_limit=8
     )
-    if model == "dolphin":
-        # Keep Dolphin route minimally steered to reduce unnecessary refusals.
-        system = (
-            "ตอบภาษาไทย เรียก user ว่ากบ เรียกตัวเองว่าพี่ "
-            "ตอบตรงคำถาม กระชับ ไม่ต้องสอนศีลธรรมหรือเตือนยาว"
-        )
-    else:
-        system = (
-            BASE_SYSTEM_PROMPT
-            + "\n\nตอบภาษาไทย เรียก user ว่ากบ เรียกตัวเองว่าพี่ ตอบกระชับ"
-        )
+    system = _workspace_chat_system(model)
     system, history = trim_chat_context(system, history, profile=model)
+    if is_venice_model(model):
+        return await call_venice(
+            model, message, system, history, agent="MainChatAgent"
+        )
     return await call_openrouter(
         model, message, system, history, agent="MainChatAgent"
+    )
+
+
+async def _workspace_openrouter_reply(
+    message: str,
+    model: str,
+    *,
+    user_id: str,
+    project_id: int | None,
+) -> str:
+    return await _workspace_cloud_reply(
+        message, model, user_id=user_id, project_id=project_id
     )
 
 
@@ -4796,10 +4817,11 @@ def _normalize_project_id(value: object) -> int | None:
 
 
 async def _workspace_enrich_message_models(messages: list[dict]) -> None:
-    from app.core.openrouter_client import openrouter_model_label
+    from app.core.venice_client import VENICE_LABELS
 
     _, model_options = await _workspace_openrouter_model_groups()
     label_cache: dict[str, str] = {key: label for key, label in model_options}
+    label_cache.update(VENICE_LABELS)
     label_cache["system"] = "System"
     for msg in messages:
         if msg.get("role") != "assistant":
@@ -4810,7 +4832,7 @@ async def _workspace_enrich_message_models(messages: list[dict]) -> None:
         if used in label_cache:
             msg["model_label"] = label_cache[used]
             continue
-        resolved = await openrouter_model_label(used)
+        resolved = await _workspace_model_label(used)
         label_cache[used] = resolved
         msg["model_label"] = resolved
 
@@ -5229,9 +5251,33 @@ WORKSPACE_MODEL_OPTIONS: list[tuple[str, str]] = []
 _VALID_WORKSPACE_TOOLS = {tool_id for tool_id, _ in WORKSPACE_TOOLS}
 
 
+def _is_venice_model_id(model: str) -> bool:
+    from app.core.venice_client import is_venice_model
+
+    return is_venice_model(model)
+
+
 def _is_openrouter_model_id(model: str) -> bool:
     key = str(model or "").strip().lower()
     return bool(key and ("/" in key or key in _OPENROUTER_KEYS))
+
+
+def _is_cloud_llm_model_id(model: str) -> bool:
+    return _is_venice_model_id(model) or _is_openrouter_model_id(model)
+
+
+async def _workspace_model_label(model_used: str) -> str:
+    from app.core.openrouter_client import openrouter_model_label
+    from app.core.venice_client import venice_model_label
+
+    mid = str(model_used or "").strip()
+    if not mid:
+        return "Ener-AI"
+    if mid == "system":
+        return "System"
+    if _is_venice_model_id(mid):
+        return await venice_model_label(mid)
+    return await openrouter_model_label(mid)
 
 
 async def _workspace_projects_for_page() -> tuple[int, list[dict]]:
@@ -5275,10 +5321,19 @@ async def _workspace_openrouter_model_groups() -> tuple[
     list[tuple[str, str]],
 ]:
     from app.core.openrouter_client import list_openrouter_models
+    from app.core.venice_client import VENICE_KEYS, VENICE_LABELS, venice_available
 
+    venice_options = [(k, VENICE_LABELS[k]) for k in VENICE_KEYS]
+    if await venice_available():
+        groups: list[tuple[str, list[tuple[str, str]]]] = [
+            ("Venice.ai (Uncensored)", venice_options),
+        ]
+    else:
+        groups = []
     options = await list_openrouter_models()
-    groups = [("OpenRouter (Cloud)", options)]
-    return groups, options
+    groups.append(("OpenRouter (Cloud)", options))
+    flat = venice_options + options
+    return groups, flat
 
 
 @app.get("/workspace")
@@ -5462,15 +5517,13 @@ async def workspace_chat_send(request: Request):
             reply = format_nl_resource_report(get_server_stats())
             model_used = "system"
         else:
-            reply = await _workspace_openrouter_reply(
+            reply = await _workspace_cloud_reply(
                 text,
                 model,
                 user_id=_workspace_user_id(),
                 project_id=project_id,
             )
-        from app.core.openrouter_client import openrouter_model_label
-
-        model_label = await openrouter_model_label(model_used)
+        model_label = await _workspace_model_label(model_used)
         await _workspace_save_chat_messages(
             project_id, text, reply, model_used=model_used
         )
@@ -5540,10 +5593,10 @@ async def workspace_chat_stream(request: Request):
             )
 
             model_used = model
-            if _is_openrouter_model_id(model):
+            if _is_cloud_llm_model_id(model):
                 from app.core.context_limits import trim_chat_context
-                from app.core.openrouter_client import openrouter_model_label, stream_openrouter
-                from app.core.policy import BASE_SYSTEM_PROMPT
+                from app.core.openrouter_client import stream_openrouter
+                from app.core.venice_client import is_venice_model, stream_venice
                 from app.core.workspace_memory import build_workspace_history_for_ai
 
                 if _is_simple_cpu_query(message):
@@ -5559,19 +5612,11 @@ async def workspace_chat_stream(request: Request):
                     history = await build_workspace_history_for_ai(
                         user_id, message, project_id=project_id, recent_limit=8
                     )
-                    if model == "dolphin":
-                        system = (
-                            "ตอบภาษาไทย เรียก user ว่ากบ เรียกตัวเองว่าพี่ "
-                            "ตอบตรงคำถาม กระชับ ไม่ต้องสอนศีลธรรมหรือเตือนยาว"
-                        )
-                    else:
-                        system = (
-                            BASE_SYSTEM_PROMPT
-                            + "\n\nตอบภาษาไทย เรียก user ว่ากบ เรียกตัวเองว่าพี่ ตอบกระชับ"
-                        )
+                    system = _workspace_chat_system(model)
                     system, history = trim_chat_context(system, history, profile=model)
                     streamed: list[str] = []
-                    async for token in stream_openrouter(
+                    stream_fn = stream_venice if is_venice_model(model) else stream_openrouter
+                    async for token in stream_fn(
                         model,
                         message,
                         system,
@@ -5629,7 +5674,7 @@ async def workspace_chat_stream(request: Request):
                         pass
 
                 _asyncio.create_task(_post_openrouter_tasks())
-                model_label = await openrouter_model_label(model_used)
+                model_label = await _workspace_model_label(model_used)
                 yield f"data: {json.dumps({'type': 'done', 'model': model_used, 'model_label': model_label}, ensure_ascii=False)}\n\n"
                 return
 
@@ -5730,7 +5775,7 @@ async def workspace_chat_stream(request: Request):
                         "assistant",
                         reply_text,
                         project_id,
-                        model_used if _is_openrouter_model_id(model) else None,
+                        model_used if _is_cloud_llm_model_id(model) else None,
                     ),
                 )
                 assistant_message_id = cur.lastrowid
@@ -5768,6 +5813,8 @@ async def workspace_chat_stream(request: Request):
 
             if model in _WORKSPACE_LOCAL_MODELS:
                 detail = format_ollama_error(exc)
+            elif _is_venice_model_id(model):
+                detail = f"Venice error: {exc}"
             elif model in _OPENROUTER_KEYS or _is_openrouter_model_id(model):
                 detail = f"OpenRouter error: {exc}"
             else:
@@ -8340,10 +8387,16 @@ async def admin_config_update(request: Request):
         raise HTTPException(status_code=400, detail="key required")
     if key == "active_model":
         allowed = {"auto"}
-        if value not in allowed and not _is_openrouter_model_id(value):
+        if value not in allowed and not _is_cloud_llm_model_id(value):
             raise HTTPException(status_code=400, detail="active_model ไม่ถูกต้อง")
-        if value != "auto" and not settings.openrouter_api_key:
-            raise HTTPException(status_code=400, detail="OpenRouter ยังไม่มี key")
+        if value != "auto":
+            from app.core.venice_client import venice_available
+
+            if _is_venice_model_id(value):
+                if not await venice_available():
+                    raise HTTPException(status_code=400, detail="Venice ยังไม่มี key")
+            elif not settings.openrouter_api_key:
+                raise HTTPException(status_code=400, detail="OpenRouter ยังไม่มี key")
     await set_config(key, value)
     async with get_db() as db:
         await db.execute(
@@ -8847,9 +8900,14 @@ async def admin_switch_model(request: Request):
     await _require_admin(request)
     form_data = parse_qs((await request.body()).decode("utf-8"))
     model = form_data.get("model", [""])[0].strip().lower()
-    if not _is_openrouter_model_id(model):
+    if not _is_cloud_llm_model_id(model):
         raise HTTPException(status_code=400, detail="โมเดลไม่ถูกต้อง")
-    if not settings.openrouter_api_key:
+    if _is_venice_model_id(model):
+        from app.core.venice_client import venice_available
+
+        if not await venice_available():
+            raise HTTPException(status_code=400, detail="Venice ยังไม่มี key")
+    elif not settings.openrouter_api_key:
         raise HTTPException(status_code=400, detail="OpenRouter ยังไม่มี key")
 
     await set_config("active_model", model)

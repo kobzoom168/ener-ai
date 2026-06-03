@@ -137,7 +137,7 @@ def route_fast(text: str, routing: dict[str, str] | None = None) -> dict:
             r.get("security")
             or r.get("hacking")
             or r.get("exploit")
-            or "dolphin"
+            or "venice-abliterated"
         )
         return {
             "complexity": "complex",
@@ -155,7 +155,7 @@ def route_fast(text: str, routing: dict[str, str] | None = None) -> dict:
                 "search_memory",
             ],
             "needs_check": False,
-            "reason": "security / pentest — OpenRouter Dolphin (uncensored)",
+            "reason": "security / pentest — Venice abliterated (uncensored)",
         }
 
     if any(k in t for k in ["container", "docker ps", "containers", "docker compose", "ปกติไหม"]):

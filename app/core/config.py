@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
 
+    venice_api_key: str = ""
+    venice_base_url: str = "https://api.venice.ai/api/v1"
+
+    venice_api_key: str = ""
+    venice_base_url: str = "https://api.venice.ai/api/v1"
+
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "qwen2.5:7b"
 
