@@ -36,7 +36,10 @@ from app.core.ai import get_active_model, get_model_availability, get_model_labe
 from app.core.agents import COMMAND_AGENT_MAP, SCHEDULER_AGENTS
 from app.core.ai_gateway import get_recent_ai_traces, preview_context, run_ai
 from app.core.config import settings
-from app.core.openrouter_client import OPENROUTER_KEYS as _OPENROUTER_KEYS
+from app.core.openrouter_client import (
+    OPENROUTER_KEYS as _OPENROUTER_KEYS,
+    get_openrouter_api_key,
+)
 from app.core.venice_client import VENICE_KEYS as _VENICE_KEYS
 from app.core.featherless_client import FEATHERLESS_KEYS as _FEATHERLESS_KEYS
 from app.core.database import get_all_config, get_config, get_db, init_db, set_config
@@ -5406,11 +5409,65 @@ async def workspace_page(
             """
         )
         fl_today_row = await fl_today_cur.fetchone()
+
+        or_model_keys = list(_OPENROUTER_KEYS)
+        placeholders = ",".join("?" * len(or_model_keys))
+        or_cur = await db.execute(
+            f"""
+            SELECT COUNT(*) AS calls,
+                   COALESCE(SUM(prompt_tokens), 0) AS in_tokens,
+                   COALESCE(SUM(completion_tokens), 0) AS out_tokens
+            FROM ai_runs
+            WHERE model IN ({placeholders})
+            """,
+            or_model_keys,
+        )
+        or_row = await or_cur.fetchone()
+        or_today_cur = await db.execute(
+            f"""
+            SELECT COUNT(*) AS calls,
+                   COALESCE(SUM(prompt_tokens), 0) AS in_tokens,
+                   COALESCE(SUM(completion_tokens), 0) AS out_tokens
+            FROM ai_runs
+            WHERE model IN ({placeholders})
+              AND DATE(created_at) = DATE('now')
+            """,
+            or_model_keys,
+        )
+        or_today_row = await or_today_cur.fetchone()
     featherless_stats = {
         "calls": int(fl_row["calls"] or 0) if fl_row else 0,
         "calls_today": int(fl_today_row["calls"] or 0) if fl_today_row else 0,
         "in_tokens": int(fl_row["in_tokens"] or 0) if fl_row else 0,
         "out_tokens": int(fl_row["out_tokens"] or 0) if fl_row else 0,
+    }
+    or_credits_usd: float | None = None
+    or_usage_usd: float | None = None
+    try:
+        or_key = await get_openrouter_api_key()
+        if or_key:
+            async with httpx.AsyncClient(timeout=5.0) as or_client:
+                or_resp = await or_client.get(
+                    "https://openrouter.ai/api/v1/auth/key",
+                    headers={"Authorization": f"Bearer {or_key}"},
+                )
+                if or_resp.status_code == 200:
+                    or_data = or_resp.json().get("data") or {}
+                    or_usage_usd = float(or_data.get("usage") or 0)
+                    or_limit = or_data.get("limit")
+                    if or_limit:
+                        or_credits_usd = float(or_limit) - or_usage_usd
+    except Exception:
+        pass
+    openrouter_stats = {
+        "calls": int(or_row["calls"] or 0) if or_row else 0,
+        "calls_today": int(or_today_row["calls"] or 0) if or_today_row else 0,
+        "in_tokens": int(or_row["in_tokens"] or 0) if or_row else 0,
+        "out_tokens": int(or_today_row["in_tokens"] or 0) + int(or_today_row["out_tokens"] or 0)
+        if or_today_row
+        else 0,
+        "usage_usd": round(or_usage_usd, 4) if or_usage_usd is not None else None,
+        "credits_usd": round(or_credits_usd, 2) if or_credits_usd is not None else None,
     }
     total_messages, projects = await _workspace_projects_for_page()
     stats = {**stats, "messages": total_messages}
@@ -5432,6 +5489,7 @@ async def workspace_page(
             "tool": normalized_tool,
             "stats": stats,
             "featherless_stats": featherless_stats,
+            "openrouter_stats": openrouter_stats,
             "projects": projects,
             "active_model": get_model_label(active_model_key or ""),
             "active_model_key": active_model_key or "",
