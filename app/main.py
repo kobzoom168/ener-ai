@@ -5391,7 +5391,7 @@ async def ai_event(request: Request):
 
 
 WORKSPACE_TOOLS = [
-    ("secretary", "👩‍💼 เลขา"),
+    ("office", "👩‍💼 เลขา"),
     ("chat", "💬 Chat"),
     ("notes", "📝 Notes"),
     ("tasks", "✅ Tasks"),
@@ -5403,7 +5403,6 @@ WORKSPACE_TOOLS = [
     ("benchmark", "🏆 Benchmark"),
     ("code", "💻 Code"),
     ("system", "⚙️ System"),
-    ("office", "🏢 Office"),
 ]
 
 WORKSPACE_MODEL_GROUPS: list[tuple[str, list[tuple[str, str]]]] = []
@@ -5699,6 +5698,8 @@ async def workspace_page(
     from app.core.database import get_system_stats
 
     normalized_tool = str(tool or "chat").strip().lower()
+    if normalized_tool == "secretary":
+        normalized_tool = "office"
     if normalized_tool not in _VALID_WORKSPACE_TOOLS:
         normalized_tool = "chat"
     normalized_project_id = _normalize_project_id(project_id)

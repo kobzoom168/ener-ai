@@ -236,6 +236,77 @@
       background: oklch(0.26 0.08 150);
     }
 
+    .office-agent-card--secretary {
+      border-color: oklch(0.45 0.12 280);
+      box-shadow: 0 0 0 1px oklch(0.45 0.12 280 / 0.35);
+    }
+
+    #panel-office.office-panel {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      height: 100%;
+    }
+
+    #panel-office .office-body {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    #panel-office .office-agents-section {
+      flex-shrink: 0;
+      overflow-y: auto;
+      padding: 0 32px 12px;
+      max-height: 42vh;
+    }
+
+    #panel-office #office-secretary {
+      flex: 1;
+      min-height: 280px;
+      display: flex;
+      flex-direction: column;
+      border-top: 1px solid oklch(0.25 0.01 250);
+      background: oklch(0.15 0.01 250);
+    }
+
+    #panel-office .office-secretary-header {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1.5rem 0.25rem;
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: var(--foreground);
+    }
+
+    #panel-office .office-secretary-messages {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+    }
+
+    #panel-office .office-secretary-welcome {
+      padding: 1.5rem 1rem;
+    }
+
+    #panel-office .office-secretary-composer {
+      flex-shrink: 0;
+      padding-bottom: 0.75rem;
+      background: linear-gradient(to top, oklch(0.15 0.01 250) 70%, transparent);
+    }
+
+    #panel-office #office-secretary.ws-chat-empty .office-secretary-welcome {
+      display: flex;
+    }
+
+    #panel-office #office-secretary.ws-has-messages .office-secretary-welcome {
+      display: none !important;
+    }
+
     .panel-header {
       display: flex;
       justify-content: space-between;

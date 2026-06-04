@@ -55,6 +55,7 @@ SCHEDULER_AGENTS = {
 }
 
 OFFICE_AGENTS = [
+    ("SecretaryAgent", "👩‍💼", "เลขา", "เลขาส่วนตัว — จัดการทุกอย่างให้"),
     ("MainChatAgent", "💬", "Chat", "ตอบคำถาม, คุยทั่วไป"),
     ("CodeAgent", "💻", "Code", "เขียน/แก้ code, Cursor prompt"),
     ("NewsAgent", "📰", "News", "ดึงข่าว AI/Tech/Security"),
@@ -74,6 +75,7 @@ OFFICE_AGENTS = [
 ]
 
 OFFICE_AGENT_CHAT_CMDS: dict[str, str] = {
+    "SecretaryAgent": "",
     "MainChatAgent": "",
     "CodeAgent": "/code ",
     "NewsAgent": "/news ",
@@ -115,6 +117,7 @@ _AGENT_AI_MAP = {
     "GmailAgent": "gmail",
     "NewsDiscoveryAgent": "newsdiscovery",
     "TarotAgent": "tarot",
+    "SecretaryAgent": "secretary",
 }
 
 

@@ -1,32 +1,4 @@
 <main id="content">
-    <div id="panel-secretary" class="panel ws-chat-panel ws-chat-empty{% if tool == 'secretary' %} active-panel{% endif %}"{% if tool != 'secretary' %} style="display:none"{% endif %}>
-      <div id="secretary-messages" class="ws-chat-messages">
-        <div class="ws-chat-inner">
-          <div id="secretary-welcome" class="ws-chat-welcome">
-            <p style="font-size:2.5rem; margin-bottom:0.5rem; line-height:1;">👩‍💼</p>
-            <h2 class="ws-welcome-title" style="font-size:1.125rem; font-weight:500; margin:0 0 0.25rem;">สวัสดีค่ะ คุณกบ</h2>
-            <p style="color:var(--muted-foreground); font-size:0.8125rem; margin:0;">เอพร้อมช่วยเสมอค่ะ</p>
-          </div>
-          <div id="secretary-msg-list"></div>
-        </div>
-      </div>
-      <div id="secretary-input-wrap" class="ws-composer-wrap">
-        <div class="ws-composer-inner">
-          <div id="secretary-composer-pill" class="ws-composer-pill">
-            <textarea id="secretary-input" class="ws-composer-input" rows="1" placeholder="บอกเอได้เลยค่ะ..."></textarea>
-            <div class="ws-composer-trail">
-              <button type="button" id="secretary-send-btn" class="ws-send-btn" aria-label="ส่ง" onclick="sendToSecretary()">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M12 19V5M5 12l7-7 7 7"/>
-                </svg>
-              </button>
-            </div>
-          </div>
-          <p class="ws-composer-footnote">Ener-AI · น้องเอ เลขาส่วนตัว</p>
-        </div>
-      </div>
-    </div>
-
     <div id="panel-chat" class="panel ws-chat-panel{% if tool == 'chat' %} active-panel{% endif %}{% if not recent_messages %} ws-chat-empty{% else %} ws-has-messages{% endif %}"{% if tool != 'chat' %} style="display:none"{% endif %}>
       <div id="chat-welcome" class="ws-chat-welcome{% if recent_messages %} hidden{% endif %}">
         <h1 class="ws-welcome-title">พร้อมเมื่อไรก็บอกได้เลย</h1>
@@ -294,10 +266,11 @@
       <div id="system-content" class="panel-body"></div>
     </div>
 
-    <div id="panel-office" class="panel">
+    <div id="panel-office" class="panel office-panel{% if tool == 'office' or tool == 'secretary' %} active-panel{% endif %}"{% if tool != 'office' and tool != 'secretary' %} style="display:none"{% endif %}>
       <div class="panel-header"><h2>🏢 Agent Office</h2></div>
-      <div class="panel-body" style="overflow-y:auto;">
-        <div style="max-width:56rem;">
+      <div class="office-body">
+        <div class="office-agents-section">
+          <div style="max-width:56rem;">
 
           <div class="flex gap-3 mb-4 flex-wrap">
             <div class="rounded-lg px-4 py-2 flex items-center gap-2" style="background:oklch(0.19 0.02 150); border:1px solid oklch(0.28 0.05 150);">
@@ -312,46 +285,69 @@
             {% endif %}
           </div>
 
-          <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:10px; margin-bottom:1.5rem;">
+          <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:10px; margin-bottom:1rem;">
             {% for ag in office.agents %}
+            {% if ag.name == 'SecretaryAgent' %}
+            <a href="#office-secretary"
+               class="rounded-xl p-3 office-agent-card office-agent-card--active office-agent-card--secretary"
+               onclick="return focusOfficeSecretary(this);">
+            {% else %}
             <a href="/workspace?tool=chat"
                class="rounded-xl p-3 office-agent-card office-agent-card--{{ ag.status }}"
                data-chat-cmd="{{ ag.chat_cmd }}"
                onclick="return openOfficeAgentChat(this);">
+            {% endif %}
               <div class="flex items-center gap-2 mb-1.5">
                 <span style="font-size:20px; line-height:1;">{{ ag.emoji }}</span>
                 <div>
                   <p style="font-size:12px; font-weight:600; color:var(--foreground); margin:0;">{{ ag.short }}</p>
                   <div class="flex items-center gap-1">
                     <span class="office-agent-dot office-agent-dot--{{ ag.status }}"></span>
-                    <span style="font-size:9px; color:var(--muted-foreground);">{% if ag.status=='active' %}Active{% elif ag.status=='idle' %}Idle{% else %}Offline{% endif %}</span>
+                    <span style="font-size:9px; color:var(--muted-foreground);">{% if ag.name == 'SecretaryAgent' %}พร้อม{% elif ag.status=='active' %}Active{% elif ag.status=='idle' %}Idle{% else %}Offline{% endif %}</span>
                   </div>
                 </div>
               </div>
               <p style="font-size:9px; color:var(--muted-foreground); margin:0 0 4px;">{{ ag.role }}</p>
               <p style="font-size:9px; color:{% if ag.runs_today > 0 %}oklch(0.65 0.10 200){% else %}oklch(0.45 0.01 250){% endif %}; margin:0;">
-                {% if ag.runs_today > 0 %}{{ ag.runs_today }}x วันนี้{% else %}{{ ag.last_label }}{% endif %}
+                {% if ag.name == 'SecretaryAgent' %}คุยด้านล่าง{% elif ag.runs_today > 0 %}{{ ag.runs_today }}x วันนี้{% else %}{{ ag.last_label }}{% endif %}
               </p>
             </a>
             {% endfor %}
           </div>
 
-          {% if office.open_tasks %}
-          <div class="rounded-xl p-4" style="background:oklch(0.17 0.01 250); border:1px solid oklch(0.25 0.01 250);">
-            <p style="font-size:11px; font-weight:600; color:var(--muted-foreground); margin:0 0 10px; text-transform:uppercase; letter-spacing:.05em;">งานที่ค้างอยู่</p>
-            {% for t in office.open_tasks %}
-            <div class="flex items-center gap-2 py-1.5" style="border-bottom:1px solid oklch(0.22 0.01 250);">
-              <span style="font-size:10px; padding:1px 6px; border-radius:4px; background:{% if t.priority=='high' %}oklch(0.30 0.12 30){% else %}oklch(0.22 0.01 250){% endif %}; color:{% if t.priority=='high' %}oklch(0.75 0.15 30){% else %}var(--muted-foreground){% endif %};">{{ t.priority }}</span>
-              <span style="font-size:12px; flex:1; color:var(--foreground);">{{ t.title }}</span>
-              <span style="font-size:10px; padding:1px 5px; border-radius:4px; background:oklch(0.20 0.02 250); color:var(--muted-foreground);">{{ t.status }}</span>
-              <form method="post" action="/workspace/task/{{ t.id }}/done" style="margin:0;">
-                <button type="submit" class="office-task-done-btn">✓ Done</button>
-              </form>
-            </div>
-            {% endfor %}
           </div>
-          {% endif %}
+        </div>
 
+        <div id="office-secretary" class="office-secretary-chat ws-chat-empty">
+          <div class="office-secretary-header">
+            <span style="font-size:1.25rem;">👩‍💼</span>
+            <span>คุยกับเลขา</span>
+          </div>
+          <div id="secretary-messages" class="ws-chat-messages office-secretary-messages">
+            <div class="ws-chat-inner">
+              <div id="secretary-welcome" class="ws-chat-welcome office-secretary-welcome">
+                <p style="font-size:2rem; margin-bottom:0.5rem; line-height:1;">👩‍💼</p>
+                <h2 class="ws-welcome-title" style="font-size:1.125rem; font-weight:500; margin:0 0 0.25rem;">สวัสดีค่ะ คุณกบ</h2>
+                <p style="color:var(--muted-foreground); font-size:0.8125rem; margin:0;">เอพร้อมช่วยเสมอค่ะ บอกได้เลยว่าต้องการอะไร</p>
+              </div>
+              <div id="secretary-msg-list"></div>
+            </div>
+          </div>
+          <div id="secretary-input-wrap" class="ws-composer-wrap office-secretary-composer">
+            <div class="ws-composer-inner">
+              <div id="secretary-composer-pill" class="ws-composer-pill">
+                <textarea id="secretary-input" class="ws-composer-input" rows="1" placeholder="บอกเอได้เลยค่ะ..."></textarea>
+                <div class="ws-composer-trail">
+                  <button type="button" id="secretary-send-btn" class="ws-send-btn" aria-label="ส่ง" onclick="sendToSecretary()">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M12 19V5M5 12l7-7 7 7"/>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <p class="ws-composer-footnote">Ener-AI · น้องเอ เลขาส่วนตัว</p>
+            </div>
+          </div>
         </div>
       </div>
     </div>

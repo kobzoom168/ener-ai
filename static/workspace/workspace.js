@@ -517,7 +517,7 @@ document.addEventListener('DOMContentLoaded', function() {
   function updateSecretaryWelcome() {
     const welcome = document.getElementById('secretary-welcome');
     const list = document.getElementById('secretary-msg-list');
-    const panel = document.getElementById('panel-secretary');
+    const panel = document.getElementById('office-secretary');
     if (!welcome || !list) return;
     const hasMessages = Boolean(list.querySelector('.msg-row'));
     welcome.classList.toggle('hidden', hasMessages);
@@ -525,6 +525,14 @@ document.addEventListener('DOMContentLoaded', function() {
       panel.classList.toggle('ws-chat-empty', !hasMessages);
       panel.classList.toggle('ws-has-messages', hasMessages);
     }
+  }
+
+  function focusOfficeSecretary(el) {
+    if (el) el.classList.add('office-agent-card--active');
+    const section = document.getElementById('office-secretary');
+    section?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    document.getElementById('secretary-input')?.focus();
+    return false;
   }
 
   function appendSecretaryUserBubble(text) {
@@ -777,9 +785,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (name === 'system') loadSystem();
     if (name === 'benchmark') loadBenchmark();
     if (name === 'code') loadCodePanel();
-    if (name === 'office') startOfficeAutoRefresh();
-    else stopOfficeAutoRefresh();
-    if (name === 'secretary') {
+    if (name === 'office') {
       loadSecretaryHistory();
       document.getElementById('secretary-input')?.focus();
     }
@@ -803,7 +809,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
   function startOfficeAutoRefresh() {
     stopOfficeAutoRefresh();
-    window.__officeRefreshTimer = setInterval(() => location.reload(), 30000);
   }
 
   function stopOfficeAutoRefresh() {
@@ -1894,6 +1899,7 @@ document.addEventListener('DOMContentLoaded', function() {
   window.dropZoneClick = dropZoneClick;
   window.selectSlash = selectSlash;
   window.sendToSecretary = sendToSecretary;
+  window.focusOfficeSecretary = focusOfficeSecretary;
   window.showToast = showToast;
   window.api = api;
   window.escapeHtml = escapeHtml;
