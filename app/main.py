@@ -5602,6 +5602,40 @@ async def _workspace_sidebar_stats() -> dict:
     }
 
 
+DEPT_STRUCTURE = [
+    {
+        "key": "hq",
+        "label": "🧠 HQ",
+        "agents": [
+            "MainChatAgent",
+            "MemoryAgent",
+            "SecretaryAgent",
+            "BriefingAgent",
+        ],
+    },
+    {
+        "key": "ener",
+        "label": "⚡ Ener Scan",
+        "agents": ["EnerAgent", "ContentAgent", "TarotAgent"],
+    },
+    {
+        "key": "intel",
+        "label": "📡 Intel",
+        "agents": ["NewsAgent", "ThinkTeam", "DigestAgent"],
+    },
+    {
+        "key": "tech",
+        "label": "💻 Tech",
+        "agents": ["CodeAgent", "MonitorAgent", "GithubAgent"],
+    },
+    {
+        "key": "ops",
+        "label": "🗂️ Ops",
+        "agents": ["TaskAgent", "GmailAgent", "LogKeeper", "SessionAgent"],
+    },
+]
+
+
 async def _load_office_status() -> dict:
     import datetime
 
@@ -5677,8 +5711,31 @@ async def _load_office_status() -> dict:
             }
         )
 
+    dept_groups = []
+    for dept in DEPT_STRUCTURE:
+        members = []
+        total_today = 0
+        any_active = False
+        for ag_name in dept["agents"]:
+            ag = next((a for a in agents_out if a["name"] == ag_name), None)
+            if ag:
+                members.append(ag)
+                total_today += ag["runs_today"]
+                if ag["status"] == "active":
+                    any_active = True
+        dept_groups.append(
+            {
+                "key": dept["key"],
+                "label": dept["label"],
+                "agents": members,
+                "runs_today": total_today,
+                "status": "active" if any_active else "idle",
+            }
+        )
+
     return {
         "agents": agents_out,
+        "dept_groups": dept_groups,
         "task_open": int(task_summary.get("open", 0) or 0),
         "task_pending": int(task_summary.get("pending_approval", 0) or 0),
         "open_tasks": open_tasks,

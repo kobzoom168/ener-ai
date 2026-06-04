@@ -513,6 +513,15 @@
       letter-spacing: 0.05em;
     }
 
+    #panel-office .dept-header {
+      border-left: 3px solid oklch(0.35 0.1 280);
+      padding-left: 10px;
+    }
+
+    #panel-office .dept-section:hover .dept-header {
+      border-left-color: oklch(0.55 0.2 280);
+    }
+
     @media (max-width: 960px) {
       #panel-office .office-body {
         flex-direction: column;

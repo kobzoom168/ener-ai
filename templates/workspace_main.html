@@ -401,35 +401,58 @@
             {% endif %}
           </div>
 
-          <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:10px; margin-bottom:1rem;">
-            {% for ag in office.agents %}
-            {% if ag.name == 'SecretaryAgent' %}
-            <a href="#office-right"
-               class="rounded-xl p-3 office-agent-card office-agent-card--active office-agent-card--secretary"
-               onclick="return focusOfficeSecretary(this);">
-            {% else %}
-            <a href="/workspace?tool=chat"
-               class="rounded-xl p-3 office-agent-card office-agent-card--{{ ag.status }}"
-               data-chat-cmd="{{ ag.chat_cmd }}"
-               onclick="return openOfficeAgentChat(this);">
-            {% endif %}
-              <div class="flex items-center gap-2 mb-1.5">
-                <span style="font-size:20px; line-height:1;">{{ ag.emoji }}</span>
-                <div>
-                  <p style="font-size:12px; font-weight:600; color:var(--foreground); margin:0;">{{ ag.short }}</p>
-                  <div class="flex items-center gap-1">
-                    <span class="office-agent-dot office-agent-dot--{{ ag.status }}"></span>
-                    <span style="font-size:9px; color:var(--muted-foreground);">{% if ag.name == 'SecretaryAgent' %}พร้อม{% elif ag.status=='active' %}Active{% elif ag.status=='idle' %}Idle{% else %}Offline{% endif %}</span>
+          {% for dept in office.dept_groups %}
+          <div class="dept-section mb-5">
+            <div class="dept-header flex items-center gap-3 mb-2 px-1">
+              <span style="font-size:14px;">{{ dept.label }}</span>
+              <div class="flex items-center gap-1">
+                <span class="office-agent-dot office-agent-dot--{{ dept.status }}" style="width:8px;height:8px;"></span>
+                <span style="font-size:10px; color:var(--muted-foreground);">
+                  {% if dept.status == 'active' %}Active{% else %}Idle{% endif %}
+                </span>
+              </div>
+              {% if dept.runs_today > 0 %}
+              <span style="font-size:10px; color:oklch(0.65 0.12 150); margin-left:auto;">
+                {{ dept.runs_today }}x วันนี้
+              </span>
+              {% endif %}
+            </div>
+            <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(155px,1fr)); gap:8px;">
+              {% for ag in dept.agents %}
+              {% if ag.name == 'SecretaryAgent' %}
+              <a href="#office-right"
+                 class="rounded-xl p-3 office-agent-card office-agent-card--active office-agent-card--secretary"
+                 onclick="return focusOfficeSecretary(this);">
+              {% else %}
+              <a href="/workspace?tool=chat"
+                 class="rounded-xl p-3 office-agent-card office-agent-card--{{ ag.status }}"
+                 data-chat-cmd="{{ ag.chat_cmd }}"
+                 onclick="return openOfficeAgentChat(this);">
+              {% endif %}
+                <div class="flex items-center gap-2 mb-1.5">
+                  <span style="font-size:18px; line-height:1;">{{ ag.emoji }}</span>
+                  <div>
+                    <p style="font-size:11px; font-weight:600; margin:0;">{{ ag.short }}</p>
+                    <div class="flex items-center gap-1">
+                      <span class="office-agent-dot office-agent-dot--{{ ag.status }}"></span>
+                      <span style="font-size:9px; color:var(--muted-foreground);">
+                        {% if ag.name == 'SecretaryAgent' %}พร้อม{% elif ag.status=='active' %}Active{% elif ag.status=='idle' %}Idle{% else %}Offline{% endif %}
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
-              <p style="font-size:9px; color:var(--muted-foreground); margin:0 0 4px;">{{ ag.role }}</p>
-              <p style="font-size:9px; color:{% if ag.runs_today > 0 %}oklch(0.65 0.10 200){% else %}oklch(0.45 0.01 250){% endif %}; margin:0;">
-                {% if ag.name == 'SecretaryAgent' %}คุยขวา{% elif ag.runs_today > 0 %}{{ ag.runs_today }}x วันนี้{% else %}{{ ag.last_label }}{% endif %}
-              </p>
-            </a>
-            {% endfor %}
+                <p style="font-size:9px; color:var(--muted-foreground); margin:0 0 3px;">{{ ag.role }}</p>
+                <p style="font-size:9px; margin:0; color:{% if ag.runs_today > 0 %}oklch(0.65 0.10 200){% else %}oklch(0.45 0.01 250){% endif %};">
+                  {% if ag.name == 'SecretaryAgent' %}คุยขวา{% elif ag.runs_today > 0 %}{{ ag.runs_today }}x วันนี้{% else %}{{ ag.last_label }}{% endif %}
+                </p>
+              </a>
+              {% endfor %}
+            </div>
           </div>
+          {% if not loop.last %}
+          <div style="height:1px; background:oklch(0.20 0.01 250); margin-bottom:1.25rem;"></div>
+          {% endif %}
+          {% endfor %}
 
           {% if office.open_tasks %}
           <div class="office-tasks-block">

@@ -1,4 +1,4 @@
-"""Secretary Agent — orchestrates all other agents for workspace chat."""
+"""Secretary Agent — routes via department heads to specialist agents."""
 from __future__ import annotations
 
 import json
@@ -8,25 +8,22 @@ import re
 from app.core.ai import chat
 from app.core.agents import log_agent_run
 from app.core.database import get_db
+from app.core.department import RunContext
 from app.core.policy import build_system_prompt
 
 logger = logging.getLogger(__name__)
 
-INTENT_SYSTEM = """วิเคราะห์ว่าข้อความนี้ต้องการ agent ไหน ตอบเป็น JSON เท่านั้น:
-{"agent": "<ชื่อ>", "query": "<คำถามที่ส่งต่อ>"}
+INTENT_SYSTEM = """วิเคราะห์ข้อความและตอบเป็น JSON เท่านั้น:
+{"dept": "<แผนก>", "query": "<คำถามที่ส่งต่อ>"}
 
-agents ที่มี:
-- news: ข่าว, เทคโนโลยี, AI, security
-- code: เขียนโปรแกรม, แก้ bug, server, deploy
-- ener: พระเครื่อง, วิเคราะห์พลังงาน, ener scan
-- content: เขียน script, caption, TikTok, Facebook, โพสต์
-- tasks: งานที่ต้องทำ, todo, เพิ่มงาน, ปิดงาน
-- monitor: server status, logs, errors, CPU RAM
-- memory: จำ, ค้นหาสิ่งที่เคยคุย
-- think: brainstorm, วิเคราะห์เชิงลึก, เปรียบเทียบ
-- gmail: อีเมล, inbox
-- tarot: ไพ่, ดวง, พยากรณ์
-- secretary: ทั่วไป, สรุปงาน, ไม่ชัดเจน"""
+แผนกที่มี:
+- tech: code, server, github, deploy, monitor, bot automation, security
+- intel: ข่าว, brainstorm, วิเคราะห์, สรุปสัปดาห์
+- ops: email, tasks, todo, health log
+- ener: พระ, วิเคราะห์พลังงาน, content TikTok, ดวง, ไพ่
+- hq: memory, session, ทั่วไป, ไม่แน่ใจ
+
+ถ้าไม่แน่ใจ ใช้ dept=hq"""
 
 SECRETARY_PERSONA = build_system_prompt(
     """
@@ -34,67 +31,88 @@ SECRETARY_PERSONA = build_system_prompt(
 - เรียกตัวเองว่า "เอ"
 - เรียกกบว่า "คุณกบ"
 - กระชับ ตรงประเด็น เป็นกันเอง
-- เมื่อส่งต่อ agent อื่น → แจ้งสั้นๆ ว่ากำลังจัดการ
+- เมื่อส่งต่อแผนกอื่น → แจ้งสั้นๆ ว่ากำลังจัดการ
 - เมื่อตอบเอง → ตอบตรงๆ ไม่อ้อม
 """
 )
 
-_KEY_TO_AGENT = {
-    "news": "NewsAgent",
-    "code": "CodeAgent",
-    "ener": "EnerAgent",
-    "content": "ContentAgent",
-    "tasks": "TaskAgent",
-    "monitor": "MonitorAgent",
-    "memory": "MemoryAgent",
-    "think": "ThinkTeam",
-    "gmail": "GmailAgent",
-    "tarot": "TarotAgent",
-    "secretary": "SecretaryAgent",
+_AGENT_TO_DEPT: dict[str, str] = {
+    "news": "intel",
+    "think": "intel",
+    "digest": "intel",
+    "code": "tech",
+    "monitor": "tech",
+    "github": "tech",
+    "gmail": "ops",
+    "tasks": "ops",
+    "logs": "ops",
+    "ener": "ener",
+    "content": "ener",
+    "tarot": "ener",
+    "memory": "hq",
+    "secretary": "hq",
+    "briefing": "hq",
+}
+
+_DEPT_LABELS: dict[str, str] = {
+    "tech": "Tech",
+    "intel": "Intel",
+    "ops": "Ops",
+    "ener": "Ener",
+    "hq": "HQ",
 }
 
 
 def agent_key_to_agent_name(key: str) -> str:
-    return _KEY_TO_AGENT.get(str(key or "").lower().strip(), "MainChatAgent")
+    from app.agents.agent_dispatch import agent_key_to_agent_name as _map
+
+    return _map(key)
 
 
-async def _emit_office_event(
-    from_agent: str,
-    to_agent: str,
-    message: str,
-    event_type: str = "route",
-) -> None:
-    from app.core.event_log import log_event
+async def _get_dept_head(dept_key: str):
+    key = str(dept_key or "").lower().strip()
+    if key == "tech":
+        from app.agents.heads.tech_head import TechHead
 
-    ctx = json.dumps(
-        {"from": from_agent, "to": to_agent, "type": event_type},
-        ensure_ascii=False,
-    )
-    try:
-        await log_event(
-            agent_name=to_agent,
-            event_type=event_type,
-            summary=(message or "")[:120],
-            context=ctx,
-            triggered_by=from_agent,
-            result="success",
-        )
-    except Exception as exc:
-        logger.warning("office event emit failed: %s", exc)
+        return TechHead()
+    if key == "intel":
+        from app.agents.heads.intel_head import IntelHead
+
+        return IntelHead()
+    if key == "ops":
+        from app.agents.heads.ops_head import OpsHead
+
+        return OpsHead()
+    if key == "ener":
+        from app.agents.heads.ener_head import EnerHead
+
+        return EnerHead()
+    if key == "hq":
+        from app.agents.heads.hq_head import HqHead
+
+        return HqHead()
+    return None
 
 
-_AGENT_LABELS = {
-    "news": "ข่าว",
-    "code": "โค้ด",
-    "ener": "พระ/พลังงาน",
-    "content": "คอนเทนต์",
-    "tasks": "งาน",
-    "monitor": "ระบบ",
-    "memory": "ความจำ",
-    "think": "วิเคราะห์",
-    "gmail": "อีเมล",
-    "tarot": "ไพ่",
-}
+def _keyword_dept_hint(message: str) -> str | None:
+    t = str(message or "").lower()
+    if re.search(r"(อีเมล|อีเมล์|email|e-mail|inbox|gmail|เช็ค\s*mail|เมล)", t, re.I):
+        return "ops"
+    if re.search(r"(ข่าว|news|ai\s*วันนี้|เทคโนโลยี)", t, re.I):
+        return "intel"
+    if re.search(
+        r"(server|cpu|ram|disk|ระบบ|monitor|docker|container|github|git)",
+        t,
+        re.I,
+    ):
+        return "tech"
+    if re.search(r"(งานค้าง|open task|todo|รายการงาน|/tasks?)", t, re.I):
+        return "ops"
+    if re.search(r"(พระ|ener|tarot|ไพ่|ดวง|tiktok|caption)", t, re.I):
+        return "ener"
+    if re.search(r"(memory|จำ|ลืม|remember)", t, re.I):
+        return "hq"
+    return None
 
 
 async def _detect_intent(message: str) -> dict[str, str]:
@@ -107,29 +125,13 @@ async def _detect_intent(message: str) -> dict[str, str]:
         )
         clean = re.sub(r"```json?|```", "", str(raw or "")).strip()
         parsed = json.loads(clean)
-        agent = str(parsed.get("agent", "secretary")).lower().strip()
+        dept = str(parsed.get("dept", "") or parsed.get("agent", "hq")).lower().strip()
+        if dept in _AGENT_TO_DEPT:
+            dept = _AGENT_TO_DEPT[dept]
         query = str(parsed.get("query", message) or message).strip()
-        return {"agent": agent, "query": query or message}
+        return {"dept": dept or "hq", "query": query or message}
     except Exception:
-        return {"agent": "secretary", "query": message}
-
-
-def _keyword_agent_hint(message: str) -> str | None:
-    """Fast path when intent model picks secretary but message is clearly scoped."""
-    t = str(message or "").lower()
-    if re.search(r"(อีเมล|อีเมล์|email|e-mail|inbox|gmail|เช็ค\s*mail|เมล)", t, re.I):
-        return "gmail"
-    if re.search(r"(ข่าว|news|ai\s*วันนี้|เทคโนโลยี)", t, re.I):
-        return "news"
-    if re.search(
-        r"(server|cpu|ram|disk|ระบบ|monitor|log|error|docker|container)",
-        t,
-        re.I,
-    ):
-        return "monitor"
-    if re.search(r"(งานค้าง|open task|todo|รายการงาน|/tasks?)", t, re.I):
-        return "tasks"
-    return None
+        return {"dept": "hq", "query": message}
 
 
 async def _get_context_summary() -> str:
@@ -144,120 +146,6 @@ async def _get_context_summary() -> str:
     return "\n".join(f"- [{r['priority']}] {r['title']}" for r in tasks)
 
 
-async def _call_agent_by_key(agent_key: str, query: str) -> str | None:
-    """Explicit routing to each agent's real entry function."""
-    key = str(agent_key or "").lower().strip()
-    q = str(query or "").strip()
-
-    try:
-        if key == "news":
-            from app.agents.news import fetch_and_summarize
-
-            return await fetch_and_summarize(_agent_triggered_by="user")
-
-        if key == "gmail":
-            from app.agents.gmail_agent import summarize_emails
-
-            return await summarize_emails()
-
-        if key == "code":
-            from app.agents import code_agent
-
-            return await code_agent.run(q)
-
-        if key == "ener":
-            from app.agents import ener_agent
-
-            return await ener_agent.run(q)
-
-        if key == "content":
-            from app.agents import content_agent
-
-            return await content_agent.run(q)
-
-        if key == "tasks":
-            from app.agents import task as task_agent
-
-            lowered = q.lower()
-            if re.search(r"\b(done|เสร็จ|ปิด)\b", lowered):
-                match = re.search(r"\d+", q)
-                if match:
-                    return await task_agent.complete_task(int(match.group()))
-            if re.search(r"\b(add|เพิ่ม|สร้าง|new task)\b", lowered):
-                title = re.sub(
-                    r"^(?:add|เพิ่ม|สร้าง|new task)\s*",
-                    "",
-                    q,
-                    flags=re.IGNORECASE,
-                ).strip()
-                if title:
-                    return await task_agent.create_task(title)
-            return await task_agent.list_tasks()
-
-        if key == "monitor":
-            from app.agents import monitor_agent
-
-            lowered = q.lower()
-            if "log" in lowered:
-                lines = 20
-                match = re.search(r"\d+", q)
-                if match:
-                    lines = max(5, min(int(match.group()), 200))
-                return await monitor_agent.cmd_logs(lines=lines)
-            if "error" in lowered or "ผิดพลาด" in lowered:
-                return await monitor_agent.cmd_errors()
-            if any(
-                token in lowered
-                for token in ("cpu", "ram", "disk", "memory", "server")
-            ):
-                return await monitor_agent.format_nl_resource_report(
-                    monitor_agent.get_server_stats()
-                )
-            return await monitor_agent.cmd_status()
-
-        if key == "memory":
-            from app.agents import memory as memory_agent
-
-            lowered = q.lower()
-            if re.search(r"\b(remember|จำ)\b", lowered):
-                text = re.sub(
-                    r"^(?:remember|จำ)\s*", "", q, flags=re.IGNORECASE
-                ).strip()
-                return await memory_agent.remember_memory(text or q)
-            if re.search(r"\b(forget|ลืม)\b", lowered):
-                text = re.sub(
-                    r"^(?:forget|ลืม)\s*", "", q, flags=re.IGNORECASE
-                ).strip()
-                return await memory_agent.forget_memory(text or q)
-            if re.search(r"\b(list|ทั้งหมด|มีอะไร)\b", lowered):
-                return await memory_agent.list_memory()
-            return await memory_agent.search_memory(q)
-
-        if key == "think":
-            from app.agents.brainstorm import run_brainstorm
-
-            return await run_brainstorm(q)
-
-        if key == "tarot":
-            from app.agents.tarot_agent import read_cards
-
-            spread = "single"
-            lowered = q.lower()
-            if "3" in q or "สาม" in q or "three" in lowered:
-                spread = "three"
-            elif "5" in q or "ห้า" in q or "celtic" in lowered:
-                spread = "celtic"
-            return await read_cards(question=q, spread=spread)
-
-    except ImportError as exc:
-        return f"⚠️ ยังไม่ได้เชื่อม agent นี้: {exc}"
-    except Exception as exc:
-        logger.warning("Secretary agent call failed for %s: %s", key, exc)
-        return f"⚠️ {key} agent error: {str(exc)[:150]}"
-
-    return None
-
-
 @log_agent_run("SecretaryAgent", triggered_by="user")
 async def handle_secretary(message: str) -> str:
     text = str(message or "").strip()
@@ -265,33 +153,29 @@ async def handle_secretary(message: str) -> str:
         return "เอรับทราบแล้วค่ะ บอกได้เลยว่าต้องการอะไร"
 
     intent = await _detect_intent(text)
-    agent_key = str(intent.get("agent", "secretary")).lower().strip()
+    dept_key = str(intent.get("dept", "hq")).lower().strip()
     query = str(intent.get("query", text) or text).strip()
 
-    keyword_hint = _keyword_agent_hint(text)
-    if keyword_hint and agent_key in {"", "secretary", "code"}:
-        agent_key = keyword_hint
+    keyword_dept = _keyword_dept_hint(text)
+    if keyword_dept and dept_key in {"", "hq", "secretary"}:
+        dept_key = keyword_dept
         query = text
 
-    if agent_key != "secretary":
-        target_agent = agent_key_to_agent_name(agent_key)
-        await _emit_office_event(
-            "SecretaryAgent",
-            target_agent,
-            f"ส่งงาน: {query[:80]}",
-            "route",
-        )
-        result = await _call_agent_by_key(agent_key, query)
-        body = str(result or "").strip()
+    head = await _get_dept_head(dept_key)
+    use_head = head and dept_key in {"tech", "intel", "ops", "ener"}
+    if dept_key == "hq" and head and re.search(
+        r"(remember|จำ|forget|ลืม|memory|ความจำ|ค้นหา|มีอะไร)",
+        query,
+        re.I,
+    ):
+        use_head = True
+
+    if use_head and head:
+        ctx = RunContext(query=query, department=dept_key)
+        body = str(await head.handle(ctx) or "").strip()
         if body and not body.startswith("⚠️"):
-            await _emit_office_event(
-                target_agent,
-                "SecretaryAgent",
-                "ส่งผลกลับ ✓",
-                "complete",
-            )
-            label = _AGENT_LABELS.get(agent_key, agent_key)
-            return f"👩‍💼 เอจัดการเรื่อง{label}ให้แล้วค่ะ\n\n{body}"
+            label = _DEPT_LABELS.get(dept_key, dept_key)
+            return f"👩‍💼 เอส่งเรื่อง{label}ให้แล้วค่ะ\n\n{body}"
         if body.startswith("⚠️"):
             return f"👩‍💼 {body}"
 
