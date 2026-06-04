@@ -670,9 +670,129 @@
       display: flex;
       align-items: center;
       padding: 8px 10px;
-      gap: 6px;
-      flex-wrap: wrap;
+      gap: 10px;
+      flex-wrap: nowrap;
       min-width: 0;
+    }
+
+    .pb-sprite-wrap {
+      flex-shrink: 0;
+      width: 80px;
+      height: 80px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    .pb-sprite-img {
+      width: 80px;
+      height: 80px;
+      object-fit: contain;
+      image-rendering: pixelated;
+      mix-blend-mode: lighten;
+      filter: brightness(0.9);
+      transition: filter 0.3s ease, transform 0.3s ease;
+    }
+
+    .pb-sprite-wrap.status-active .pb-sprite-img {
+      animation: pb-sprite-bounce 1s ease-in-out infinite;
+      filter: brightness(1.1) drop-shadow(0 0 8px currentColor);
+    }
+
+    .pb-sprite-wrap.status-idle .pb-sprite-img {
+      filter: brightness(0.6) saturate(0.6);
+    }
+
+    .pb-sprite-wrap.status-offline .pb-sprite-img {
+      filter: grayscale(1) brightness(0.3);
+    }
+
+    .pb-sprite-wrap:hover .pb-sprite-img {
+      filter: brightness(1.2) drop-shadow(0 0 12px currentColor);
+      transform: scale(1.05);
+    }
+
+    @keyframes pb-sprite-bounce {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-5px); }
+    }
+
+    .pb-agents-mini {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .pb-mini-desk {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 6px;
+      border-radius: 3px;
+      cursor: pointer;
+      text-decoration: none;
+      color: inherit;
+      transition: background 0.15s;
+      position: relative;
+    }
+
+    .pb-mini-desk:hover {
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .pb-mini-desk--secretary {
+      box-shadow: 0 0 0 1px oklch(0.45 0.12 280 / 0.45);
+    }
+
+    .pb-mini-emoji {
+      font-size: 14px;
+      flex-shrink: 0;
+      line-height: 1;
+    }
+
+    .pb-mini-name {
+      font-size: 7px;
+      color: #aaa;
+      font-family: 'Press Start 2P', monospace;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .pb-mini-count {
+      font-size: 7px;
+      color: #0a8;
+      font-family: 'Press Start 2P', monospace;
+      flex-shrink: 0;
+    }
+
+    .pb-mini-desk.status-active .pb-mini-name {
+      color: #fff;
+    }
+
+    .pb-mini-desk.status-active .pb-mini-emoji {
+      filter: drop-shadow(0 0 3px white);
+    }
+
+    .pb-mini-desk.status-idle .pb-mini-emoji {
+      opacity: 0.6;
+    }
+
+    .pb-mini-desk.status-offline .pb-mini-emoji {
+      filter: grayscale(1);
+      opacity: 0.3;
+    }
+
+    .pb-mini-desk.status-offline .pb-mini-name {
+      color: #333;
+    }
+
+    .pb-mini-desk.routing {
+      animation: pb-route-glow 0.6s ease infinite alternate;
     }
 
     .pb-desk {

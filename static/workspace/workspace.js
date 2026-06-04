@@ -611,7 +611,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   function _getBuildingDesk(agentName) {
     return document.querySelector(
-      `#pixel-building .pb-desk[data-agent-name="${agentName}"]`
+      `#pixel-building .pb-mini-desk[data-agent-name="${agentName}"], #pixel-building .pb-desk[data-agent-name="${agentName}"]`
     );
   }
 

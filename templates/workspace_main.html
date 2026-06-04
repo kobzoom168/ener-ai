@@ -281,12 +281,12 @@
             </div>
 
             {% set dept_floors = [
-              {"key":"hq", "num":"01", "name":"HQ", "agents":["SecretaryAgent","MainChatAgent","MemoryAgent"]},
-              {"key":"ener", "num":"02", "name":"ENER", "agents":["EnerAgent","ContentAgent","TarotAgent"]},
-              {"key":"tech", "num":"03", "name":"TECH", "agents":["CodeAgent","MonitorAgent","GithubAgent"]},
-              {"key":"intel", "num":"04", "name":"INTEL", "agents":["NewsAgent","DigestAgent","ThinkTeam"]},
-              {"key":"ops", "num":"05", "name":"OPS", "agents":["GmailAgent","TaskAgent","LogKeeper"]},
-              {"key":"exec", "num":"06", "name":"EXEC", "agents":["SessionAgent","BriefingAgent"]}
+              {"key":"hq", "num":"01", "name":"HQ", "sprite":"sprite-hq.png", "agents":["SecretaryAgent","MainChatAgent","MemoryAgent"]},
+              {"key":"ener", "num":"02", "name":"ENER", "sprite":"sprite-ener.png", "agents":["EnerAgent","ContentAgent","TarotAgent"]},
+              {"key":"tech", "num":"03", "name":"TECH", "sprite":"sprite-tech.png", "agents":["CodeAgent","MonitorAgent","GithubAgent"]},
+              {"key":"intel", "num":"04", "name":"INTEL", "sprite":"sprite-intel.png", "agents":["NewsAgent","DigestAgent","ThinkTeam"]},
+              {"key":"ops", "num":"05", "name":"OPS", "sprite":"sprite-ops.png", "agents":["GmailAgent","TaskAgent","LogKeeper"]},
+              {"key":"exec", "num":"06", "name":"EXEC", "sprite":"sprite-exec.png", "agents":["SessionAgent","BriefingAgent"]}
             ] %}
             {% set dept_colors = {
               "hq":"#0f6", "ener":"#a0f", "tech":"#0cf",
@@ -295,11 +295,14 @@
 
             {% for floor in dept_floors %}
             {% set floor_runs = [] %}
+            {% set floor_agents = [] %}
             {% for ag_name in floor.agents %}
               {% for ag in office.agents if ag.name == ag_name %}
                 {% if floor_runs.append(ag.runs_today) %}{% endif %}
+                {% if floor_agents.append(ag) %}{% endif %}
               {% endfor %}
             {% endfor %}
+            {% set head_agent = floor_agents[0] if floor_agents else none %}
 
             <div class="pb-floor pb-floor--{{ floor.key }}">
               <div class="pb-floor-sidebar">
@@ -318,44 +321,44 @@
               </div>
 
               <div class="pb-floor-main">
-                {% for ag_name in floor.agents %}
-                  {% for ag in office.agents if ag.name == ag_name %}
-                  {% set c = dept_colors[floor.key] %}
+                <div class="pb-sprite-wrap {% if head_agent %}status-{{ head_agent.status }}{% else %}status-idle{% endif %}"
+                     style="color:{{ dept_colors[floor.key] }};"
+                     title="{{ floor.name }} Department">
+                  <img src="/static/workspace/sprites/{{ floor.sprite }}"
+                       alt="{{ floor.name }}"
+                       class="pb-sprite-img"
+                       loading="lazy"
+                       width="80"
+                       height="80">
+                </div>
+
+                <div class="pb-agents-mini">
+                  {% for ag in floor_agents %}
                   {% if ag.name == 'SecretaryAgent' %}
                   <a href="#office-right"
-                     class="pb-desk status-{{ ag.status }} pb-desk--secretary"
+                     class="pb-mini-desk status-{{ ag.status }} pb-mini-desk--secretary"
                      data-agent-name="{{ ag.name }}"
                      data-chat-cmd="{{ ag.chat_cmd }}"
                      onclick="return focusOfficeSecretary(this);"
                      title="{{ ag.role }}">
                   {% else %}
                   <a href="/workspace?tool=chat"
-                     class="pb-desk status-{{ ag.status }}"
+                     class="pb-mini-desk status-{{ ag.status }}"
                      data-agent-name="{{ ag.name }}"
                      data-chat-cmd="{{ ag.chat_cmd }}"
                      onclick="return openOfficeAgentChat(this);"
                      title="{{ ag.role }}">
                   {% endif %}
-                    <div class="pb-char" style="color:{{ c }};">
-                      <div class="pb-char-head" style="background:{{ c }};opacity:{% if ag.status=='offline' %}0.3{% else %}0.9{% endif %};"></div>
-                      <div class="pb-char-body" style="background:{{ c }};opacity:{% if ag.status=='offline' %}0.2{% else %}0.7{% endif %};"></div>
-                      <div class="pb-char-legs" style="background:{{ c }};opacity:0.5;">
-                        <span class="pb-char-leg-r" style="background:{{ c }};"></span>
-                      </div>
-                      <div class="pb-char-emoji">{{ ag.emoji }}</div>
-                    </div>
-                    <div class="pb-desk-meta">
-                      <span class="pb-dot {{ ag.status }}"></span>
-                    </div>
-                    <span class="pb-desk-name">{{ ag.short }}</span>
+                    <span class="pb-mini-emoji">{{ ag.emoji }}</span>
+                    <span class="pb-mini-name">{{ ag.short }}</span>
                     {% if ag.runs_today > 0 %}
-                    <span class="pb-desk-count">{{ ag.runs_today }}x</span>
+                    <span class="pb-mini-count">{{ ag.runs_today }}x</span>
                     {% elif ag.name == 'SecretaryAgent' %}
-                    <span class="pb-desk-count">คุยขวา</span>
+                    <span class="pb-mini-count">คุยขวา</span>
                     {% endif %}
                   </a>
                   {% endfor %}
-                {% endfor %}
+                </div>
               </div>
             </div>
             {% endfor %}
