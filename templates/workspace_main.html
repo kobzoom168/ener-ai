@@ -274,6 +274,17 @@
 
           <!-- PIXEL ART OFFICE MAP -->
           <div class="pixel-office-wrap mb-4">
+            <svg id="office-svg-lines"
+                 style="position:absolute;top:0;left:0;width:100%;height:100%;
+                        pointer-events:none;z-index:9;overflow:visible;"
+                 aria-hidden="true">
+              <defs>
+                <filter id="line-glow">
+                  <feGaussianBlur stdDeviation="1.5" result="b"/>
+                  <feComposite in="SourceGraphic" in2="b" operator="over"/>
+                </filter>
+              </defs>
+            </svg>
             <div class="pixel-office-title">⚡ ENER-AI VIRTUAL OFFICE</div>
             <div class="pixel-floor">
 

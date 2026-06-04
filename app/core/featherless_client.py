@@ -13,14 +13,12 @@ from app.core.config import settings
 
 FEATHERLESS_MODELS: dict[str, str] = {
     "featherless-abliterated": "huihui-ai/Qwen2.5-72B-Instruct-abliterated",
-    "featherless-gemma": "mlabonne/gemma-3-27b-it-abliterated",
 }
 
 FEATHERLESS_KEYS = frozenset(FEATHERLESS_MODELS.keys())
 
 FEATHERLESS_LABELS: dict[str, str] = {
     "featherless-abliterated": "Qwen2.5 72B Abliterated (No Filter)",
-    "featherless-gemma": "Gemma 3 27B Abliterated",
 }
 
 FEATHERLESS_BASE_URL_DEFAULT = "https://api.featherless.ai/v1"

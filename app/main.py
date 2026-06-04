@@ -4676,7 +4676,6 @@ def _workspace_chat_system(model: str) -> str:
         "dolphin",
         "venice-abliterated",
         "featherless-abliterated",
-        "featherless-gemma",
     }:
         return (
             "ตอบภาษาไทย เรียก user ว่ากบ เรียกตัวเองว่าพี่ "
@@ -5522,7 +5521,7 @@ async def _workspace_sidebar_stats() -> dict:
                    COALESCE(SUM(prompt_tokens), 0) AS in_tokens,
                    COALESCE(SUM(completion_tokens), 0) AS out_tokens
             FROM ai_runs
-            WHERE model IN ('featherless-abliterated', 'featherless-gemma')
+            WHERE model IN ('featherless-abliterated')
             """
         )
         fl_row = await fl_cur.fetchone()
@@ -5530,7 +5529,7 @@ async def _workspace_sidebar_stats() -> dict:
             """
             SELECT COUNT(*) AS calls
             FROM ai_runs
-            WHERE model IN ('featherless-abliterated', 'featherless-gemma')
+            WHERE model IN ('featherless-abliterated')
               AND DATE(created_at) = DATE('now')
             """
         )
@@ -6315,18 +6314,14 @@ async def workspace_secretary_stream(request: Request):
             yield f"data: {json.dumps({'type': 'start'}, ensure_ascii=False)}\n\n"
             reply = await handle_secretary(message)
             reply_text = str(reply or "").strip() or "เอรับทราบแล้วค่ะ"
+            chunk_size = 50
+            for i in range(0, len(reply_text), chunk_size):
+                chunk = reply_text[i : i + chunk_size]
+                yield f"data: {json.dumps({'type': 'token', 'text': chunk}, ensure_ascii=False)}\n\n"
             await _save_secretary_messages(message, reply_text)
-            buffer = ""
-            for word in reply_text.split(" "):
-                buffer += word + " "
-                if len(buffer) > 20:
-                    yield f"data: {json.dumps({'type': 'token', 'text': buffer}, ensure_ascii=False)}\n\n"
-                    buffer = ""
-            if buffer:
-                yield f"data: {json.dumps({'type': 'token', 'text': buffer}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'type': 'done', 'model': 'SecretaryAgent', 'model_label': 'เอ · เลขา'}, ensure_ascii=False)}\n\n"
         except Exception as exc:
-            yield f"data: {json.dumps({'type': 'error', 'text': str(exc)}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'text': str(exc)[:200]}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         generate(),

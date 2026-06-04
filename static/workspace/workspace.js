@@ -605,6 +605,63 @@ document.addEventListener('DOMContentLoaded', function() {
     return String(agentName || '').replace(/Agent$/, '');
   }
 
+  function _deskCenter(agentName) {
+    const desk = document.querySelector(
+      `.pixel-desk[data-agent-name="${agentName}"]`
+    );
+    const svg = document.getElementById('office-svg-lines');
+    if (!desk || !svg) return null;
+    const dr = desk.getBoundingClientRect();
+    const sr = svg.getBoundingClientRect();
+    return {
+      x: dr.left - sr.left + dr.width / 2,
+      y: dr.top - sr.top + dr.height / 2,
+    };
+  }
+
+  function drawOfficeConnection(fromAgent, toAgent, type) {
+    const svg = document.getElementById('office-svg-lines');
+    if (!svg) return;
+    const A = _deskCenter(fromAgent);
+    const B = _deskCenter(toAgent);
+    if (!A || !B) return;
+
+    const color = type === 'complete' ? '#0f6' : '#fa0';
+    const dur = type === 'complete' ? 2500 : 3500;
+
+    const cx = (A.x + B.x) / 2;
+    const cy = Math.min(A.y, B.y) - 24;
+    const d = `M${A.x},${A.y} Q${cx},${cy} ${B.x},${B.y}`;
+
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', d);
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', color);
+    path.setAttribute('stroke-width', '1.5');
+    path.setAttribute('stroke-dasharray', '5 3');
+    path.setAttribute('filter', 'url(#line-glow)');
+    path.setAttribute('opacity', '0.9');
+    path.style.animation = 'dash-travel 0.35s linear infinite';
+    svg.appendChild(path);
+
+    const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    dot.setAttribute('r', '3');
+    dot.setAttribute('fill', color);
+    dot.setAttribute('filter', 'url(#line-glow)');
+    const am = document.createElementNS('http://www.w3.org/2000/svg', 'animateMotion');
+    am.setAttribute('dur', '0.7s');
+    am.setAttribute('repeatCount', type === 'route' ? '3' : '2');
+    am.setAttribute('fill', 'freeze');
+    am.setAttribute('path', d);
+    dot.appendChild(am);
+    svg.appendChild(dot);
+
+    setTimeout(() => {
+      path.remove();
+      dot.remove();
+    }, dur);
+  }
+
   function _showOfficeBubble(agentName, message, type) {
     const desk = document.querySelector(
       `.pixel-desk[data-agent-name="${agentName}"]`
@@ -685,6 +742,7 @@ document.addEventListener('DOMContentLoaded', function() {
           _showOfficeBubble(fromA, '✓ done', 'complete');
         }
 
+        drawOfficeConnection(fromA, toA, type);
         _updateActivityFeedItem(fromA, toA, msg, type);
       } catch (err) {
         console.warn('office event parse failed', err);

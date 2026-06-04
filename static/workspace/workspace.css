@@ -669,6 +669,16 @@
       }
     }
 
+    @keyframes dash-travel {
+      to {
+        stroke-dashoffset: -16;
+      }
+    }
+
+    #office-svg-lines path {
+      stroke-dashoffset: 0;
+    }
+
     @keyframes office-feed-fade-in {
       from {
         opacity: 0;
