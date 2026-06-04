@@ -272,6 +272,111 @@
         <div class="office-agents-section">
           <div class="office-agents-inner">
 
+          <!-- PIXEL ART OFFICE MAP -->
+          <div class="pixel-office-wrap mb-4">
+            <div class="pixel-office-title">⚡ ENER-AI VIRTUAL OFFICE</div>
+            <div class="pixel-floor">
+
+              <div class="pixel-dept">
+                <div class="pixel-dept-label">🧠 HQ</div>
+                {% for ag in office.agents if ag.name in ['MainChatAgent', 'MemoryAgent', 'SecretaryAgent'] %}
+                <div class="pixel-desk status-{{ 'active' if ag.name == 'SecretaryAgent' else ag.status }}"
+                     data-agent-name="{{ ag.name }}"
+                     data-chat-cmd="{{ ag.chat_cmd }}"
+                     onclick="return openOfficePixelDesk(this);"
+                     title="{{ ag.role }}">
+                  <span class="pixel-char">{{ ag.emoji }}</span>
+                  <span class="pixel-status-dot {{ 'active' if ag.name == 'SecretaryAgent' else ag.status }}"></span>
+                  <span class="pixel-agent-name">{{ ag.short }}</span>
+                  {% if ag.runs_today > 0 %}<span class="pixel-runs">{{ ag.runs_today }}x</span>{% endif %}
+                </div>
+                {% endfor %}
+              </div>
+
+              <div class="pixel-dept">
+                <div class="pixel-dept-label">⚡ ENER</div>
+                {% for ag in office.agents if ag.name in ['EnerAgent', 'ContentAgent', 'TarotAgent'] %}
+                <div class="pixel-desk status-{{ ag.status }}"
+                     data-agent-name="{{ ag.name }}"
+                     data-chat-cmd="{{ ag.chat_cmd }}"
+                     onclick="return openOfficePixelDesk(this);"
+                     title="{{ ag.role }}">
+                  <span class="pixel-char">{{ ag.emoji }}</span>
+                  <span class="pixel-status-dot {{ ag.status }}"></span>
+                  <span class="pixel-agent-name">{{ ag.short }}</span>
+                  {% if ag.runs_today > 0 %}<span class="pixel-runs">{{ ag.runs_today }}x</span>{% endif %}
+                </div>
+                {% endfor %}
+              </div>
+
+              <div class="pixel-dept">
+                <div class="pixel-dept-label">💻 TECH</div>
+                {% for ag in office.agents if ag.name in ['CodeAgent', 'MonitorAgent', 'GithubAgent'] %}
+                <div class="pixel-desk status-{{ ag.status }}"
+                     data-agent-name="{{ ag.name }}"
+                     data-chat-cmd="{{ ag.chat_cmd }}"
+                     onclick="return openOfficePixelDesk(this);"
+                     title="{{ ag.role }}">
+                  <span class="pixel-char">{{ ag.emoji }}</span>
+                  <span class="pixel-status-dot {{ ag.status }}"></span>
+                  <span class="pixel-agent-name">{{ ag.short }}</span>
+                  {% if ag.runs_today > 0 %}<span class="pixel-runs">{{ ag.runs_today }}x</span>{% endif %}
+                </div>
+                {% endfor %}
+              </div>
+
+              <div class="pixel-dept">
+                <div class="pixel-dept-label">📡 INTEL</div>
+                {% for ag in office.agents if ag.name in ['NewsAgent', 'ThinkTeam', 'DigestAgent'] %}
+                <div class="pixel-desk status-{{ ag.status }}"
+                     data-agent-name="{{ ag.name }}"
+                     data-chat-cmd="{{ ag.chat_cmd }}"
+                     onclick="return openOfficePixelDesk(this);"
+                     title="{{ ag.role }}">
+                  <span class="pixel-char">{{ ag.emoji }}</span>
+                  <span class="pixel-status-dot {{ ag.status }}"></span>
+                  <span class="pixel-agent-name">{{ ag.short }}</span>
+                  {% if ag.runs_today > 0 %}<span class="pixel-runs">{{ ag.runs_today }}x</span>{% endif %}
+                </div>
+                {% endfor %}
+              </div>
+
+              <div class="pixel-dept">
+                <div class="pixel-dept-label">🗂️ OPS</div>
+                {% for ag in office.agents if ag.name in ['TaskAgent', 'GmailAgent', 'LogKeeper'] %}
+                <div class="pixel-desk status-{{ ag.status }}"
+                     data-agent-name="{{ ag.name }}"
+                     data-chat-cmd="{{ ag.chat_cmd }}"
+                     onclick="return openOfficePixelDesk(this);"
+                     title="{{ ag.role }}">
+                  <span class="pixel-char">{{ ag.emoji }}</span>
+                  <span class="pixel-status-dot {{ ag.status }}"></span>
+                  <span class="pixel-agent-name">{{ ag.short }}</span>
+                  {% if ag.runs_today > 0 %}<span class="pixel-runs">{{ ag.runs_today }}x</span>{% endif %}
+                </div>
+                {% endfor %}
+              </div>
+
+              <div class="pixel-dept">
+                <div class="pixel-dept-label">📊 EXEC</div>
+                {% for ag in office.agents if ag.name in ['BriefingAgent', 'SessionAgent'] %}
+                <div class="pixel-desk status-{{ ag.status }}"
+                     data-agent-name="{{ ag.name }}"
+                     data-chat-cmd="{{ ag.chat_cmd }}"
+                     onclick="return openOfficePixelDesk(this);"
+                     title="{{ ag.role }}">
+                  <span class="pixel-char">{{ ag.emoji }}</span>
+                  <span class="pixel-status-dot {{ ag.status }}"></span>
+                  <span class="pixel-agent-name">{{ ag.short }}</span>
+                  {% if ag.runs_today > 0 %}<span class="pixel-runs">{{ ag.runs_today }}x</span>{% endif %}
+                </div>
+                {% endfor %}
+              </div>
+
+            </div>
+          </div>
+          <!-- END PIXEL ART OFFICE MAP -->
+
           <div class="flex gap-3 mb-4 flex-wrap">
             <div class="rounded-lg px-4 py-2 flex items-center gap-2" style="background:oklch(0.19 0.02 150); border:1px solid oklch(0.28 0.05 150);">
               <span style="font-size:12px; color:oklch(0.70 0.15 150);">✅ Open Tasks</span>

@@ -535,6 +535,12 @@ document.addEventListener('DOMContentLoaded', function() {
     return false;
   }
 
+  function openOfficePixelDesk(el) {
+    const agentName = el && el.getAttribute ? (el.getAttribute('data-agent-name') || '') : '';
+    if (agentName === 'SecretaryAgent') return focusOfficeSecretary(el);
+    return openOfficeAgentChat(el);
+  }
+
   function appendSecretaryUserBubble(text) {
     const list = document.getElementById('secretary-msg-list');
     if (!list) return;
@@ -1871,6 +1877,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   window.showPanel = showPanel;
   window.openOfficeAgentChat = openOfficeAgentChat;
+  window.openOfficePixelDesk = openOfficePixelDesk;
   window.newChat = newChat;
   window.sendMessage = sendMessage;
   window.clearPendingImage = clearPendingImage;
