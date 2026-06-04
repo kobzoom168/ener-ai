@@ -269,7 +269,7 @@
     <div id="panel-office" class="panel office-panel{% if tool == 'office' or tool == 'secretary' %} active-panel{% endif %}"{% if tool != 'office' and tool != 'secretary' %} style="display:none"{% endif %}>
       <div class="panel-header"><h2>🏢 Agent Office</h2></div>
       <div class="office-body">
-        <div class="office-agents-section">
+        <div class="office-left">
           <div class="office-agents-inner">
 
           <!-- PIXEL ART OFFICE MAP -->
@@ -393,7 +393,7 @@
           <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:10px; margin-bottom:1rem;">
             {% for ag in office.agents %}
             {% if ag.name == 'SecretaryAgent' %}
-            <a href="#office-secretary"
+            <a href="#office-right"
                class="rounded-xl p-3 office-agent-card office-agent-card--active office-agent-card--secretary"
                onclick="return focusOfficeSecretary(this);">
             {% else %}
@@ -414,45 +414,54 @@
               </div>
               <p style="font-size:9px; color:var(--muted-foreground); margin:0 0 4px;">{{ ag.role }}</p>
               <p style="font-size:9px; color:{% if ag.runs_today > 0 %}oklch(0.65 0.10 200){% else %}oklch(0.45 0.01 250){% endif %}; margin:0;">
-                {% if ag.name == 'SecretaryAgent' %}คุยด้านล่าง{% elif ag.runs_today > 0 %}{{ ag.runs_today }}x วันนี้{% else %}{{ ag.last_label }}{% endif %}
+                {% if ag.name == 'SecretaryAgent' %}คุยขวา{% elif ag.runs_today > 0 %}{{ ag.runs_today }}x วันนี้{% else %}{{ ag.last_label }}{% endif %}
               </p>
             </a>
             {% endfor %}
           </div>
 
+          {% if office.open_tasks %}
+          <div class="office-tasks-block">
+            <p class="office-tasks-title">งานที่ค้างอยู่</p>
+            {% for t in office.open_tasks %}
+            <div class="flex items-center gap-2 py-1.5" style="border-bottom:1px solid oklch(0.22 0.01 250);">
+              <span style="font-size:10px; padding:1px 6px; border-radius:4px; background:{% if t.priority=='high' %}oklch(0.30 0.12 30){% else %}oklch(0.22 0.01 250){% endif %}; color:{% if t.priority=='high' %}oklch(0.75 0.15 30){% else %}var(--muted-foreground){% endif %};">{{ t.priority }}</span>
+              <span style="font-size:12px; flex:1; color:var(--foreground);">{{ t.title }}</span>
+              <form method="post" action="/workspace/task/{{ t.id }}/done" style="margin:0;">
+                <button type="submit" class="office-task-done-btn">✓ Done</button>
+              </form>
+            </div>
+            {% endfor %}
+          </div>
+          {% endif %}
+
           </div>
         </div>
 
-        <div id="office-secretary" class="office-secretary-chat ws-chat-empty">
-          <div class="office-secretary-header">
-            <div class="ws-chat-inner">
-              <span style="font-size:1.25rem; line-height:1;">👩‍💼</span>
-              <span>คุยกับเลขา</span>
+        <div id="office-right" class="office-right">
+          <div class="office-sec-panel">
+            <div class="office-sec-header">
+              <span>👩‍💼</span>
+              <span>น้องเอ · เลขา</span>
+              <span id="sec-status-dot" style="width:6px;height:6px;border-radius:50%;background:oklch(0.60 0.18 150);margin-left:auto;box-shadow:0 0 4px oklch(0.60 0.18 150);"></span>
+            </div>
+            <div id="office-secretary-messages">
+              <div id="office-sec-welcome">สวัสดีค่ะ บอกเอได้เลย</div>
+            </div>
+            <div class="office-sec-input-wrap">
+              <div class="office-sec-input-row">
+                <textarea id="office-sec-input" rows="1" placeholder="บอกเอ..."></textarea>
+                <button type="button" class="office-sec-send-btn" aria-label="ส่ง" onclick="sendOfficeSecretary()">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="white"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
+                </button>
+              </div>
             </div>
           </div>
-          <div id="secretary-messages" class="ws-chat-messages office-secretary-messages">
-            <div class="ws-chat-inner">
-              <div id="secretary-welcome" class="ws-chat-welcome office-secretary-welcome">
-                <p style="font-size:2rem; margin-bottom:0.5rem; line-height:1;">👩‍💼</p>
-                <h2 class="ws-welcome-title" style="font-size:1.125rem; font-weight:500; margin:0 0 0.25rem;">สวัสดีค่ะ คุณกบ</h2>
-                <p style="color:var(--muted-foreground); font-size:0.8125rem; margin:0;">เอพร้อมช่วยเสมอค่ะ บอกได้เลยว่าต้องการอะไร</p>
-              </div>
-              <div id="secretary-msg-list"></div>
-            </div>
-          </div>
-          <div id="secretary-input-wrap" class="ws-composer-wrap office-secretary-composer">
-            <div class="ws-composer-inner">
-              <div id="secretary-composer-pill" class="ws-composer-pill">
-                <textarea id="secretary-input" class="ws-composer-input" rows="1" placeholder="บอกเอได้เลยค่ะ..."></textarea>
-                <div class="ws-composer-trail">
-                  <button type="button" id="secretary-send-btn" class="ws-send-btn" aria-label="ส่ง" onclick="sendToSecretary()">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M12 19V5M5 12l7-7 7 7"/>
-                    </svg>
-                  </button>
-                </div>
-              </div>
-              <p class="ws-composer-footnote">Ener-AI · น้องเอ เลขาส่วนตัว</p>
+
+          <div class="office-activity-panel">
+            <div class="office-activity-header">⚡ ACTIVITY</div>
+            <div id="office-activity-feed">
+              <div style="color:oklch(0.40 0.01 250); text-align:center; padding:8px;">กำลังโหลด...</div>
             </div>
           </div>
         </div>

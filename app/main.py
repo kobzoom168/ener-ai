@@ -6357,6 +6357,33 @@ async def secretary_history(request: Request):
     return {"messages": msgs}
 
 
+@app.get("/workspace/office/activity")
+async def office_activity_feed(request: Request):
+    await _require_admin(request)
+    async with get_db() as db:
+        cur = await db.execute(
+            """
+            SELECT agent_name, success, error_msg, created_at,
+                   ROUND((julianday('now') - julianday(created_at)) * 1440) AS mins_ago
+            FROM agent_runs
+            ORDER BY id DESC
+            LIMIT 30
+            """
+        )
+        rows = await cur.fetchall()
+    items = []
+    for r in rows:
+        items.append(
+            {
+                "agent": r["agent_name"],
+                "success": bool(r["success"]),
+                "error": r["error_msg"] or "",
+                "mins_ago": int(r["mins_ago"] or 0),
+            }
+        )
+    return {"items": items}
+
+
 @app.get("/workspace/chat/history")
 async def workspace_chat_history(request: Request):
     await _require_admin(request)

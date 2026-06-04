@@ -256,91 +256,207 @@
       min-width: 0;
       width: 100%;
       display: flex;
+      flex-direction: row;
+      overflow: hidden;
+      gap: 0;
+    }
+
+    #panel-office .office-left {
+      flex: 1;
+      min-width: 0;
+      overflow-y: auto;
+      padding: 1rem 1rem 1rem 1.25rem;
+    }
+
+    #panel-office .office-left .office-agents-inner {
+      max-width: none;
+      margin: 0;
+      width: 100%;
+    }
+
+    #panel-office .office-right {
+      width: 340px;
+      flex-shrink: 0;
+      border-left: 1px solid oklch(0.22 0.01 250);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: oklch(0.14 0.01 250);
+    }
+
+    #panel-office .office-sec-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      border-bottom: 1px solid oklch(0.2 0.01 250);
+    }
+
+    #panel-office .office-sec-header {
+      padding: 8px 12px;
+      font-size: 10px;
+      font-weight: 600;
+      color: oklch(0.65 0.05 280);
+      letter-spacing: 0.05em;
+      border-bottom: 1px solid oklch(0.2 0.01 250);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    #panel-office #office-secretary-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-height: 0;
+    }
+
+    #panel-office #office-sec-welcome {
+      text-align: center;
+      padding: 1rem 0.5rem;
+      color: oklch(0.5 0.02 250);
+      font-size: 11px;
+    }
+
+    #panel-office .office-sec-ai-text.markdown-body {
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    #panel-office .office-sec-ai-text.markdown-body p {
+      margin: 0.35em 0;
+    }
+
+    #panel-office .office-sec-ai-text.markdown-body pre {
+      font-size: 10px;
+      max-width: 100%;
+      overflow-x: auto;
+    }
+
+    #panel-office .office-sec-input-wrap {
+      padding: 8px;
+      border-top: 1px solid oklch(0.2 0.01 250);
+      flex-shrink: 0;
+    }
+
+    #panel-office .office-sec-input-row {
+      display: flex;
+      gap: 6px;
+      align-items: flex-end;
+    }
+
+    #panel-office #office-sec-input {
+      flex: 1;
+      background: oklch(0.15 0.01 250);
+      border: 1px solid oklch(0.25 0.01 250);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 12px;
+      color: var(--foreground);
+      resize: none;
+      max-height: 80px;
+      outline: none;
+      font-family: inherit;
+      line-height: 1.4;
+    }
+
+    #panel-office .office-sec-send-btn {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background: oklch(0.55 0.25 280);
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    #panel-office .office-sec-send-btn:hover {
+      opacity: 0.9;
+    }
+
+    #panel-office .office-sec-send-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    #panel-office .office-activity-panel {
+      height: 200px;
+      flex-shrink: 0;
+      display: flex;
       flex-direction: column;
       overflow: hidden;
     }
 
-    #panel-office .office-agents-section {
+    #panel-office .office-activity-header {
+      padding: 8px 12px;
+      font-size: 10px;
+      font-weight: 600;
+      color: oklch(0.55 0.05 250);
+      letter-spacing: 0.05em;
+      border-bottom: 1px solid oklch(0.2 0.01 250);
       flex-shrink: 0;
-      overflow-y: auto;
-      padding: 0 1rem 12px;
-      max-height: 38vh;
-      width: 100%;
-      box-sizing: border-box;
     }
 
-    #panel-office .office-agents-inner {
-      max-width: 48rem;
-      margin: 0 auto;
-      width: 100%;
-    }
-
-    #panel-office #office-secretary {
+    #panel-office #office-activity-feed {
       flex: 1;
-      min-height: 240px;
-      min-width: 0;
-      width: 100%;
+      overflow-y: auto;
+      padding: 6px 8px;
       display: flex;
       flex-direction: column;
-      border-top: 1px solid oklch(0.25 0.01 250);
-      background: oklch(0.15 0.01 250);
+      gap: 3px;
+      font-size: 10px;
+      min-height: 0;
     }
 
-    #panel-office .office-secretary-header {
-      flex-shrink: 0;
-      width: 100%;
-      padding: 0.75rem 1rem 0.25rem;
-      box-sizing: border-box;
-    }
-
-    #panel-office .office-secretary-header .ws-chat-inner {
+    #panel-office .office-activity-row {
       display: flex;
       align-items: center;
-      gap: 0.5rem;
-      font-size: 0.875rem;
+      gap: 5px;
+      padding: 2px 4px;
+      border-radius: 3px;
+    }
+
+    #panel-office .office-tasks-block {
+      margin-top: 0.5rem;
+      padding: 0.75rem;
+      border-radius: 0.75rem;
+      background: oklch(0.17 0.01 250);
+      border: 1px solid oklch(0.25 0.01 250);
+    }
+
+    #panel-office .office-tasks-title {
+      font-size: 11px;
       font-weight: 600;
-      color: var(--foreground);
+      color: var(--muted-foreground);
+      margin: 0 0 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
     }
 
-    #panel-office .office-secretary-messages {
-      flex: 1;
-      min-height: 0;
-      min-width: 0;
-      width: 100%;
-      overflow-y: auto;
-      padding: 0.75rem 1rem;
-      box-sizing: border-box;
-    }
+    @media (max-width: 960px) {
+      #panel-office .office-body {
+        flex-direction: column;
+        overflow-y: auto;
+      }
 
-    #panel-office .office-secretary-welcome {
-      flex: 0 0 auto;
-      padding: 1rem 0 1.5rem;
-    }
+      #panel-office .office-left {
+        flex: none;
+        overflow: visible;
+      }
 
-    #panel-office .office-secretary-composer {
-      flex-shrink: 0;
-      width: 100%;
-      padding: 0 1rem 0.75rem;
-      box-sizing: border-box;
-      background: linear-gradient(to top, oklch(0.15 0.01 250) 70%, transparent);
-    }
-
-    #panel-office #office-secretary.ws-chat-empty .office-secretary-messages {
-      display: flex;
-      flex-direction: column;
-    }
-
-    #panel-office #office-secretary.ws-chat-empty .office-secretary-welcome {
-      display: flex;
-      flex: 1;
-    }
-
-    #panel-office #office-secretary.ws-has-messages .office-secretary-welcome {
-      display: none !important;
-    }
-
-    #panel-office #office-secretary #secretary-msg-list {
-      width: 100%;
+      #panel-office .office-right {
+        width: 100%;
+        border-left: none;
+        border-top: 1px solid oklch(0.22 0.01 250);
+        min-height: 420px;
+      }
     }
 
     /* ===== PIXEL ART OFFICE ===== */
