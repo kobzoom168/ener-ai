@@ -28,7 +28,7 @@
       },
     };
   </script>
-  <link rel="stylesheet" href="/static/workspace/workspace.css">
+  <link rel="stylesheet" href="/static/workspace/workspace.css?v=office-layout1">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" crossorigin="anonymous">
   <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js" crossorigin="anonymous"></script>
@@ -308,23 +308,23 @@
       background: var(--card); padding: 0.375rem 0.75rem; font-size: 0.75rem;
       color: var(--muted-foreground);
     }
-    #panel-chat .msg-row {
+    #panel-chat .msg-row, #office-secretary .msg-row {
       display: flex;
       width: 100%;
       margin-bottom: 0.75rem;
       padding: 0;
       box-sizing: border-box;
     }
-    #panel-chat .user-row {
+    #panel-chat .user-row, #office-secretary .user-row {
       justify-content: flex-end;
       align-items: flex-end;
     }
-    #panel-chat .ai-row {
+    #panel-chat .ai-row, #office-secretary .ai-row {
       justify-content: flex-start;
       align-items: flex-start;
       gap: 0.75rem;
     }
-    #panel-chat .user-bubble {
+    #panel-chat .user-bubble, #office-secretary .user-bubble {
       width: fit-content;
       max-width: min(78%, 32rem);
       min-width: 0;
@@ -334,7 +334,7 @@
       color: var(--foreground);
       flex: 0 0 auto;
     }
-    #panel-chat .ai-bubble {
+    #panel-chat .ai-bubble, #office-secretary .ai-bubble {
       flex: 1 1 0;
       min-width: 0;
       width: 100%;
@@ -342,7 +342,7 @@
       padding: 0.25rem 0;
       background: transparent;
     }
-    #panel-chat .ai-bubble-wrap {
+    #panel-chat .ai-bubble-wrap, #office-secretary .ai-bubble-wrap {
       position: relative;
       flex: 1 1 0;
       min-width: 0;
@@ -352,23 +352,25 @@
       flex-direction: column;
       gap: 0.35rem;
     }
-    #panel-chat .msg-actions {
+    #panel-chat .msg-actions, #office-secretary .msg-actions {
       display: flex;
       justify-content: flex-end;
       opacity: 0;
       transition: opacity 0.2s;
     }
     #panel-chat .ai-bubble-wrap:hover .msg-actions,
-    #panel-chat .msg-actions:focus-within {
+    #office-secretary .ai-bubble-wrap:hover .msg-actions,
+    #panel-chat .msg-actions:focus-within, #office-secretary .msg-actions:focus-within {
       opacity: 1;
     }
-    #panel-chat .msg-toolbar {
+    #panel-chat .msg-toolbar, #office-secretary .msg-toolbar {
       display: flex;
       flex-wrap: wrap;
       gap: 0.25rem;
     }
     #panel-chat .msg-btn,
-    #panel-chat .copy-btn {
+    #office-secretary .msg-btn,
+    #panel-chat .copy-btn, #office-secretary .copy-btn {
       padding: 0.25rem 0.5rem;
       border-radius: 6px;
       border: 1px solid var(--border);
@@ -379,49 +381,50 @@
       transition: background 0.2s, color 0.2s, border-color 0.2s;
     }
     #panel-chat .msg-btn:hover,
-    #panel-chat .copy-btn:hover {
+    #office-secretary .msg-btn:hover,
+    #panel-chat .copy-btn:hover, #office-secretary .copy-btn:hover {
       color: var(--foreground);
       background: oklch(0.25 0.01 250);
     }
-    #panel-chat .msg-btn.active {
+    #panel-chat .msg-btn.active, #office-secretary .msg-btn.active {
       color: #e6edf3;
       border-color: #7c3aed;
       background: oklch(0.28 0.08 300 / 0.5);
     }
-    #panel-chat .copy-btn.copied {
+    #panel-chat .copy-btn.copied, #office-secretary .copy-btn.copied {
       color: #a78bfa;
       border-color: #7c3aed;
       background: oklch(0.28 0.08 300 / 0.5);
     }
-    #panel-chat .ai-row .msg-bubble.ai-bubble {
+    #panel-chat .ai-row .msg-bubble.ai-bubble, #office-secretary .ai-row .msg-bubble.ai-bubble {
       flex: 1 1 0;
     }
-    #panel-chat .msg-meta {
+    #panel-chat .msg-meta, #office-secretary .msg-meta {
       font-size: 0.6875rem;
       color: var(--muted-foreground);
       margin-top: 0.35rem;
       opacity: 0.7;
     }
-    #panel-chat .user-bubble .msg-meta { text-align: right; }
-    #panel-chat .ai-bubble .msg-meta { text-align: left; }
-    #panel-chat .msg-text {
+    #panel-chat .user-bubble .msg-meta, #office-secretary .user-bubble .msg-meta { text-align: right; }
+    #panel-chat .ai-bubble .msg-meta, #office-secretary .ai-bubble .msg-meta { text-align: left; }
+    #panel-chat .msg-text, #office-secretary .msg-text {
       font-size: 1rem;
       line-height: 1.55;
       word-break: break-word;
       overflow-wrap: anywhere;
     }
-    #panel-chat .msg-text.markdown-body {
+    #panel-chat .msg-text.markdown-body, #office-secretary .msg-text.markdown-body {
       white-space: normal;
     }
-    #panel-chat .msg-text.plain-text {
+    #panel-chat .msg-text.plain-text, #office-secretary .msg-text.plain-text {
       white-space: pre-wrap;
       font-family: Consolas, Monaco, monospace;
       font-size: 0.875rem;
       line-height: 1.5;
       color: #c9d1d9;
     }
-    #panel-chat .msg-text.streaming-live::after {
-      content: '▍';
+    #panel-chat .msg-text.streaming-live::after, #office-secretary .msg-text.streaming-live::after {
+      content: 'โ–';
       color: #a78bfa;
       animation: ws-cursor-blink 1s step-end infinite;
       margin-left: 2px;
@@ -429,28 +432,31 @@
     @keyframes ws-cursor-blink {
       50% { opacity: 0; }
     }
-    #panel-chat .user-bubble .msg-text {
+    #panel-chat .user-bubble .msg-text, #office-secretary .user-bubble .msg-text {
       white-space: pre-wrap;
     }
     #panel-chat .markdown-body h1,
+    #office-secretary .markdown-body h1,
     #panel-chat .markdown-body h2,
-    #panel-chat .markdown-body h3 {
+    #office-secretary .markdown-body h2,
+    #panel-chat .markdown-body h3, #office-secretary .markdown-body h3 {
       font-weight: 600;
       margin: 1rem 0 0.5rem;
       color: #e6edf3;
     }
-    #panel-chat .markdown-body h1 { font-size: 1.4em; }
-    #panel-chat .markdown-body h2 { font-size: 1.2em; }
-    #panel-chat .markdown-body h3 { font-size: 1.05em; }
-    #panel-chat .markdown-body strong { color: #e6edf3; font-weight: 600; }
+    #panel-chat .markdown-body h1, #office-secretary .markdown-body h1 { font-size: 1.4em; }
+    #panel-chat .markdown-body h2, #office-secretary .markdown-body h2 { font-size: 1.2em; }
+    #panel-chat .markdown-body h3, #office-secretary .markdown-body h3 { font-size: 1.05em; }
+    #panel-chat .markdown-body strong, #office-secretary .markdown-body strong { color: #e6edf3; font-weight: 600; }
     #panel-chat .markdown-body ul,
-    #panel-chat .markdown-body ol {
+    #office-secretary .markdown-body ul,
+    #panel-chat .markdown-body ol, #office-secretary .markdown-body ol {
       margin: 0.5rem 0;
       padding-left: 1.25rem;
     }
-    #panel-chat .markdown-body li { margin: 0.25rem 0; }
-    #panel-chat .markdown-body p { margin: 0.5rem 0; line-height: 1.7; }
-    #panel-chat .markdown-body code:not(pre code) {
+    #panel-chat .markdown-body li, #office-secretary .markdown-body li { margin: 0.25rem 0; }
+    #panel-chat .markdown-body p, #office-secretary .markdown-body p { margin: 0.5rem 0; line-height: 1.7; }
+    #panel-chat .markdown-body code:not(pre code), #office-secretary .markdown-body code:not(pre code) {
       background: #21262d;
       padding: 2px 6px;
       border-radius: 4px;
@@ -458,14 +464,14 @@
       font-size: 0.8125rem;
       color: #e6897a;
     }
-    #panel-chat .code-block {
+    #panel-chat .code-block, #office-secretary .code-block {
       background: #0d1117;
       border: 1px solid #30363d;
       border-radius: 8px;
       margin: 0.75rem 0;
       overflow: hidden;
     }
-    #panel-chat .code-header {
+    #panel-chat .code-header, #office-secretary .code-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
@@ -473,13 +479,13 @@
       background: #161b22;
       border-bottom: 1px solid #30363d;
     }
-    #panel-chat .code-lang {
+    #panel-chat .code-lang, #office-secretary .code-lang {
       font-size: 12px;
       color: #8b949e;
       font-family: Consolas, Monaco, monospace;
       text-transform: lowercase;
     }
-    #panel-chat .code-copy-btn {
+    #panel-chat .code-copy-btn, #office-secretary .code-copy-btn {
       display: inline-flex;
       align-items: center;
       gap: 4px;
@@ -491,20 +497,20 @@
       padding: 2px 6px;
       border-radius: 4px;
     }
-    #panel-chat .code-copy-btn:hover {
+    #panel-chat .code-copy-btn:hover, #office-secretary .code-copy-btn:hover {
       background: #21262d;
       color: #ccc;
     }
-    #panel-chat .code-copy-btn.copied {
+    #panel-chat .code-copy-btn.copied, #office-secretary .code-copy-btn.copied {
       color: #a78bfa;
     }
-    #panel-chat .code-block pre {
+    #panel-chat .code-block pre, #office-secretary .code-block pre {
       margin: 0;
       padding: 14px;
       overflow-x: auto;
       background: transparent;
     }
-    #panel-chat .code-block code {
+    #panel-chat .code-block code, #office-secretary .code-block code {
       font-family: Consolas, Monaco, monospace;
       font-size: 13px;
       line-height: 1.5;
@@ -512,7 +518,6 @@
       white-space: pre;
       display: block;
     }
-
     .raw-modal-overlay {
       position: fixed;
       inset: 0;
@@ -856,7 +861,7 @@
 </script>
 <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 <script src="/static/workspace/workspace-markdown.js?v=openrouter10"></script>
-<script src="/static/workspace/workspace.js?v=office-secretary1"></script>
+<script src="/static/workspace/workspace.js?v=office-layout1"></script>
 <script>
   document.addEventListener('DOMContentLoaded', function() {
     if (window.lucide) lucide.createIcons();
