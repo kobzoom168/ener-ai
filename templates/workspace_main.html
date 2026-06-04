@@ -1,16 +1,18 @@
 <main id="content">
     <div id="panel-secretary" class="panel ws-chat-panel ws-chat-empty{% if tool == 'secretary' %} active-panel{% endif %}"{% if tool != 'secretary' %} style="display:none"{% endif %}>
-      <div id="secretary-welcome" class="ws-chat-welcome">
-        <p style="font-size:2rem; margin-bottom:0.5rem;">👩‍💼</p>
-        <h2 class="ws-welcome-title" style="font-size:1.25rem; font-weight:500; margin:0 0 0.5rem;">สวัสดีค่ะ คุณกบ</h2>
-        <p style="color:var(--muted-foreground); font-size:0.875rem;">เอพร้อมช่วยเสมอค่ะ บอกได้เลยว่าต้องการอะไร</p>
+      <div id="secretary-messages" class="ws-chat-messages">
+        <div class="ws-chat-inner">
+          <div id="secretary-welcome" class="ws-chat-welcome">
+            <p style="font-size:2.5rem; margin-bottom:0.5rem; line-height:1;">👩‍💼</p>
+            <h2 class="ws-welcome-title" style="font-size:1.125rem; font-weight:500; margin:0 0 0.25rem;">สวัสดีค่ะ คุณกบ</h2>
+            <p style="color:var(--muted-foreground); font-size:0.8125rem; margin:0;">เอพร้อมช่วยเสมอค่ะ</p>
+          </div>
+          <div id="secretary-msg-list"></div>
+        </div>
       </div>
-      <div id="secretary-messages" class="ws-chat-messages hidden">
-        <div class="ws-chat-inner" id="secretary-msg-list"></div>
-      </div>
-      <div class="ws-composer-wrap">
+      <div id="secretary-input-wrap" class="ws-composer-wrap">
         <div class="ws-composer-inner">
-          <div class="ws-composer-pill">
+          <div id="secretary-composer-pill" class="ws-composer-pill">
             <textarea id="secretary-input" class="ws-composer-input" rows="1" placeholder="บอกเอได้เลยค่ะ..."></textarea>
             <div class="ws-composer-trail">
               <button type="button" id="secretary-send-btn" class="ws-send-btn" aria-label="ส่ง" onclick="sendToSecretary()">
@@ -20,6 +22,7 @@
               </button>
             </div>
           </div>
+          <p class="ws-composer-footnote">Ener-AI · น้องเอ เลขาส่วนตัว</p>
         </div>
       </div>
     </div>

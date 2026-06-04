@@ -9,6 +9,7 @@ document.addEventListener('DOMContentLoaded', function() {
     toastTimer: null,
     pendingImageFile: null,
     pendingPreviewUrl: '',
+    secretaryHistoryLoaded: false,
   };
 
   const chatMessages = document.getElementById('chat-messages-inner') || document.getElementById('chat-messages');
@@ -515,55 +516,98 @@ document.addEventListener('DOMContentLoaded', function() {
 
   function updateSecretaryWelcome() {
     const welcome = document.getElementById('secretary-welcome');
-    const messagesWrap = document.getElementById('secretary-messages');
     const list = document.getElementById('secretary-msg-list');
     const panel = document.getElementById('panel-secretary');
-    if (!welcome || !messagesWrap || !list) return;
+    if (!welcome || !list) return;
     const hasMessages = Boolean(list.querySelector('.msg-row'));
     welcome.classList.toggle('hidden', hasMessages);
-    messagesWrap.classList.toggle('hidden', !hasMessages);
     if (panel) {
       panel.classList.toggle('ws-chat-empty', !hasMessages);
       panel.classList.toggle('ws-has-messages', hasMessages);
     }
   }
 
-  async function sendToSecretary() {
-    const input = document.getElementById('secretary-input');
+  function appendSecretaryUserBubble(text) {
     const list = document.getElementById('secretary-msg-list');
-    const sendBtn = document.getElementById('secretary-send-btn');
-    if (!input || !list) return;
-    const msg = (input.value || '').trim();
-    if (!msg) return;
-
-    updateSecretaryWelcome();
-    input.value = '';
-    input.style.height = 'auto';
-    if (sendBtn) sendBtn.disabled = true;
-
+    if (!list) return;
     list.insertAdjacentHTML(
       'beforeend',
-      `<div class="msg-row user-row" style="justify-content:flex-end; margin-bottom:1rem;">
-        <div class="msg-bubble user-bubble"><div class="msg-text">${escapeHtml(msg)}</div></div>
+      `<div class="msg-row user-row">
+        <div class="msg-bubble user-bubble"><div class="msg-text">${escapeHtml(text)}</div></div>
       </div>`
     );
+  }
 
-    const aiId = 'sec-' + Date.now();
+  function appendSecretaryAiBubble(textElId, content, streaming) {
+    const list = document.getElementById('secretary-msg-list');
+    if (!list) return null;
+    const streamingClass = streaming ? ' plain-text streaming-live' : '';
     list.insertAdjacentHTML(
       'beforeend',
-      `<div class="msg-row ai-row" id="${aiId}" style="margin-bottom:1rem;">
+      `<div class="msg-row ai-row">
         <div class="ws-ai-avatar" aria-hidden="true" style="font-size:1.1rem;">👩‍💼</div>
         <div class="ai-bubble-wrap">
           <div class="msg-bubble ai-bubble">
-            <div class="msg-text markdown-body plain-text streaming-live" id="${aiId}-text">...</div>
+            <div class="msg-text markdown-body${streamingClass}" id="${textElId}">${streaming ? '...' : ''}</div>
             <div class="msg-meta">เอ · เลขา</div>
           </div>
         </div>
       </div>`
     );
-    scrollSecretaryToBottom();
+    const textEl = document.getElementById(textElId);
+    if (textEl && content && !streaming) {
+      renderAiMessageContent(textEl, content);
+    }
+    return textEl;
+  }
 
-    const textEl = document.getElementById(aiId + '-text');
+  async function loadSecretaryHistory() {
+    const list = document.getElementById('secretary-msg-list');
+    const welcome = document.getElementById('secretary-welcome');
+    if (!list || state.secretaryHistoryLoaded) return;
+    try {
+      const data = await api('/workspace/secretary/history');
+      const messages = data.messages || [];
+      if (!messages.length) {
+        updateSecretaryWelcome();
+        return;
+      }
+      state.secretaryHistoryLoaded = true;
+      if (welcome) welcome.classList.add('hidden');
+      list.innerHTML = '';
+      for (const msg of messages) {
+        if (msg.role === 'user') {
+          appendSecretaryUserBubble(msg.content || '');
+        } else {
+          const id = 'sec-h-' + Math.random().toString(36).slice(2);
+          appendSecretaryAiBubble(id, msg.content || '', false);
+        }
+      }
+      updateSecretaryWelcome();
+      scrollSecretaryToBottom();
+    } catch (error) {
+      console.warn('secretary history load failed', error);
+      updateSecretaryWelcome();
+    }
+  }
+
+  async function sendToSecretary() {
+    const input = document.getElementById('secretary-input');
+    const sendBtn = document.getElementById('secretary-send-btn');
+    if (!input) return;
+    const msg = (input.value || '').trim();
+    if (!msg) return;
+
+    input.value = '';
+    input.style.height = 'auto';
+    if (sendBtn) sendBtn.disabled = true;
+
+    appendSecretaryUserBubble(msg);
+    updateSecretaryWelcome();
+
+    const aiId = 'sec-' + Date.now();
+    const textEl = appendSecretaryAiBubble(aiId + '-text', '', true);
+    scrollSecretaryToBottom();
     let accumulated = '';
 
     try {
@@ -624,6 +668,7 @@ document.addEventListener('DOMContentLoaded', function() {
         textEl.classList.remove('streaming-live', 'plain-text');
         renderAiMessageContent(textEl, finalText);
       }
+      state.secretaryHistoryLoaded = true;
     } catch (error) {
       if (textEl) {
         textEl.classList.remove('streaming-live');
@@ -735,7 +780,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (name === 'office') startOfficeAutoRefresh();
     else stopOfficeAutoRefresh();
     if (name === 'secretary') {
-      updateSecretaryWelcome();
+      loadSecretaryHistory();
       document.getElementById('secretary-input')?.focus();
     }
   }
@@ -1559,6 +1604,20 @@ document.addEventListener('DOMContentLoaded', function() {
     if (input && input.files && input.files[0]) setPendingImage(input.files[0]);
   };
 
+  const secretaryInput = document.getElementById('secretary-input');
+  if (secretaryInput) {
+    secretaryInput.addEventListener('input', function() {
+      this.style.height = 'auto';
+      this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+    });
+    secretaryInput.addEventListener('keydown', function(event) {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        sendToSecretary();
+      }
+    });
+  }
+
   chatInput.addEventListener('input', function() {
     this.style.height = 'auto';
     this.style.height = Math.min(this.scrollHeight, 200) + 'px';
@@ -1850,12 +1909,6 @@ document.addEventListener('DOMContentLoaded', function() {
     initialTool === 'chat' && chatMessages && chatMessages.querySelector('.msg-row');
   showPanel(initialTool, {skipHistoryLoad: Boolean(hasSsrMessages)});
   applyOfficeChatPrefill();
-  document.getElementById('secretary-input')?.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault();
-      sendToSecretary();
-    }
-  });
   loadProjects();
   if (hasSsrMessages) {
     enhanceSsrChatMessages();

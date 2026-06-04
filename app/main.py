@@ -6269,6 +6269,36 @@ async def workspace_chat_stream(request: Request):
     )
 
 
+_SECRETARY_CONVERSATION_ID = "secretary"
+_SECRETARY_SOURCE = "secretary"
+
+
+async def _save_secretary_messages(user_text: str, reply_text: str) -> None:
+    user_id = _workspace_user_id()
+    async with get_db() as db:
+        await db.execute(
+            """
+            INSERT INTO messages (chat_id, conversation_id, role, content, source, model_used)
+            VALUES (?, ?, 'user', ?, ?, NULL)
+            """,
+            (user_id, _SECRETARY_CONVERSATION_ID, user_text, _SECRETARY_SOURCE),
+        )
+        await db.execute(
+            """
+            INSERT INTO messages (chat_id, conversation_id, role, content, source, model_used)
+            VALUES (?, ?, 'assistant', ?, ?, ?)
+            """,
+            (
+                user_id,
+                _SECRETARY_CONVERSATION_ID,
+                reply_text,
+                _SECRETARY_SOURCE,
+                "SecretaryAgent",
+            ),
+        )
+        await db.commit()
+
+
 @app.post("/workspace/secretary/stream")
 async def workspace_secretary_stream(request: Request):
     await _require_admin(request)
@@ -6283,8 +6313,10 @@ async def workspace_secretary_stream(request: Request):
         try:
             yield f"data: {json.dumps({'type': 'start'}, ensure_ascii=False)}\n\n"
             reply = await handle_secretary(message)
+            reply_text = str(reply or "").strip() or "เอรับทราบแล้วค่ะ"
+            await _save_secretary_messages(message, reply_text)
             buffer = ""
-            for word in str(reply or "").split(" "):
+            for word in reply_text.split(" "):
                 buffer += word + " "
                 if len(buffer) > 20:
                     yield f"data: {json.dumps({'type': 'token', 'text': buffer}, ensure_ascii=False)}\n\n"
@@ -6304,6 +6336,24 @@ async def workspace_secretary_stream(request: Request):
             "Connection": "keep-alive",
         },
     )
+
+
+@app.get("/workspace/secretary/history")
+async def secretary_history(request: Request):
+    await _require_admin(request)
+    user_id = _workspace_user_id()
+    async with get_db() as db:
+        cur = await db.execute(
+            """
+            SELECT role, content FROM messages
+            WHERE source = ? AND chat_id = ?
+            ORDER BY id DESC LIMIT 40
+            """,
+            (_SECRETARY_SOURCE, user_id),
+        )
+        rows = await cur.fetchall()
+    msgs = [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
+    return {"messages": msgs}
 
 
 @app.get("/workspace/chat/history")
