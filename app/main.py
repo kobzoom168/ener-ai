@@ -5391,6 +5391,7 @@ async def ai_event(request: Request):
 
 
 WORKSPACE_TOOLS = [
+    ("secretary", "👩‍💼 เลขา"),
     ("chat", "💬 Chat"),
     ("notes", "📝 Notes"),
     ("tasks", "✅ Tasks"),
@@ -6256,6 +6257,43 @@ async def workspace_chat_stream(request: Request):
             else:
                 detail = str(exc)
             yield f"data: {json.dumps({'type': 'error', 'text': detail}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+@app.post("/workspace/secretary/stream")
+async def workspace_secretary_stream(request: Request):
+    await _require_admin(request)
+    body = await request.json()
+    message = str(body.get("message", body.get("text", ""))).strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="empty message")
+
+    from app.agents.secretary_agent import handle_secretary
+
+    async def generate():
+        try:
+            yield f"data: {json.dumps({'type': 'start'}, ensure_ascii=False)}\n\n"
+            reply = await handle_secretary(message)
+            buffer = ""
+            for word in str(reply or "").split(" "):
+                buffer += word + " "
+                if len(buffer) > 20:
+                    yield f"data: {json.dumps({'type': 'token', 'text': buffer}, ensure_ascii=False)}\n\n"
+                    buffer = ""
+            if buffer:
+                yield f"data: {json.dumps({'type': 'token', 'text': buffer}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'model': 'SecretaryAgent', 'model_label': 'เอ · เลขา'}, ensure_ascii=False)}\n\n"
+        except Exception as exc:
+            yield f"data: {json.dumps({'type': 'error', 'text': str(exc)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         generate(),

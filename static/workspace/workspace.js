@@ -508,6 +508,134 @@ document.addEventListener('DOMContentLoaded', function() {
     scrollToBottom();
   }
 
+  function scrollSecretaryToBottom() {
+    const container = document.getElementById('secretary-messages');
+    if (container) container.scrollTop = container.scrollHeight;
+  }
+
+  function updateSecretaryWelcome() {
+    const welcome = document.getElementById('secretary-welcome');
+    const messagesWrap = document.getElementById('secretary-messages');
+    const list = document.getElementById('secretary-msg-list');
+    const panel = document.getElementById('panel-secretary');
+    if (!welcome || !messagesWrap || !list) return;
+    const hasMessages = Boolean(list.querySelector('.msg-row'));
+    welcome.classList.toggle('hidden', hasMessages);
+    messagesWrap.classList.toggle('hidden', !hasMessages);
+    if (panel) {
+      panel.classList.toggle('ws-chat-empty', !hasMessages);
+      panel.classList.toggle('ws-has-messages', hasMessages);
+    }
+  }
+
+  async function sendToSecretary() {
+    const input = document.getElementById('secretary-input');
+    const list = document.getElementById('secretary-msg-list');
+    const sendBtn = document.getElementById('secretary-send-btn');
+    if (!input || !list) return;
+    const msg = (input.value || '').trim();
+    if (!msg) return;
+
+    updateSecretaryWelcome();
+    input.value = '';
+    input.style.height = 'auto';
+    if (sendBtn) sendBtn.disabled = true;
+
+    list.insertAdjacentHTML(
+      'beforeend',
+      `<div class="msg-row user-row" style="justify-content:flex-end; margin-bottom:1rem;">
+        <div class="msg-bubble user-bubble"><div class="msg-text">${escapeHtml(msg)}</div></div>
+      </div>`
+    );
+
+    const aiId = 'sec-' + Date.now();
+    list.insertAdjacentHTML(
+      'beforeend',
+      `<div class="msg-row ai-row" id="${aiId}" style="margin-bottom:1rem;">
+        <div class="ws-ai-avatar" aria-hidden="true" style="font-size:1.1rem;">👩‍💼</div>
+        <div class="ai-bubble-wrap">
+          <div class="msg-bubble ai-bubble">
+            <div class="msg-text markdown-body plain-text streaming-live" id="${aiId}-text">...</div>
+            <div class="msg-meta">เอ · เลขา</div>
+          </div>
+        </div>
+      </div>`
+    );
+    scrollSecretaryToBottom();
+
+    const textEl = document.getElementById(aiId + '-text');
+    let accumulated = '';
+
+    try {
+      const response = await fetch('/workspace/secretary/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ message: msg }),
+      });
+      if (!response.ok) {
+        const errBody = await response.text().catch(() => '');
+        throw new Error(errBody || `Request failed (${response.status})`);
+      }
+      if (!response.body) throw new Error('Streaming not supported');
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let sseBuf = '';
+
+      const handlePayload = (payload) => {
+        if (!payload || !payload.type) return;
+        if (payload.type === 'token' && payload.text) {
+          accumulated += payload.text;
+          if (textEl) textEl.textContent = accumulated;
+          scrollSecretaryToBottom();
+        }
+        if (payload.type === 'error') {
+          throw new Error(payload.text || payload.message || 'Stream failed');
+        }
+      };
+
+      const parseSseChunk = (chunk) => {
+        for (const line of chunk.split('\n')) {
+          if (!line.startsWith('data:')) continue;
+          const jsonText = line.replace(/^data:\s*/, '').trim();
+          if (!jsonText) continue;
+          try {
+            handlePayload(JSON.parse(jsonText));
+          } catch (err) {
+            if (err instanceof SyntaxError) continue;
+            throw err;
+          }
+        }
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        sseBuf += decoder.decode(value, { stream: true });
+        const parts = sseBuf.split('\n\n');
+        sseBuf = parts.pop() || '';
+        parts.forEach(parseSseChunk);
+      }
+      if (sseBuf.trim()) parseSseChunk(sseBuf);
+
+      const finalText = accumulated.trim() || 'เอรับทราบแล้วค่ะ';
+      if (textEl) {
+        textEl.classList.remove('streaming-live', 'plain-text');
+        renderAiMessageContent(textEl, finalText);
+      }
+    } catch (error) {
+      if (textEl) {
+        textEl.classList.remove('streaming-live');
+        textEl.textContent = '⚠️ ' + (error.message || 'เกิดข้อผิดพลาด');
+      }
+    } finally {
+      if (sendBtn) sendBtn.disabled = false;
+      updateSecretaryWelcome();
+      scrollSecretaryToBottom();
+    }
+  }
+
   function startThinkingStatus(thinkingId) {
     const steps = [
       'กำลังส่งคำขอ...',
@@ -606,6 +734,10 @@ document.addEventListener('DOMContentLoaded', function() {
     if (name === 'code') loadCodePanel();
     if (name === 'office') startOfficeAutoRefresh();
     else stopOfficeAutoRefresh();
+    if (name === 'secretary') {
+      updateSecretaryWelcome();
+      document.getElementById('secretary-input')?.focus();
+    }
   }
 
   function openOfficeAgentChat(el) {
@@ -1702,6 +1834,7 @@ document.addEventListener('DOMContentLoaded', function() {
   window.askFile = askFile;
   window.dropZoneClick = dropZoneClick;
   window.selectSlash = selectSlash;
+  window.sendToSecretary = sendToSecretary;
   window.showToast = showToast;
   window.api = api;
   window.escapeHtml = escapeHtml;
@@ -1717,6 +1850,12 @@ document.addEventListener('DOMContentLoaded', function() {
     initialTool === 'chat' && chatMessages && chatMessages.querySelector('.msg-row');
   showPanel(initialTool, {skipHistoryLoad: Boolean(hasSsrMessages)});
   applyOfficeChatPrefill();
+  document.getElementById('secretary-input')?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      sendToSecretary();
+    }
+  });
   loadProjects();
   if (hasSsrMessages) {
     enhanceSsrChatMessages();
