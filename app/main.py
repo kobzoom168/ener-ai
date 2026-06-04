@@ -6384,6 +6384,62 @@ async def office_activity_feed(request: Request):
     return {"items": items}
 
 
+@app.get("/workspace/office/stream")
+async def office_event_stream(request: Request):
+    await _require_admin(request)
+    import asyncio
+
+    async def generate():
+        last_id = 0
+        async with get_db() as db:
+            cur = await db.execute(
+                "SELECT COALESCE(MAX(id), 0) AS mid FROM agent_events"
+            )
+            row = await cur.fetchone()
+            last_id = int(row["mid"] or 0)
+
+        while True:
+            if await request.is_disconnected():
+                break
+            async with get_db() as db:
+                cur = await db.execute(
+                    """
+                    SELECT id, event_type, agent_name, triggered_by, summary, context
+                    FROM agent_events
+                    WHERE id > ? AND event_type IN ('route', 'complete')
+                    ORDER BY id
+                    LIMIT 10
+                    """,
+                    (last_id,),
+                )
+                rows = await cur.fetchall()
+            for row in rows:
+                last_id = max(last_id, int(row["id"]))
+                try:
+                    ctx = json.loads(row["context"] or "{}")
+                except Exception:
+                    ctx = {}
+                event = {
+                    "id": row["id"],
+                    "type": row["event_type"],
+                    "from": ctx.get("from", row["triggered_by"]),
+                    "to": ctx.get("to", row["agent_name"]),
+                    "msg": row["summary"],
+                }
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            await asyncio.sleep(1.5)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
 @app.get("/workspace/chat/history")
 async def workspace_chat_history(request: Request):
     await _require_admin(request)

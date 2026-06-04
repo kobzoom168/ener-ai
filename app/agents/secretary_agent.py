@@ -39,6 +39,50 @@ SECRETARY_PERSONA = build_system_prompt(
 """
 )
 
+_KEY_TO_AGENT = {
+    "news": "NewsAgent",
+    "code": "CodeAgent",
+    "ener": "EnerAgent",
+    "content": "ContentAgent",
+    "tasks": "TaskAgent",
+    "monitor": "MonitorAgent",
+    "memory": "MemoryAgent",
+    "think": "ThinkTeam",
+    "gmail": "GmailAgent",
+    "tarot": "TarotAgent",
+    "secretary": "SecretaryAgent",
+}
+
+
+def agent_key_to_agent_name(key: str) -> str:
+    return _KEY_TO_AGENT.get(str(key or "").lower().strip(), "MainChatAgent")
+
+
+async def _emit_office_event(
+    from_agent: str,
+    to_agent: str,
+    message: str,
+    event_type: str = "route",
+) -> None:
+    from app.core.event_log import log_event
+
+    ctx = json.dumps(
+        {"from": from_agent, "to": to_agent, "type": event_type},
+        ensure_ascii=False,
+    )
+    try:
+        await log_event(
+            agent_name=to_agent,
+            event_type=event_type,
+            summary=(message or "")[:120],
+            context=ctx,
+            triggered_by=from_agent,
+            result="success",
+        )
+    except Exception as exc:
+        logger.warning("office event emit failed: %s", exc)
+
+
 _AGENT_LABELS = {
     "news": "ข่าว",
     "code": "โค้ด",
@@ -198,10 +242,23 @@ async def handle_secretary(message: str) -> str:
     query = str(intent.get("query", text) or text).strip()
 
     if agent_key != "secretary":
+        target_agent = agent_key_to_agent_name(agent_key)
+        await _emit_office_event(
+            "SecretaryAgent",
+            target_agent,
+            f"ส่งงาน: {query[:80]}",
+            "route",
+        )
         try:
             result = await _dispatch_agent(agent_key, query)
             body = str(result or "").strip()
             if body:
+                await _emit_office_event(
+                    target_agent,
+                    "SecretaryAgent",
+                    "ส่งผลกลับ ✓",
+                    "complete",
+                )
                 label = _AGENT_LABELS.get(agent_key, agent_key)
                 return f"👩‍💼 เอจัดการเรื่อง{label}ให้แล้วค่ะ\n\n{body}"
         except Exception as exc:

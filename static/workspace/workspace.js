@@ -11,6 +11,8 @@ document.addEventListener('DOMContentLoaded', function() {
     pendingPreviewUrl: '',
     secretaryHistoryLoaded: false,
     officeActivityTimer: null,
+    officeEventSource: null,
+    officeEventReconnectTimer: null,
   };
 
   const _AGENT_EMOJI = {
@@ -599,11 +601,113 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
+  function _agentShortName(agentName) {
+    return String(agentName || '').replace(/Agent$/, '');
+  }
+
+  function _showOfficeBubble(agentName, message, type) {
+    const desk = document.querySelector(
+      `.pixel-desk[data-agent-name="${agentName}"]`
+    );
+    if (!desk) return;
+
+    desk.querySelectorAll('.pixel-bubble').forEach((b) => b.remove());
+    desk.classList.add('routing');
+    setTimeout(() => desk.classList.remove('routing'), 4000);
+
+    const bubble = document.createElement('div');
+    bubble.className = `pixel-bubble ${type}`;
+    bubble.textContent = message;
+    desk.appendChild(bubble);
+    setTimeout(() => bubble.remove(), 4200);
+  }
+
+  function _updateActivityFeedItem(fromAgent, toAgent, msg, type) {
+    const feed = document.getElementById('office-activity-feed');
+    if (!feed) return;
+    const placeholder = feed.querySelector('[data-office-feed-placeholder]');
+    if (placeholder) placeholder.remove();
+
+    const emoji = _AGENT_EMOJI[toAgent] || '🤖';
+    const fromEmoji = _AGENT_EMOJI[fromAgent] || '🤖';
+    const color =
+      type === 'complete' ? 'oklch(0.60 0.15 150)' : 'oklch(0.65 0.15 60)';
+    const arrow = type === 'route' ? '→' : '✓';
+    const div = document.createElement('div');
+    div.className = 'office-activity-row';
+    div.style.cssText =
+      'animation:office-feed-fade-in 0.3s ease;display:flex;align-items:center;gap:4px;padding:2px 4px;';
+    div.innerHTML = `
+      <span style="font-size:11px;">${fromEmoji}</span>
+      <span style="color:${color};font-size:10px;">${arrow}</span>
+      <span style="font-size:11px;">${emoji}</span>
+      <span style="flex:1;font-size:10px;color:oklch(0.65 0.02 250);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(msg)}</span>
+      <span style="font-size:9px;color:oklch(0.40 0.01 250);">now</span>`;
+    feed.insertBefore(div, feed.firstChild);
+    while (feed.children.length > 20) feed.removeChild(feed.lastChild);
+  }
+
+  function stopOfficeEventStream() {
+    if (state.officeEventReconnectTimer) {
+      clearTimeout(state.officeEventReconnectTimer);
+      state.officeEventReconnectTimer = null;
+    }
+    if (state.officeEventSource) {
+      state.officeEventSource.close();
+      state.officeEventSource = null;
+    }
+  }
+
+  function startOfficeEventStream() {
+    if (!document.getElementById('office-activity-feed')) return;
+    stopOfficeEventStream();
+
+    const es = new EventSource('/workspace/office/stream');
+    state.officeEventSource = es;
+
+    es.onmessage = (e) => {
+      try {
+        const evt = JSON.parse(e.data);
+        const fromA = evt.from || '';
+        const toA = evt.to || '';
+        const msg = evt.msg || '';
+        const type = evt.type || 'route';
+
+        if (type === 'route') {
+          _showOfficeBubble(
+            fromA,
+            `→ ${_agentShortName(toA)}`,
+            'route'
+          );
+          const taskMsg = msg.replace(/^ส่งงาน:\s*/u, '').trim() || msg;
+          setTimeout(() => _showOfficeBubble(toA, taskMsg, 'route'), 300);
+        } else if (type === 'complete') {
+          _showOfficeBubble(fromA, '✓ done', 'complete');
+        }
+
+        _updateActivityFeedItem(fromA, toA, msg, type);
+      } catch (err) {
+        console.warn('office event parse failed', err);
+      }
+    };
+
+    es.onerror = () => {
+      stopOfficeEventStream();
+      state.officeEventReconnectTimer = setTimeout(() => {
+        const panel = document.getElementById('panel-office');
+        if (panel && panel.classList.contains('active-panel')) {
+          startOfficeEventStream();
+        }
+      }, 3000);
+    };
+  }
+
   function initOfficeRightPanel() {
     loadOfficeActivity();
     stopOfficeActivityRefresh();
     state.officeActivityTimer = setInterval(loadOfficeActivity, 15000);
     loadSecretaryHistory();
+    startOfficeEventStream();
   }
 
   function openOfficePixelDesk(el) {
@@ -860,6 +964,7 @@ document.addEventListener('DOMContentLoaded', function() {
       document.getElementById('office-sec-input')?.focus();
     } else {
       stopOfficeActivityRefresh();
+      stopOfficeEventStream();
     }
   }
 
@@ -1974,6 +2079,8 @@ document.addEventListener('DOMContentLoaded', function() {
   window.sendToSecretary = sendOfficeSecretary;
   window.sendOfficeSecretary = sendOfficeSecretary;
   window.loadOfficeActivity = loadOfficeActivity;
+  window.startOfficeEventStream = startOfficeEventStream;
+  window.stopOfficeEventStream = stopOfficeEventStream;
   window.focusOfficeSecretary = focusOfficeSecretary;
   window.showToast = showToast;
   window.api = api;
@@ -1996,6 +2103,19 @@ document.addEventListener('DOMContentLoaded', function() {
     updateChatWelcome();
     scrollToBottom();
   }
+
+  document.addEventListener('visibilitychange', () => {
+    const onOffice =
+      window.__WORKSPACE_TOOL__ === 'office' ||
+      window.__WORKSPACE_TOOL__ === 'secretary';
+    const panel = document.getElementById('panel-office');
+    const officeActive = panel && panel.classList.contains('active-panel');
+    if (document.hidden) {
+      stopOfficeEventStream();
+    } else if (onOffice && officeActive) {
+      startOfficeEventStream();
+    }
+  });
   } catch(err) {
     console.error('WORKSPACE JS ERROR:', err);
     const contentEl = document.getElementById('content');
