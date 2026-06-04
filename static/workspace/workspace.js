@@ -95,6 +95,9 @@ document.addEventListener('DOMContentLoaded', function() {
   function renderAiMessageContent(textEl, rawText) {
     if (typeof window.renderMarkdownInto === 'function') {
       window.renderMarkdownInto(textEl, rawText);
+      if (typeof window.bindCodeCopyButtons === 'function') {
+        window.bindCodeCopyButtons(textEl);
+      }
       return;
     }
     if (!textEl) return;
@@ -685,23 +688,29 @@ document.addEventListener('DOMContentLoaded', function() {
     const placeholder = feed.querySelector('[data-office-feed-placeholder]');
     if (placeholder) placeholder.remove();
 
-    const emoji = _AGENT_EMOJI[toAgent] || '🤖';
     const fromEmoji = _AGENT_EMOJI[fromAgent] || '🤖';
-    const color =
-      type === 'complete' ? 'oklch(0.60 0.15 150)' : 'oklch(0.65 0.15 60)';
-    const arrow = type === 'route' ? '→' : '✓';
+    const toEmoji = _AGENT_EMOJI[toAgent] || '🤖';
+    const isRoute = type === 'route';
+    const arrowColor = isRoute ? 'oklch(0.65 0.15 60)' : 'oklch(0.60 0.18 150)';
+    const arrow = isRoute ? '→' : '✓';
+    const arrowClass = isRoute ? 'activity-arrow-route' : 'activity-arrow-complete';
+    const fromName = _agentShortName(fromAgent);
+    const toName = _agentShortName(toAgent);
+    const direction = `${fromName}→${toName}`;
+
     const div = document.createElement('div');
     div.className = 'office-activity-row';
     div.style.cssText =
-      'animation:office-feed-fade-in 0.3s ease;display:flex;align-items:center;gap:4px;padding:2px 4px;';
+      'animation:office-feed-fade-in 0.3s ease;display:flex;align-items:center;gap:3px;padding:3px 4px;border-radius:3px;';
     div.innerHTML = `
-      <span style="font-size:11px;">${fromEmoji}</span>
-      <span style="color:${color};font-size:10px;">${arrow}</span>
-      <span style="font-size:11px;">${emoji}</span>
-      <span style="flex:1;font-size:10px;color:oklch(0.65 0.02 250);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(msg)}</span>
-      <span style="font-size:9px;color:oklch(0.40 0.01 250);">now</span>`;
+      <span style="font-size:12px;flex-shrink:0;">${fromEmoji}</span>
+      <span class="${arrowClass}" style="font-size:9px;flex-shrink:0;font-weight:700;color:${arrowColor};">${arrow}</span>
+      <span style="font-size:12px;flex-shrink:0;">${toEmoji}</span>
+      <span style="flex:1;font-size:9px;color:oklch(0.60 0.02 250);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+            title="${escapeHtml(direction)} — ${escapeHtml(msg)}">${escapeHtml(direction)}</span>
+      <span style="font-size:8px;color:oklch(0.38 0.01 250);flex-shrink:0;">now</span>`;
     feed.insertBefore(div, feed.firstChild);
-    while (feed.children.length > 20) feed.removeChild(feed.lastChild);
+    while (feed.children.length > 25) feed.removeChild(feed.lastChild);
   }
 
   function stopOfficeEventStream() {
@@ -774,13 +783,34 @@ document.addEventListener('DOMContentLoaded', function() {
     return openOfficeAgentChat(el);
   }
 
+  function _finishSecretaryAiBubble(textEl, full) {
+    if (!textEl) return;
+    textEl.classList.remove('streaming-live', 'plain-text');
+    if (typeof window.renderMarkdownInto === 'function') {
+      window.renderMarkdownInto(textEl, full);
+      if (typeof window.bindCodeCopyButtons === 'function') {
+        window.bindCodeCopyButtons(textEl);
+      }
+      return;
+    }
+    textEl.classList.add('markdown-body');
+    textEl.innerHTML = String(full || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(
+        /(https?:\/\/[^\s<]+)/g,
+        '<a href="$1" target="_blank" rel="noopener">$1</a>'
+      )
+      .replace(/\n/g, '<br>');
+  }
+
   function appendSecretaryUserBubble(text) {
     const container = getOfficeSecMessages();
     if (!container) return;
     const div = document.createElement('div');
     div.className = 'office-sec-msg office-sec-msg--user';
-    div.style.cssText = 'display:flex;justify-content:flex-end;';
-    div.innerHTML = `<div style="background:oklch(0.40 0.18 280);color:white;padding:6px 10px;border-radius:12px 12px 2px 12px;font-size:12px;max-width:85%;word-break:break-word;">${escapeHtml(text)}</div>`;
+    div.innerHTML = `<div class="user-bubble-text">${escapeHtml(text)}</div>`;
     container.appendChild(div);
   }
 
@@ -789,13 +819,15 @@ document.addEventListener('DOMContentLoaded', function() {
     if (!container) return null;
     const div = document.createElement('div');
     div.className = 'office-sec-msg office-sec-msg--ai';
-    div.style.cssText = 'display:flex;align-items:flex-end;gap:6px;';
     const streamingClass = streaming ? ' plain-text streaming-live' : '';
-    div.innerHTML = `<span style="font-size:14px;flex-shrink:0;">👩‍💼</span><div class="office-sec-ai-text markdown-body${streamingClass}" style="background:oklch(0.20 0.01 250);padding:6px 10px;border-radius:12px 12px 12px 2px;font-size:12px;color:oklch(0.75 0.02 250);max-width:85%;word-break:break-word;" id="${textElId}">${streaming ? '...' : ''}</div>`;
+    div.innerHTML = `<span class="office-sec-avatar" aria-hidden="true">👩‍💼</span>
+      <div class="ai-bubble-wrap">
+        <div class="msg-text markdown-body${streamingClass}" id="${textElId}">${streaming ? '...' : ''}</div>
+      </div>`;
     container.appendChild(div);
     const textEl = document.getElementById(textElId);
     if (textEl && content && !streaming) {
-      renderAiMessageContent(textEl, content);
+      _finishSecretaryAiBubble(textEl, content);
     }
     return textEl;
   }
@@ -901,10 +933,7 @@ document.addEventListener('DOMContentLoaded', function() {
       if (sseBuf.trim()) parseSseChunk(sseBuf);
 
       const finalText = accumulated.trim() || 'เอรับทราบแล้วค่ะ';
-      if (textEl) {
-        textEl.classList.remove('streaming-live', 'plain-text');
-        renderAiMessageContent(textEl, finalText);
-      }
+      _finishSecretaryAiBubble(textEl, finalText);
       state.secretaryHistoryLoaded = true;
       setTimeout(loadOfficeActivity, 1000);
     } catch (error) {

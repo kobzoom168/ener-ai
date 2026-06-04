@@ -317,24 +317,97 @@
 
     #panel-office #office-sec-welcome {
       text-align: center;
-      padding: 1rem 0.5rem;
-      color: oklch(0.5 0.02 250);
-      font-size: 11px;
+      padding: 1.5rem 0.5rem;
+      color: oklch(0.45 0.02 250);
     }
 
-    #panel-office .office-sec-ai-text.markdown-body {
+    #panel-office .office-sec-msg--user {
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    #panel-office .office-sec-msg--ai {
+      display: flex;
+      align-items: flex-end;
+      gap: 6px;
+    }
+
+    #panel-office .office-sec-avatar {
+      font-size: 14px;
+      flex-shrink: 0;
+      line-height: 1;
+    }
+
+    #panel-office #office-secretary-messages .ai-bubble-wrap {
+      max-width: 92%;
+      min-width: 0;
+      background: oklch(0.2 0.01 250);
+      padding: 7px 10px;
+      border-radius: 12px 12px 12px 2px;
+    }
+
+    #panel-office #office-secretary-messages .msg-text,
+    #panel-office #office-secretary-messages .office-sec-ai-text {
       font-size: 12px;
-      line-height: 1.45;
+      line-height: 1.65;
+      color: oklch(0.78 0.02 250);
+      word-break: break-word;
+      overflow-wrap: anywhere;
+      max-width: 100%;
     }
 
-    #panel-office .office-sec-ai-text.markdown-body p {
-      margin: 0.35em 0;
+    #panel-office #office-secretary-messages .msg-text a {
+      color: oklch(0.65 0.15 200);
+      text-decoration: underline;
+      word-break: break-all;
+      display: inline-block;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      vertical-align: bottom;
     }
 
-    #panel-office .office-sec-ai-text.markdown-body pre {
+    #panel-office #office-secretary-messages .msg-text h1,
+    #panel-office #office-secretary-messages .msg-text h2,
+    #panel-office #office-secretary-messages .msg-text h3 {
+      font-size: 12px;
+      font-weight: 700;
+      margin: 8px 0 4px;
+      color: oklch(0.85 0.05 280);
+    }
+
+    #panel-office #office-secretary-messages .msg-text p {
+      margin: 0 0 6px;
+    }
+
+    #panel-office #office-secretary-messages .msg-text p:last-child {
+      margin-bottom: 0;
+    }
+
+    #panel-office #office-secretary-messages .msg-text pre {
       font-size: 10px;
       max-width: 100%;
       overflow-x: auto;
+    }
+
+    #panel-office #office-secretary-messages .user-bubble-text {
+      background: oklch(0.4 0.18 280);
+      color: white;
+      padding: 7px 11px;
+      border-radius: 14px 14px 3px 14px;
+      font-size: 12px;
+      line-height: 1.5;
+      word-break: break-word;
+      max-width: 85%;
+    }
+
+    #panel-office .activity-arrow-route {
+      color: oklch(0.65 0.18 60);
+    }
+
+    #panel-office .activity-arrow-complete {
+      color: oklch(0.6 0.18 150);
     }
 
     #panel-office .office-sec-input-wrap {
@@ -523,7 +596,7 @@
     }
 
     .pixel-char {
-      font-size: 18px;
+      font-size: 20px;
       line-height: 1;
       image-rendering: pixelated;
       filter: saturate(0.8);
@@ -568,8 +641,13 @@
       background: #444;
     }
 
+    .pixel-desk.status-active {
+      background: oklch(0.13 0.03 150);
+      border-radius: 3px;
+    }
+
     .pixel-agent-name {
-      font-size: 5px;
+      font-size: 6px;
       color: #888;
       text-align: center;
       white-space: nowrap;
@@ -706,7 +784,7 @@
     }
 
     .pixel-runs {
-      font-size: 5px;
+      font-size: 6px;
       color: #0a8;
       text-align: center;
     }
