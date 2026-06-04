@@ -272,121 +272,112 @@
         <div class="office-left">
           <div class="office-agents-inner">
 
-          <!-- PIXEL ART OFFICE MAP -->
-          <div class="pixel-office-wrap mb-4">
-            <svg id="office-svg-lines"
-                 style="position:absolute;top:0;left:0;width:100%;height:100%;
-                        pointer-events:none;z-index:9;overflow:visible;"
+          <!-- PIXEL ART BUILDING -->
+          <div class="pixel-building mb-4" id="pixel-building">
+            <div class="pb-topbar">
+              <span class="pb-title">⚡ ENER-AI VIRTUAL OFFICE</span>
+              <span class="pb-sysinfo" id="pb-sysinfo">SYS ONLINE</span>
+              <span class="pb-clock" id="pb-clock">--:--:--</span>
+            </div>
+
+            {% set dept_floors = [
+              {"key":"hq", "num":"01", "name":"HQ", "agents":["SecretaryAgent","MainChatAgent","MemoryAgent"]},
+              {"key":"ener", "num":"02", "name":"ENER", "agents":["EnerAgent","ContentAgent","TarotAgent"]},
+              {"key":"tech", "num":"03", "name":"TECH", "agents":["CodeAgent","MonitorAgent","GithubAgent"]},
+              {"key":"intel", "num":"04", "name":"INTEL", "agents":["NewsAgent","DigestAgent","ThinkTeam"]},
+              {"key":"ops", "num":"05", "name":"OPS", "agents":["GmailAgent","TaskAgent","LogKeeper"]},
+              {"key":"exec", "num":"06", "name":"EXEC", "agents":["SessionAgent","BriefingAgent"]}
+            ] %}
+            {% set dept_colors = {
+              "hq":"#0f6", "ener":"#a0f", "tech":"#0cf",
+              "intel":"#ff0", "ops":"#f80", "exec":"#fa6"
+            } %}
+
+            {% for floor in dept_floors %}
+            {% set floor_runs = [] %}
+            {% for ag_name in floor.agents %}
+              {% for ag in office.agents if ag.name == ag_name %}
+                {% if floor_runs.append(ag.runs_today) %}{% endif %}
+              {% endfor %}
+            {% endfor %}
+
+            <div class="pb-floor pb-floor--{{ floor.key }}">
+              <div class="pb-floor-sidebar">
+                <div class="pb-floor-num">{{ floor.num }}</div>
+                <div class="pb-floor-name">{{ floor.name }}</div>
+                <div class="pb-runs">{{ floor_runs | sum }}x</div>
+                <div class="pb-bar-wrap">
+                  {% for ag_name in floor.agents %}
+                    {% for ag in office.agents if ag.name == ag_name %}
+                    {% set bar_w = ag.runs_today * 3 %}
+                    {% if bar_w > 32 %}{% set bar_w = 32 %}{% endif %}
+                    <div class="pb-bar" style="width:{{ bar_w }}px;opacity:{% if ag.status=='active' %}1{% elif ag.status=='idle' %}0.5{% else %}0.2{% endif %};"></div>
+                    {% endfor %}
+                  {% endfor %}
+                </div>
+              </div>
+
+              <div class="pb-floor-main">
+                {% for ag_name in floor.agents %}
+                  {% for ag in office.agents if ag.name == ag_name %}
+                  {% set c = dept_colors[floor.key] %}
+                  {% if ag.name == 'SecretaryAgent' %}
+                  <a href="#office-right"
+                     class="pb-desk status-{{ ag.status }} pb-desk--secretary"
+                     data-agent-name="{{ ag.name }}"
+                     data-chat-cmd="{{ ag.chat_cmd }}"
+                     onclick="return focusOfficeSecretary(this);"
+                     title="{{ ag.role }}">
+                  {% else %}
+                  <a href="/workspace?tool=chat"
+                     class="pb-desk status-{{ ag.status }}"
+                     data-agent-name="{{ ag.name }}"
+                     data-chat-cmd="{{ ag.chat_cmd }}"
+                     onclick="return openOfficeAgentChat(this);"
+                     title="{{ ag.role }}">
+                  {% endif %}
+                    <div class="pb-char" style="color:{{ c }};">
+                      <div class="pb-char-head" style="background:{{ c }};opacity:{% if ag.status=='offline' %}0.3{% else %}0.9{% endif %};"></div>
+                      <div class="pb-char-body" style="background:{{ c }};opacity:{% if ag.status=='offline' %}0.2{% else %}0.7{% endif %};"></div>
+                      <div class="pb-char-legs" style="background:{{ c }};opacity:0.5;">
+                        <span class="pb-char-leg-r" style="background:{{ c }};"></span>
+                      </div>
+                      <div class="pb-char-emoji">{{ ag.emoji }}</div>
+                    </div>
+                    <div class="pb-desk-meta">
+                      <span class="pb-dot {{ ag.status }}"></span>
+                    </div>
+                    <span class="pb-desk-name">{{ ag.short }}</span>
+                    {% if ag.runs_today > 0 %}
+                    <span class="pb-desk-count">{{ ag.runs_today }}x</span>
+                    {% elif ag.name == 'SecretaryAgent' %}
+                    <span class="pb-desk-count">คุยขวา</span>
+                    {% endif %}
+                  </a>
+                  {% endfor %}
+                {% endfor %}
+              </div>
+            </div>
+            {% endfor %}
+
+            <div class="pb-footer">
+              <span class="pb-footer-title">AGENT OFFICE</span>
+              <span class="pb-footer-sub">PRODUCTIVITY · INTELLIGENCE · AUTOMATION</span>
+              <span class="pb-footer-brand">ENER-AI</span>
+            </div>
+
+            <svg id="building-svg-lines"
+                 class="pb-svg-lines"
                  aria-hidden="true">
               <defs>
-                <filter id="line-glow">
+                <filter id="b-glow">
                   <feGaussianBlur stdDeviation="1.5" result="b"/>
                   <feComposite in="SourceGraphic" in2="b" operator="over"/>
                 </filter>
               </defs>
             </svg>
-            <div class="pixel-office-title">⚡ ENER-AI VIRTUAL OFFICE</div>
-            <div class="pixel-floor">
-
-              <div class="pixel-dept">
-                <div class="pixel-dept-label">🧠 HQ</div>
-                {% for ag in office.agents if ag.name in ['MainChatAgent', 'MemoryAgent', 'SecretaryAgent'] %}
-                <div class="pixel-desk status-{{ 'active' if ag.name == 'SecretaryAgent' else ag.status }}"
-                     data-agent-name="{{ ag.name }}"
-                     data-chat-cmd="{{ ag.chat_cmd }}"
-                     onclick="return openOfficePixelDesk(this);"
-                     title="{{ ag.role }}">
-                  <span class="pixel-char">{{ ag.emoji }}</span>
-                  <span class="pixel-status-dot {{ 'active' if ag.name == 'SecretaryAgent' else ag.status }}"></span>
-                  <span class="pixel-agent-name">{{ ag.short }}</span>
-                  {% if ag.runs_today > 0 %}<span class="pixel-runs">{{ ag.runs_today }}x</span>{% endif %}
-                </div>
-                {% endfor %}
-              </div>
-
-              <div class="pixel-dept">
-                <div class="pixel-dept-label">⚡ ENER</div>
-                {% for ag in office.agents if ag.name in ['EnerAgent', 'ContentAgent', 'TarotAgent'] %}
-                <div class="pixel-desk status-{{ ag.status }}"
-                     data-agent-name="{{ ag.name }}"
-                     data-chat-cmd="{{ ag.chat_cmd }}"
-                     onclick="return openOfficePixelDesk(this);"
-                     title="{{ ag.role }}">
-                  <span class="pixel-char">{{ ag.emoji }}</span>
-                  <span class="pixel-status-dot {{ ag.status }}"></span>
-                  <span class="pixel-agent-name">{{ ag.short }}</span>
-                  {% if ag.runs_today > 0 %}<span class="pixel-runs">{{ ag.runs_today }}x</span>{% endif %}
-                </div>
-                {% endfor %}
-              </div>
-
-              <div class="pixel-dept">
-                <div class="pixel-dept-label">💻 TECH</div>
-                {% for ag in office.agents if ag.name in ['CodeAgent', 'MonitorAgent', 'GithubAgent'] %}
-                <div class="pixel-desk status-{{ ag.status }}"
-                     data-agent-name="{{ ag.name }}"
-                     data-chat-cmd="{{ ag.chat_cmd }}"
-                     onclick="return openOfficePixelDesk(this);"
-                     title="{{ ag.role }}">
-                  <span class="pixel-char">{{ ag.emoji }}</span>
-                  <span class="pixel-status-dot {{ ag.status }}"></span>
-                  <span class="pixel-agent-name">{{ ag.short }}</span>
-                  {% if ag.runs_today > 0 %}<span class="pixel-runs">{{ ag.runs_today }}x</span>{% endif %}
-                </div>
-                {% endfor %}
-              </div>
-
-              <div class="pixel-dept">
-                <div class="pixel-dept-label">📡 INTEL</div>
-                {% for ag in office.agents if ag.name in ['NewsAgent', 'ThinkTeam', 'DigestAgent'] %}
-                <div class="pixel-desk status-{{ ag.status }}"
-                     data-agent-name="{{ ag.name }}"
-                     data-chat-cmd="{{ ag.chat_cmd }}"
-                     onclick="return openOfficePixelDesk(this);"
-                     title="{{ ag.role }}">
-                  <span class="pixel-char">{{ ag.emoji }}</span>
-                  <span class="pixel-status-dot {{ ag.status }}"></span>
-                  <span class="pixel-agent-name">{{ ag.short }}</span>
-                  {% if ag.runs_today > 0 %}<span class="pixel-runs">{{ ag.runs_today }}x</span>{% endif %}
-                </div>
-                {% endfor %}
-              </div>
-
-              <div class="pixel-dept">
-                <div class="pixel-dept-label">🗂️ OPS</div>
-                {% for ag in office.agents if ag.name in ['TaskAgent', 'GmailAgent', 'LogKeeper'] %}
-                <div class="pixel-desk status-{{ ag.status }}"
-                     data-agent-name="{{ ag.name }}"
-                     data-chat-cmd="{{ ag.chat_cmd }}"
-                     onclick="return openOfficePixelDesk(this);"
-                     title="{{ ag.role }}">
-                  <span class="pixel-char">{{ ag.emoji }}</span>
-                  <span class="pixel-status-dot {{ ag.status }}"></span>
-                  <span class="pixel-agent-name">{{ ag.short }}</span>
-                  {% if ag.runs_today > 0 %}<span class="pixel-runs">{{ ag.runs_today }}x</span>{% endif %}
-                </div>
-                {% endfor %}
-              </div>
-
-              <div class="pixel-dept">
-                <div class="pixel-dept-label">📊 EXEC</div>
-                {% for ag in office.agents if ag.name in ['BriefingAgent', 'SessionAgent'] %}
-                <div class="pixel-desk status-{{ ag.status }}"
-                     data-agent-name="{{ ag.name }}"
-                     data-chat-cmd="{{ ag.chat_cmd }}"
-                     onclick="return openOfficePixelDesk(this);"
-                     title="{{ ag.role }}">
-                  <span class="pixel-char">{{ ag.emoji }}</span>
-                  <span class="pixel-status-dot {{ ag.status }}"></span>
-                  <span class="pixel-agent-name">{{ ag.short }}</span>
-                  {% if ag.runs_today > 0 %}<span class="pixel-runs">{{ ag.runs_today }}x</span>{% endif %}
-                </div>
-                {% endfor %}
-              </div>
-
-            </div>
           </div>
-          <!-- END PIXEL ART OFFICE MAP -->
+          <!-- END PIXEL ART BUILDING -->
 
           <div class="flex gap-3 mb-4 flex-wrap">
             <div class="rounded-lg px-4 py-2 flex items-center gap-2" style="background:oklch(0.19 0.02 150); border:1px solid oklch(0.28 0.05 150);">

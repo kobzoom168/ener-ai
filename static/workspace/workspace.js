@@ -13,6 +13,7 @@ document.addEventListener('DOMContentLoaded', function() {
     officeActivityTimer: null,
     officeEventSource: null,
     officeEventReconnectTimer: null,
+    pbClockTimer: null,
   };
 
   const _AGENT_EMOJI = {
@@ -608,11 +609,19 @@ document.addEventListener('DOMContentLoaded', function() {
     return String(agentName || '').replace(/Agent$/, '');
   }
 
-  function _deskCenter(agentName) {
-    const desk = document.querySelector(
-      `.pixel-desk[data-agent-name="${agentName}"]`
+  function _getBuildingDesk(agentName) {
+    return document.querySelector(
+      `#pixel-building .pb-desk[data-agent-name="${agentName}"]`
     );
-    const svg = document.getElementById('office-svg-lines');
+  }
+
+  function _getBuildingSvg() {
+    return document.getElementById('building-svg-lines');
+  }
+
+  function _deskCenter(agentName) {
+    const desk = _getBuildingDesk(agentName);
+    const svg = _getBuildingSvg();
     if (!desk || !svg) return null;
     const dr = desk.getBoundingClientRect();
     const sr = svg.getBoundingClientRect();
@@ -623,7 +632,7 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function drawOfficeConnection(fromAgent, toAgent, type) {
-    const svg = document.getElementById('office-svg-lines');
+    const svg = _getBuildingSvg();
     if (!svg) return;
     const A = _deskCenter(fromAgent);
     const B = _deskCenter(toAgent);
@@ -642,7 +651,7 @@ document.addEventListener('DOMContentLoaded', function() {
     path.setAttribute('stroke', color);
     path.setAttribute('stroke-width', '1.5');
     path.setAttribute('stroke-dasharray', '5 3');
-    path.setAttribute('filter', 'url(#line-glow)');
+    path.setAttribute('filter', 'url(#b-glow)');
     path.setAttribute('opacity', '0.9');
     path.style.animation = 'dash-travel 0.35s linear infinite';
     svg.appendChild(path);
@@ -650,7 +659,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
     dot.setAttribute('r', '3');
     dot.setAttribute('fill', color);
-    dot.setAttribute('filter', 'url(#line-glow)');
+    dot.setAttribute('filter', 'url(#b-glow)');
     const am = document.createElementNS('http://www.w3.org/2000/svg', 'animateMotion');
     am.setAttribute('dur', '0.7s');
     am.setAttribute('repeatCount', type === 'route' ? '3' : '2');
@@ -665,21 +674,45 @@ document.addEventListener('DOMContentLoaded', function() {
     }, dur);
   }
 
-  function _showOfficeBubble(agentName, message, type) {
-    const desk = document.querySelector(
-      `.pixel-desk[data-agent-name="${agentName}"]`
-    );
+  function _showBuildingBubble(agentName, message, type) {
+    const desk = _getBuildingDesk(agentName);
     if (!desk) return;
 
-    desk.querySelectorAll('.pixel-bubble').forEach((b) => b.remove());
+    desk.querySelectorAll('.pb-speech').forEach((b) => b.remove());
     desk.classList.add('routing');
     setTimeout(() => desk.classList.remove('routing'), 4000);
 
     const bubble = document.createElement('div');
-    bubble.className = `pixel-bubble ${type}`;
+    bubble.className = 'pb-speech';
     bubble.textContent = message;
+    const stroke = type === 'complete' ? '#0f6' : '#fa0';
+    bubble.style.borderColor = stroke;
+    bubble.style.color = stroke;
     desk.appendChild(bubble);
-    setTimeout(() => bubble.remove(), 4200);
+    setTimeout(() => bubble.remove(), 3500);
+  }
+
+  function _showOfficeBubble(agentName, message, type) {
+    _showBuildingBubble(agentName, message, type);
+  }
+
+  function stopPBClock() {
+    if (state.pbClockTimer) {
+      clearInterval(state.pbClockTimer);
+      state.pbClockTimer = null;
+    }
+  }
+
+  function startPBClock() {
+    const el = document.getElementById('pb-clock');
+    if (!el) return;
+    stopPBClock();
+    const tick = () => {
+      const now = new Date();
+      el.textContent = now.toLocaleTimeString('th-TH', { hour12: false });
+    };
+    tick();
+    state.pbClockTimer = setInterval(tick, 1000);
   }
 
   function _updateActivityFeedItem(fromAgent, toAgent, msg, type) {
@@ -740,15 +773,11 @@ document.addEventListener('DOMContentLoaded', function() {
         const type = evt.type || 'route';
 
         if (type === 'route') {
-          _showOfficeBubble(
-            fromA,
-            `→ ${_agentShortName(toA)}`,
-            'route'
-          );
+          _showBuildingBubble(fromA, `→ ${_agentShortName(toA)}`, 'route');
           const taskMsg = msg.replace(/^ส่งงาน:\s*/u, '').trim() || msg;
-          setTimeout(() => _showOfficeBubble(toA, taskMsg, 'route'), 300);
+          setTimeout(() => _showBuildingBubble(toA, taskMsg, 'route'), 300);
         } else if (type === 'complete') {
-          _showOfficeBubble(fromA, '✓ done', 'complete');
+          _showBuildingBubble(fromA, '✓ done', 'complete');
         }
 
         drawOfficeConnection(fromA, toA, type);
@@ -775,6 +804,7 @@ document.addEventListener('DOMContentLoaded', function() {
     state.officeActivityTimer = setInterval(loadOfficeActivity, 15000);
     loadSecretaryHistory();
     startOfficeEventStream();
+    startPBClock();
   }
 
   function openOfficePixelDesk(el) {
@@ -1052,6 +1082,7 @@ document.addEventListener('DOMContentLoaded', function() {
     } else {
       stopOfficeActivityRefresh();
       stopOfficeEventStream();
+      stopPBClock();
     }
   }
 
@@ -2201,8 +2232,13 @@ document.addEventListener('DOMContentLoaded', function() {
       stopOfficeEventStream();
     } else if (onOffice && officeActive) {
       startOfficeEventStream();
+      startPBClock();
     }
   });
+
+  if (document.getElementById('pb-clock')) {
+    startPBClock();
+  }
   } catch(err) {
     console.error('WORKSPACE JS ERROR:', err);
     const contentEl = document.getElementById('content');
