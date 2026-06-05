@@ -6992,12 +6992,19 @@ async def workspace_code_agent(request: Request):
     file_content = body.get("file_content", "")
     project = body.get("project", "") or (file_path.split("/")[0] if file_path else "")
     model = body.get("model", "featherless-coder")
+    history = body.get("messages") or []
     if not question:
         raise HTTPException(400, "question required")
 
     from app.core.ai import chat as ai_chat, _VALID_MODELS
     if model not in _VALID_MODELS:
         model = "featherless-coder"
+    # Sanitize history: only keep role/content, limit length
+    clean_history = [
+        {"role": str(m.get("role", "user")), "content": str(m.get("content", ""))[:3000]}
+        for m in (history or [])
+        if m.get("role") in ("user", "assistant") and m.get("content")
+    ][-12:]
 
     file_ctx = ""
     if file_path and file_content:
@@ -7051,7 +7058,7 @@ async def workspace_code_agent(request: Request):
 
     raw_answer = await ai_chat(
         question, system=system, agent="CodeAgent",
-        messages=[], preferred_model=model, strict_model=False,
+        messages=clean_history, preferred_model=model, strict_model=False,
     )
 
     # Execute WRITE_FILE actions

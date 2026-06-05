@@ -958,16 +958,37 @@
         bar.textContent = currentFilePath ? `📄 ${currentFilePath}` : '— ยังไม่ได้เลือกไฟล์ —';
       }
 
+      function collectChatHistory() {
+        const msgs = document.getElementById('code-chat-messages');
+        if (!msgs) return [];
+        const history = [];
+        msgs.querySelectorAll('.code-chat-user, .code-chat-ai').forEach(el => {
+          if (el.classList.contains('code-chat-user')) {
+            const t = el.textContent.trim();
+            if (t) history.push({ role: 'user', content: t });
+          } else if (el.classList.contains('code-chat-ai')) {
+            // Extract plain text from ai body (strip HTML, no code blocks)
+            const body = el.querySelector('.code-chat-ai-body');
+            if (body) {
+              const t = body.innerText.trim();
+              if (t) history.push({ role: 'assistant', content: t.substring(0, 2000) });
+            }
+          }
+        });
+        return history.slice(-12); // last 6 exchanges to limit tokens
+      }
+
       async function askCodeAI(preset) {
         const input = document.getElementById('code-question-input');
         const question = preset || (input ? input.value.trim() : '');
         if (!question) return;
         if (input && !preset) input.value = '';
         const modelSelect = document.getElementById('code-model-select');
-        const selectedModel = modelSelect ? modelSelect.value : 'haiku';
+        const selectedModel = modelSelect ? modelSelect.value : 'featherless-coder';
         const msgs = document.getElementById('code-chat-messages');
         if (!msgs) return;
         const fileContent = monacoEditor ? monacoEditor.getValue().substring(0, 8000) : '';
+        const history = collectChatHistory();
         msgs.innerHTML += `<div class="code-chat-user">${question.replace(/</g,'&lt;')}</div>`;
         const thinkId = 'think-' + Date.now();
         msgs.innerHTML += `<div id="${thinkId}" class="code-chat-thinking">💭 กำลังวิเคราะห์...</div>`;
@@ -982,6 +1003,7 @@
               file_content: fileContent,
               project: currentProject,
               model: selectedModel,
+              messages: history,
             }),
           });
           const d = await res.json();
