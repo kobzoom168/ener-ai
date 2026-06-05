@@ -7198,6 +7198,23 @@ async def workspace_code_enerwrite(request: Request):
     return JSONResponse({"ok": True, "path": rel.replace("\\", "/"), "lines": len(lines)})
 
 
+@app.delete("/workspace/code/file")
+async def workspace_code_file_delete(request: Request):
+    await _require_admin(request)
+    import os
+
+    path = request.query_params.get("path", "").strip()
+    if not path:
+        raise HTTPException(400, "path required")
+    full = _ener_code_resolve(path)
+    if not os.path.exists(full):
+        raise HTTPException(404, "file not found")
+    if os.path.isdir(full):
+        raise HTTPException(400, "path is a directory — use project delete instead")
+    os.remove(full)
+    return JSONResponse({"ok": True, "deleted": path})
+
+
 @app.post("/workspace/code/project/create")
 async def workspace_code_project_create(request: Request):
     await _require_admin(request)

@@ -308,9 +308,38 @@
       }
       #panel-code .code-project-item:hover .code-project-delete { display: block; }
       #panel-code .code-project-delete:hover { color: #f87171; }
+      #panel-code .code-project-addfile {
+        display: none;
+        background: none;
+        border: none;
+        color: #555;
+        font-size: 15px;
+        line-height: 1;
+        cursor: pointer;
+        padding: 0 3px;
+        flex-shrink: 0;
+      }
+      #panel-code .code-project-item:hover .code-project-addfile { display: block; }
+      #panel-code .code-project-addfile:hover { color: #a78bfa; }
       /* Inline file tree under each project */
       #panel-code .code-project-files { padding: 2px 0; }
-      #panel-code .code-project-files .code-tree-item { margin-left: 8px; }
+      #panel-code .code-project-files .code-tree-item { margin-left: 8px; position: relative; }
+      #panel-code .code-file-del {
+        display: none;
+        position: absolute;
+        right: 6px;
+        top: 50%;
+        transform: translateY(-50%);
+        background: none;
+        border: none;
+        color: #555;
+        font-size: 13px;
+        cursor: pointer;
+        padding: 0 2px;
+        line-height: 1;
+      }
+      #panel-code .code-tree-item:hover .code-file-del { display: block; }
+      #panel-code .code-file-del:hover { color: #f87171; }
     </style>
       <div id="code-toolbar" class="code-toolbar">
         <div class="code-toolbar-left">
@@ -577,11 +606,16 @@
               <span class="code-project-arrow">${wasOpen === p.name ? '▼' : '▶'}</span>
               <span class="code-project-icon">${p.has_git ? '📦' : '📁'}</span>
               <span class="code-project-name">${p.name}</span>
+              <button type="button" class="code-project-addfile" title="New file">+</button>
               <button type="button" class="code-project-delete" title="Delete project">×</button>
             </div>
             <div class="code-project-files" data-project="${p.name}" style="display:${wasOpen === p.name ? 'block' : 'none'}"></div>`).join('');
           list.querySelectorAll('.code-project-item').forEach(item => {
             item.addEventListener('click', () => toggleProject(item.dataset.name));
+            item.querySelector('.code-project-addfile').addEventListener('click', (e) => {
+              e.stopPropagation();
+              newFile(item.dataset.name);
+            });
             item.querySelector('.code-project-delete').addEventListener('click', (e) => {
               e.stopPropagation();
               deleteProject(item.dataset.name);
@@ -608,12 +642,6 @@
           item.classList.remove('active');
           if (currentProject === name) currentProject = '';
         } else {
-          // Collapse any other open project
-          document.querySelectorAll('.code-project-files').forEach(d => { d.style.display = 'none'; });
-          document.querySelectorAll('.code-project-item').forEach(i => {
-            i.classList.remove('active');
-            i.querySelector('.code-project-arrow').textContent = '▶';
-          });
           filesDiv.style.display = 'block';
           item.querySelector('.code-project-arrow').textContent = '▼';
           item.classList.add('active');
@@ -639,6 +667,7 @@
 
       function renderTreeInto(items, container) {
         if (!container) return;
+        const project = container.dataset.project || '';
         if (!items || !items.length) {
           container.innerHTML = '<div class="code-explorer-empty" style="padding:4px 14px">Empty project</div>';
           return;
@@ -655,9 +684,53 @@
           const pathEsc = item.path.replace(/'/g, "\\'");
           const click = item.type === 'dir' ? `toggleFolder(this)` : `loadEnerFile('${pathEsc}')`;
           const display = item.depth > 1 ? ' style="display:none"' : '';
-          html += `<div class="code-tree-item ${cls}" data-path="${item.path}" data-depth="${item.depth}" style="padding-left:${indent}px"${display} onclick="${click}">${icon} ${item.name}</div>`;
+          const delBtn = item.type === 'file'
+            ? `<button type="button" class="code-file-del" onclick="event.stopPropagation();deleteFile('${pathEsc}','${project}')" title="Delete file">×</button>`
+            : '';
+          html += `<div class="code-tree-item ${cls}" data-path="${item.path}" data-depth="${item.depth}" style="padding-left:${indent}px"${display} onclick="${click}">${icon} ${item.name}${delBtn}</div>`;
         });
         container.innerHTML = html;
+      }
+
+      async function newFile(project) {
+        const name = prompt(`ชื่อไฟล์ใหม่ใน ${project}:`);
+        if (!name || !name.trim()) return;
+        const path = `${project}/${name.trim()}`;
+        try {
+          const res = await fetch('/workspace/code/enerwrite', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path, content: '' }),
+          });
+          if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || res.statusText); }
+          codeToast('✅ Created: ' + name.trim());
+          const filesDiv = document.querySelector(`.code-project-files[data-project="${project}"]`);
+          if (filesDiv) { filesDiv.dataset.loaded = ''; await loadFilesInto(project, filesDiv); }
+          if (filesDiv && filesDiv.style.display === 'none') await toggleProject(project);
+          await loadEnerFile(path);
+        } catch (e) {
+          codeToast('❌ ' + (e.message || 'Create file failed'));
+        }
+      }
+
+      async function deleteFile(path, project) {
+        const name = path.split('/').pop();
+        if (!confirm(`ลบไฟล์ "${name}"?`)) return;
+        try {
+          const res = await fetch('/workspace/code/file?path=' + encodeURIComponent(path), { method: 'DELETE' });
+          if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || res.statusText); }
+          codeToast('🗑 Deleted: ' + name);
+          if (currentFilePath === path) {
+            if (monacoEditor) monacoEditor.setValue('// Select a file from the explorer');
+            currentFilePath = '';
+            const saveBtn = document.getElementById('btn-save-file');
+            if (saveBtn) saveBtn.disabled = true;
+          }
+          const filesDiv = document.querySelector(`.code-project-files[data-project="${project}"]`);
+          if (filesDiv) { filesDiv.dataset.loaded = ''; await loadFilesInto(project, filesDiv); }
+        } catch (e) {
+          codeToast('❌ ' + (e.message || 'Delete file failed'));
+        }
       }
 
       async function selectProject(name) {
@@ -927,7 +1000,10 @@
       };
       window.loadExplorer = loadExplorer;
       window.selectProject = selectProject;
+      window.toggleProject = toggleProject;
       window.deleteProject = deleteProject;
+      window.newFile = newFile;
+      window.deleteFile = deleteFile;
       window.loadEnerFile = loadEnerFile;
       window.saveFile = saveFile;
       window.gitAction = gitAction;
