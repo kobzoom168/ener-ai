@@ -28,7 +28,7 @@
       },
     };
   </script>
-  <link rel="stylesheet" href="/static/workspace/workspace.css?v=office-building2">
+  <link rel="stylesheet" href="/static/workspace/workspace.css?v=office-layout1">
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" crossorigin="anonymous">
   <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
@@ -739,6 +739,10 @@
     </div>
   </aside>
 
+  <div id="building-panel">
+    {% include "workspace_building_panel.html" %}
+  </div>
+
   <div id="workspace-main">
     {% include "workspace_main.html" %}
   </div>
@@ -862,7 +866,7 @@
 </script>
 <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 <script src="/static/workspace/workspace-markdown.js?v=openrouter10"></script>
-<script src="/static/workspace/workspace.js?v=office-building2"></script>
+<script src="/static/workspace/workspace.js?v=office-layout1"></script>
 <script>
   document.addEventListener('DOMContentLoaded', function() {
     if (window.lucide) lucide.createIcons();

@@ -1,0 +1,59 @@
+<div class="mini-building">
+  <img src="/static/workspace/sprites/building-bg.png"
+       alt="ENER-AI Building"
+       id="building-bg-img"
+       class="building-bg-img"
+       width="300"
+       loading="eager">
+
+  <div class="building-topbar">
+    <span class="building-topbar-title">⚡ ENER-AI</span>
+    <span id="building-clock" class="building-topbar-clock">00:00:00</span>
+  </div>
+
+  {% set floor_data = [
+    {"key":"hq",    "sprite":"sprite-hq.png",    "top":"8%",  "agents":["SecretaryAgent","MainChatAgent","MemoryAgent"]},
+    {"key":"ener",  "sprite":"sprite-ener.png",  "top":"25%", "agents":["EnerAgent","ContentAgent","TarotAgent"]},
+    {"key":"tech",  "sprite":"sprite-tech.png",  "top":"41%", "agents":["CodeAgent","MonitorAgent","GithubAgent"]},
+    {"key":"intel", "sprite":"sprite-intel.png", "top":"57%", "agents":["NewsAgent","DigestAgent","ThinkTeam"]},
+    {"key":"ops",   "sprite":"sprite-ops.png",   "top":"73%", "agents":["GmailAgent","TaskAgent","LogKeeper"]},
+    {"key":"exec",  "sprite":"sprite-exec.png",  "top":"88%", "agents":["SessionAgent","BriefingAgent"]},
+  ] %}
+
+  {% for floor in floor_data %}
+  {% set head_ag = office.agents | selectattr("name","equalto", floor.agents[0]) | first | default(none) %}
+  {% set floor_runs = office.agents | selectattr("name","in", floor.agents) | map(attribute="runs_today") | sum %}
+  {% set is_active = office.agents | selectattr("name","in", floor.agents) | selectattr("status","equalto","active") | list | length > 0 %}
+
+  <div class="floor-sprite-slot floor-sprite-slot--{{ floor.key }}" style="top: {{ floor.top }};">
+    <img src="/static/workspace/sprites/{{ floor.sprite }}"
+         class="floor-sprite{% if is_active %} floor-sprite--active{% elif head_ag and head_ag.status == 'offline' %} floor-sprite--offline{% else %} floor-sprite--idle{% endif %}"
+         alt="{{ floor.key }}"
+         data-floor="{{ floor.key }}"
+         onclick="openBuildingFloor('{{ floor.key }}')"
+         title="Click to chat with {{ floor.key | upper }} dept">
+    {% if floor_runs > 0 %}
+    <div class="floor-run-badge{% if is_active %} floor-run-badge--active{% endif %}">{{ floor_runs }}x</div>
+    {% endif %}
+  </div>
+
+  <div class="floor-agents-list" style="top: {{ floor.top }};">
+    {% for ag_name in floor.agents %}
+    {% set ag = office.agents | selectattr("name","equalto", ag_name) | first | default(none) %}
+    {% if ag %}
+    <div class="floor-agent-row floor-agent-row--{{ ag.status }}">
+      <span class="floor-agent-emoji">{{ ag.emoji }}</span>
+      <span class="floor-agent-name">{{ ag.short }}</span>
+      {% if ag.runs_today > 0 %}
+      <span class="floor-agent-runs">{{ ag.runs_today }}x</span>
+      {% endif %}
+    </div>
+    {% endif %}
+    {% endfor %}
+  </div>
+  {% endfor %}
+
+  <div class="building-footer">
+    <span class="building-footer-title">AGENT OFFICE</span>
+  </div>
+</div>

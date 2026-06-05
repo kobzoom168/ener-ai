@@ -1164,6 +1164,211 @@
       }
     }
 
+    /* ===== BUILDING SIDE PANEL (3-column layout) ===== */
+    #building-panel {
+      width: 300px;
+      flex-shrink: 0;
+      border-right: 1px solid oklch(0.22 0.01 250);
+      overflow-y: auto;
+      overflow-x: hidden;
+      background: #02020e;
+      position: relative;
+    }
+
+    .mini-building {
+      position: relative;
+      width: 100%;
+      font-family: 'Press Start 2P', monospace;
+    }
+
+    .building-bg-img {
+      width: 100%;
+      display: block;
+      image-rendering: pixelated;
+    }
+
+    .building-topbar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      background: rgba(2, 2, 20, 0.85);
+      padding: 6px 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid rgba(0, 150, 255, 0.2);
+      z-index: 5;
+      pointer-events: none;
+    }
+
+    .building-topbar-title {
+      font-size: 6px;
+      color: #4af;
+      letter-spacing: 0.1em;
+      text-shadow: 0 0 6px #4af;
+    }
+
+    .building-topbar-clock {
+      font-size: 6px;
+      color: #4af;
+    }
+
+    .floor-sprite-slot {
+      position: absolute;
+      left: 5%;
+      width: 38%;
+      z-index: 3;
+    }
+
+    .floor-sprite {
+      width: 100%;
+      image-rendering: pixelated;
+      mix-blend-mode: lighten;
+      cursor: pointer;
+      display: block;
+      transition: filter 0.3s ease, transform 0.3s ease;
+    }
+
+    .floor-sprite--active {
+      animation: floor-bounce 0.9s ease-in-out infinite;
+    }
+
+    .floor-sprite--idle {
+      filter: brightness(0.55) saturate(0.5);
+    }
+
+    .floor-sprite--offline {
+      filter: grayscale(1) brightness(0.25);
+    }
+
+    .floor-sprite:hover {
+      filter: brightness(1.3) !important;
+      transform: scale(1.08);
+      animation: none !important;
+    }
+
+    @keyframes floor-bounce {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-5px); }
+    }
+
+    .floor-sprite-slot--hq .floor-sprite--active {
+      filter: brightness(1.1) drop-shadow(0 0 10px #0f6);
+    }
+
+    .floor-sprite-slot--ener .floor-sprite--active {
+      filter: brightness(1.1) drop-shadow(0 0 10px #a0f);
+    }
+
+    .floor-sprite-slot--tech .floor-sprite--active {
+      filter: brightness(1.1) drop-shadow(0 0 10px #0cf);
+    }
+
+    .floor-sprite-slot--intel .floor-sprite--active {
+      filter: brightness(1.1) drop-shadow(0 0 10px #ff0);
+    }
+
+    .floor-sprite-slot--ops .floor-sprite--active {
+      filter: brightness(1.1) drop-shadow(0 0 10px #f80);
+    }
+
+    .floor-sprite-slot--exec .floor-sprite--active {
+      filter: brightness(1.1) drop-shadow(0 0 10px #fa6);
+    }
+
+    .floor-run-badge {
+      position: absolute;
+      top: -4px;
+      right: -4px;
+      background: #444;
+      color: #888;
+      font-size: 5px;
+      padding: 2px 4px;
+      border-radius: 2px;
+      font-family: 'Press Start 2P', monospace;
+      pointer-events: none;
+    }
+
+    .floor-run-badge--active {
+      background: #0f6;
+      color: #000;
+    }
+
+    .floor-agents-list {
+      position: absolute;
+      left: 48%;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      z-index: 3;
+      pointer-events: none;
+    }
+
+    .floor-agent-row {
+      font-size: 5px;
+      color: #666;
+      font-family: 'Press Start 2P', monospace;
+      display: flex;
+      gap: 3px;
+      align-items: center;
+    }
+
+    .floor-agent-row--active {
+      color: #fff;
+    }
+
+    .floor-agent-row--offline {
+      color: #333;
+    }
+
+    .floor-agent-emoji {
+      font-size: 8px;
+      line-height: 1;
+    }
+
+    .floor-agent-name {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 72px;
+    }
+
+    .floor-agent-runs {
+      color: #0a8;
+      flex-shrink: 0;
+    }
+
+    .building-footer {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: rgba(2, 2, 20, 0.9);
+      padding: 4px 10px;
+      border-top: 1px solid rgba(0, 150, 255, 0.2);
+      text-align: center;
+      z-index: 5;
+      pointer-events: none;
+    }
+
+    .building-footer-title {
+      font-size: 5px;
+      color: #2a3a5a;
+      letter-spacing: 0.15em;
+    }
+
+    .pixel-building {
+      display: none !important;
+    }
+
+    @media (max-width: 900px) {
+      #building-panel {
+        display: none;
+      }
+    }
+
     .panel-header {
       display: flex;
       justify-content: space-between;

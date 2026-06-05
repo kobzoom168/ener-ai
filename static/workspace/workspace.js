@@ -715,6 +715,44 @@ document.addEventListener('DOMContentLoaded', function() {
     state.pbClockTimer = setInterval(tick, 1000);
   }
 
+  function startBuildingClock() {
+    const el = document.getElementById('building-clock');
+    if (!el) return;
+    if (state.buildingClockTimer) {
+      clearInterval(state.buildingClockTimer);
+    }
+    const tick = () => {
+      el.textContent = new Date().toLocaleTimeString('th-TH', { hour12: false });
+    };
+    tick();
+    state.buildingClockTimer = setInterval(tick, 1000);
+  }
+
+  function openBuildingFloor(floorKey) {
+    const cmds = {
+      hq: '',
+      ener: '/ener ',
+      tech: '/code ',
+      intel: '/news ',
+      ops: '/tasks ',
+      exec: '',
+    };
+    const cmd = cmds[floorKey] || '';
+
+    if (typeof showPanel === 'function') {
+      showPanel('office');
+    }
+
+    const input =
+      document.getElementById('office-sec-input') ||
+      document.getElementById('chat-input');
+    if (input) {
+      input.value = cmd;
+      input.dispatchEvent(new Event('input'));
+      input.focus();
+    }
+  }
+
   function _updateActivityFeedItem(fromAgent, toAgent, msg, type) {
     const feed = document.getElementById('office-activity-feed');
     if (!feed) return;
@@ -2165,6 +2203,7 @@ document.addEventListener('DOMContentLoaded', function() {
   window.saveCodeMemory = saveCodeMemory;
 
   window.showPanel = showPanel;
+  window.openBuildingFloor = openBuildingFloor;
   window.openOfficeAgentChat = openOfficeAgentChat;
   window.openOfficePixelDesk = openOfficePixelDesk;
   window.newChat = newChat;
@@ -2236,6 +2275,9 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   });
 
+  if (document.getElementById('building-clock')) {
+    startBuildingClock();
+  }
   if (document.getElementById('pb-clock')) {
     startPBClock();
   }
