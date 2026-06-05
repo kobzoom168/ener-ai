@@ -5807,6 +5807,7 @@ async def workspace_page(
             "today_key": today_key,
             "today_label": _format_chat_date_label(today_key),
             "office": office,
+            "now_ts": int(time.time()),
         },
     )
 
