@@ -805,12 +805,24 @@ document.addEventListener('DOMContentLoaded', function() {
     BriefingAgent: 'briefing',
   };
 
+  // Valid lowercase map IDs used inside office_map.html
+  const _MAP_VALID_IDS = new Set([
+    'secretary','chat','memory','ener','content','tarot',
+    'code','monitor','github','news','digest','think',
+    'gmail','tasks','logs','session','briefing',
+  ]);
+
   function _mapFrame() {
     const f = document.getElementById('office-map-frame');
     return f ? f.contentWindow : null;
   }
 
   function _agentNameToMapId(name) {
+    if (!name) return '';
+    // If already a valid lowercase map ID (from secretary route event), return as-is
+    const lower = (name || '').toLowerCase().trim();
+    if (_MAP_VALID_IDS.has(lower)) return lower;
+    // Otherwise translate from agent class name (e.g. NewsAgent → news)
     return _OFFICE_AGENT_MAP_ID[name] || '';
   }
 
@@ -834,6 +846,27 @@ document.addEventListener('DOMContentLoaded', function() {
     const toId = _agentNameToMapId(evt.to);
     if (fromId && toId) notifyMapRoute(fromId, toId, evt.msg || evt.message || '');
   }
+
+  function _handleSecSSEEvent(evt) {
+    if (!evt || evt.type !== 'route') return;
+    _handleOfficeMapEvent(evt);
+    // highlight pill of routed agent
+    const toId = _agentNameToMapId(evt.to || '');
+    if (toId) {
+      document.querySelectorAll('.agent-pill').forEach((p) => {
+        const pid = _agentNameToMapId(p.dataset.agentId || '');
+        if (pid === toId) {
+          p.classList.remove('agent-pill--idle', 'agent-pill--offline');
+          p.classList.add('agent-pill--active');
+          setTimeout(() => {
+            p.classList.remove('agent-pill--active');
+            p.classList.add('agent-pill--idle');
+          }, 5000);
+        }
+      });
+    }
+  }
+  window._handleSecSSEEvent = _handleSecSSEEvent;
 
   async function syncMapAgentStatus() {
     try {

@@ -635,8 +635,10 @@ function sendMeeting(id){
 
 // ── PUBLIC API ────────────────────────────────────────────────────
 window.setAgentStatus=function(id,st){const a=aMap[id];if(!a)return;a.status=st;addLog('['+a.name+'] → '+st);spawnP(a.x,a.y,a.color,5);};
-window.triggerRoute=function(fId,tId,msg='data'){
+let _lastRealRoute=0;
+window.triggerRoute=function(fId,tId,msg='data',_isDemo=false){
   const from=aMap[fId],to=aMap[tId];if(!from||!to)return;
+  if(!_isDemo) _lastRealRoute=Date.now();
   routes=routes.filter(r=>r.from.id!==fId);
   // Move sender to boundary of their room, aiming toward receiver
   const fr=rMap[from.room];
@@ -706,7 +708,14 @@ const DEMO=[
   ['content','tarot','โพสต์ดวงประจำวัน'],
 ];
 let demoI=0;
-setInterval(()=>{const[a,b,m]=DEMO[demoI%DEMO.length];demoI++;window.triggerRoute(a,b,m);},3500);
+// Demo runs ONLY when viewed standalone (not in workspace iframe)
+const _inIframe = (window.self !== window.top);
+if(!_inIframe){
+  setInterval(()=>{
+    const[a,b,m]=DEMO[demoI%DEMO.length];demoI++;
+    window.triggerRoute(a,b,m,true);
+  },3500);
+}
 
 // Show tasks on startup after short delay
 setTimeout(()=>{AGENTS.forEach(a=>{a.bubbleTxt=a.currentTask;a.bubbleTimer=120;});},1500);

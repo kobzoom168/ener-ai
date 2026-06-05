@@ -36,6 +36,16 @@ SECRETARY_PERSONA = build_system_prompt(
 """
 )
 
+_last_route: dict[str, str] = {}
+
+_DEPT_TO_MAP_ID: dict[str, str] = {
+    "tech": "code",
+    "intel": "news",
+    "ops": "gmail",
+    "ener": "ener",
+    "hq": "memory",
+}
+
 _AGENT_TO_DEPT: dict[str, str] = {
     "news": "intel",
     "think": "intel",
