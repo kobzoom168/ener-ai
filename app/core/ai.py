@@ -51,6 +51,13 @@ _MODEL_LABELS = {
     **VENICE_LABELS,
     **FEATHERLESS_LABELS,
 }
+# Friendly short names for UI display
+_MODEL_SHORT_LABELS = {
+    "featherless-abliterated": "🔓 No Filter",
+    "featherless-coder":       "💻 Coder 32B",
+    "featherless-deepseek":    "⚡ DeepSeek V3",
+    "featherless-qwen3":       "🧠 Qwen3 32B",
+}
 _OLLAMA_MODEL_MAP = {
     "qwen3b": "qwen2.5:3b",
     "qwen7b": "qwen2.5:7b",

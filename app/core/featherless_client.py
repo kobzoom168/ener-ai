@@ -12,13 +12,23 @@ import httpx
 from app.core.config import settings
 
 FEATHERLESS_MODELS: dict[str, str] = {
+    # No-filter / uncensored — bot dev, security, creative
     "featherless-abliterated": "huihui-ai/Qwen2.5-72B-Instruct-abliterated",
+    # Code specialist — best open-source coder
+    "featherless-coder": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    # Fast general + TOOLS — daily tasks, agents
+    "featherless-deepseek": "deepseek-ai/DeepSeek-V3-0324",
+    # Reasoning / brainstorm — complex thinking
+    "featherless-qwen3": "Qwen/Qwen3-32B",
 }
 
 FEATHERLESS_KEYS = frozenset(FEATHERLESS_MODELS.keys())
 
 FEATHERLESS_LABELS: dict[str, str] = {
     "featherless-abliterated": "Qwen2.5 72B Abliterated (No Filter)",
+    "featherless-coder":       "Qwen2.5 Coder 32B",
+    "featherless-deepseek":    "DeepSeek V3 (Fast)",
+    "featherless-qwen3":       "Qwen3 32B (Reasoning)",
 }
 
 FEATHERLESS_BASE_URL_DEFAULT = "https://api.featherless.ai/v1"
