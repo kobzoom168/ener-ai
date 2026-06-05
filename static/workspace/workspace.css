@@ -1214,20 +1214,23 @@
       color: #4af;
     }
 
-    /* ตัวละคร CSS (ไม่ใช้ PNG) — ขนาดพอดีแต่ละชั้น */
+    /* ตัวละคร CSS (ไม่ใช้ PNG) — วางซ้ายเหนือโต๊ะ ไม่บังป้ายแผนก */
     .floor-char-slot {
       position: absolute;
-      left: 50%;
+      left: 23%;
       top: var(--floor-center, 50%);
       transform: translate(-50%, -50%);
-      width: 52px;
-      height: 38px;
+      width: 30px;
+      height: 40px;
       display: flex;
       align-items: flex-end;
       justify-content: center;
       z-index: 3;
       pointer-events: none;
       --dept-color: #4af;
+      --skin: #f1c9a0;
+      --hair: #2a2a3a;
+      --pants: #1c2230;
     }
 
     .floor-char-slot--hq { --floor-center: 13.5%; }
@@ -1237,10 +1240,16 @@
     .floor-char-slot--ops { --floor-center: 69.5%; }
     .floor-char-slot--exec { --floor-center: 83.5%; }
 
+    /* สีผม/ผิวเฉพาะแผนก */
+    .floor-char-slot--hq { --hair: #15301f; }
+    .floor-char-slot--ener { --hair: #2a1535; }
+    .floor-char-slot--intel { --hair: #3a3210; }
+    .floor-char-slot--exec { --hair: #3a2c10; }
+
     .floor-char {
       position: relative;
-      width: 28px;
-      height: 34px;
+      width: 26px;
+      height: 38px;
       padding: 0;
       border: none;
       background: transparent;
@@ -1256,135 +1265,197 @@
       pointer-events: none;
     }
 
-    .floor-char-head {
+    .fc-part {
       position: absolute;
+      image-rendering: pixelated;
+    }
+
+    /* ผม */
+    .fc-hair {
       top: 2px;
-      left: 8px;
+      left: 7px;
       width: 12px;
+      height: 6px;
+      background: var(--hair);
+      border-radius: 4px 4px 0 0;
+      z-index: 2;
+    }
+
+    /* ใบหน้า */
+    .fc-face {
+      top: 5px;
+      left: 8px;
+      width: 10px;
+      height: 9px;
+      background: var(--skin);
+      border-radius: 1px 1px 2px 2px;
+      z-index: 1;
+    }
+
+    .fc-eye {
+      top: 9px;
+      width: 2px;
+      height: 2px;
+      background: #1a1a24;
+      border-radius: 50%;
+      z-index: 3;
+    }
+    .fc-eye--l { left: 10px; }
+    .fc-eye--r { left: 14px; }
+
+    /* เสื้อ */
+    .fc-shirt {
+      top: 14px;
+      left: 6px;
+      width: 14px;
+      height: 13px;
+      background: var(--dept-color);
+      border-radius: 3px 3px 1px 1px;
+      box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.18);
+      z-index: 2;
+    }
+
+    .fc-belt {
+      top: 25px;
+      left: 6px;
+      width: 14px;
+      height: 2px;
+      background: rgba(0, 0, 0, 0.45);
+      z-index: 3;
+    }
+
+    /* แขน */
+    .fc-arm {
+      top: 15px;
+      width: 3px;
       height: 10px;
       background: var(--dept-color);
-      border-radius: 1px;
-      opacity: 0.92;
-      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+      border-radius: 2px;
+      opacity: 0.9;
+      z-index: 1;
     }
+    .fc-arm--l { left: 3px; }
+    .fc-arm--r { left: 20px; }
 
-    .floor-char-torso {
-      position: absolute;
-      top: 13px;
-      left: 6px;
+    /* ขา */
+    .fc-leg {
+      top: 27px;
+      width: 5px;
+      height: 8px;
+      background: var(--pants);
+      border-radius: 0 0 1px 1px;
+      z-index: 1;
+    }
+    .fc-leg--l { left: 8px; }
+    .fc-leg--r { left: 13px; }
+
+    /* เท้า */
+    .fc-foot {
+      top: 34px;
+      width: 6px;
+      height: 3px;
+      background: #0a0a12;
+      border-radius: 1px;
+      z-index: 2;
+    }
+    .fc-foot--l { left: 7px; }
+    .fc-foot--r { left: 13px; }
+
+    /* ===== รายละเอียดเฉพาะแผนก ===== */
+    /* TECH: ฮู้ด */
+    .fc-hood {
+      top: 1px;
+      left: 5px;
       width: 16px;
       height: 11px;
-      background: var(--dept-color);
-      border-radius: 1px;
-      opacity: 0.78;
-    }
-
-    .floor-char-leg {
-      position: absolute;
-      top: 24px;
-      width: 6px;
-      height: 9px;
-      background: var(--dept-color);
-      border-radius: 1px;
-      opacity: 0.55;
-    }
-
-    .floor-char-leg--l { left: 7px; }
-    .floor-char-leg--r { left: 15px; }
-
-    .floor-char-emoji {
-      position: absolute;
-      top: 0;
-      left: 7px;
-      font-size: 11px;
-      line-height: 1;
-      pointer-events: none;
-      z-index: 2;
-      filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.8));
-    }
-
-    /* รูปทรงเฉพาะแผนก */
-    .floor-char--ener .floor-char-torso {
-      width: 18px;
-      left: 5px;
-      border-radius: 2px 2px 0 0;
-    }
-
-    .floor-char--hq .floor-char-torso::after {
-      content: '';
-      position: absolute;
-      top: 2px;
-      left: 5px;
-      width: 6px;
-      height: 4px;
-      background: rgba(255, 255, 255, 0.35);
-      border-radius: 0;
-    }
-
-    .floor-char-extra--hood {
-      position: absolute;
-      top: 0;
-      left: 5px;
-      width: 18px;
-      height: 12px;
       border: 2px solid var(--dept-color);
       border-bottom: none;
-      border-radius: 3px 3px 0 0;
-      opacity: 0.7;
-    }
-
-    .floor-char-extra--hat {
-      position: absolute;
-      top: 0;
-      left: 4px;
-      width: 20px;
-      height: 3px;
-      background: var(--dept-color);
+      border-radius: 7px 7px 0 0;
       opacity: 0.85;
+      z-index: 4;
     }
 
-    .floor-char-extra--mail {
+    /* INTEL: หมวกนักข่าว */
+    .fc-hat {
+      top: 1px;
+      left: 5px;
+      width: 16px;
+      height: 4px;
+      background: var(--dept-color);
+      border-radius: 2px;
+      z-index: 4;
+      box-shadow: 0 2px 0 rgba(0, 0, 0, 0.3);
+    }
+    .fc-hat::after {
+      content: '';
       position: absolute;
-      top: 14px;
-      right: -2px;
-      width: 7px;
-      height: 5px;
+      top: 3px;
+      left: 11px;
+      width: 9px;
+      height: 2px;
+      background: var(--dept-color);
+      opacity: 0.8;
+    }
+
+    /* OPS: ซองอีเมล */
+    .fc-mail {
+      top: 16px;
+      right: -3px;
+      width: 8px;
+      height: 6px;
       background: #f80;
-      border-radius: 0;
-      box-shadow: 0 0 4px #f80;
+      border: 1px solid #fff;
+      box-shadow: 0 0 5px #f80;
+      z-index: 5;
     }
 
-    .floor-char-extra--crown {
-      position: absolute;
+    /* EXEC: มงกุฎ */
+    .fc-crown {
       top: 0;
       left: 7px;
-      width: 14px;
-      height: 4px;
-      background: linear-gradient(90deg, #a80, #fa6, #a80);
-      clip-path: polygon(0 100%, 25% 0, 50% 100%, 75% 0, 100% 100%);
+      width: 12px;
+      height: 5px;
+      background: linear-gradient(90deg, #a80, #fd6, #a80);
+      clip-path: polygon(0 100%, 18% 20%, 35% 100%, 50% 10%, 65% 100%, 82% 20%, 100% 100%);
+      z-index: 5;
+      filter: drop-shadow(0 0 3px #fa6);
     }
+
+    /* HQ: ปกเสื้อขาว */
+    .floor-char--hq .fc-shirt::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 5px;
+      width: 4px;
+      height: 5px;
+      background: rgba(255, 255, 255, 0.5);
+      clip-path: polygon(0 0, 100% 0, 50% 100%);
+    }
+
+    /* ENER: ชุดยาว */
+    .floor-char--ener .fc-shirt {
+      height: 16px;
+      border-radius: 3px 3px 4px 4px;
+    }
+    .floor-char--ener .fc-belt { top: 28px; }
 
     .floor-char--active {
       animation: floor-char-bounce 0.9s ease-in-out infinite;
       filter: drop-shadow(0 0 5px var(--dept-color));
     }
 
-    .floor-char--active .floor-char-head,
-    .floor-char--active .floor-char-torso {
-      opacity: 1;
-    }
-
     .floor-char--idle {
-      filter: brightness(0.55) saturate(0.45);
+      filter: brightness(0.6) saturate(0.55);
     }
 
     .floor-char--offline {
-      filter: grayscale(1) brightness(0.35);
+      filter: grayscale(1) brightness(0.4);
     }
 
     .floor-char:hover {
-      filter: brightness(1.2) drop-shadow(0 0 6px var(--dept-color)) !important;
-      transform: scale(1.08);
+      filter: brightness(1.15) drop-shadow(0 0 6px var(--dept-color)) !important;
+      transform: scale(1.1);
       animation: none !important;
     }
 
@@ -1394,8 +1465,8 @@
     }
 
     .floor-char-slot .floor-run-badge {
-      top: -2px;
-      right: 2px;
+      top: -3px;
+      right: -6px;
     }
 
     .floor-run-badge {

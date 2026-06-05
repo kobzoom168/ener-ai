@@ -43,16 +43,23 @@
             onclick="openBuildingFloor('{{ floor.key }}')"
             title="คลิกคุยกับแผนก {{ floor.key | upper }}">
       <span class="floor-char-figure" aria-hidden="true">
-        <span class="floor-char-head"></span>
-        <span class="floor-char-torso"></span>
-        <span class="floor-char-leg floor-char-leg--l"></span>
-        <span class="floor-char-leg floor-char-leg--r"></span>
-        {% if floor.key == 'tech' %}<span class="floor-char-extra floor-char-extra--hood"></span>{% endif %}
-        {% if floor.key == 'intel' %}<span class="floor-char-extra floor-char-extra--hat"></span>{% endif %}
-        {% if floor.key == 'ops' %}<span class="floor-char-extra floor-char-extra--mail"></span>{% endif %}
-        {% if floor.key == 'exec' %}<span class="floor-char-extra floor-char-extra--crown"></span>{% endif %}
+        {% if floor.key == 'intel' %}<span class="fc-part fc-hat"></span>{% endif %}
+        {% if floor.key == 'exec' %}<span class="fc-part fc-crown"></span>{% endif %}
+        <span class="fc-part fc-hair"></span>
+        {% if floor.key == 'tech' %}<span class="fc-part fc-hood"></span>{% endif %}
+        <span class="fc-part fc-face"></span>
+        <span class="fc-part fc-eye fc-eye--l"></span>
+        <span class="fc-part fc-eye fc-eye--r"></span>
+        <span class="fc-part fc-arm fc-arm--l"></span>
+        <span class="fc-part fc-arm fc-arm--r"></span>
+        <span class="fc-part fc-shirt"></span>
+        <span class="fc-part fc-belt"></span>
+        <span class="fc-part fc-leg fc-leg--l"></span>
+        <span class="fc-part fc-leg fc-leg--r"></span>
+        <span class="fc-part fc-foot fc-foot--l"></span>
+        <span class="fc-part fc-foot fc-foot--r"></span>
+        {% if floor.key == 'ops' %}<span class="fc-part fc-mail"></span>{% endif %}
       </span>
-      <span class="floor-char-emoji">{{ head_ag.emoji if head_ag else '●' }}</span>
     </button>
     {% if floor_runs > 0 %}
     <div class="floor-run-badge{% if is_active %} floor-run-badge--active{% endif %}">{{ floor_runs }}x</div>
