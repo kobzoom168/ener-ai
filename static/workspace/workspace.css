@@ -268,6 +268,12 @@
       padding: 1rem 1rem 1rem 1.25rem;
     }
 
+    #panel-office .office-map-left {
+      flex: none;
+      flex-shrink: 0;
+      padding: 8px;
+    }
+
     #panel-office .office-left .office-agents-inner {
       max-width: none;
       margin: 0;

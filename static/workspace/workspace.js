@@ -784,6 +784,104 @@ document.addEventListener('DOMContentLoaded', function() {
     while (feed.children.length > 25) feed.removeChild(feed.lastChild);
   }
 
+  // ── Office Map iframe bridge ──────────────────────────────────
+  const _OFFICE_AGENT_MAP_ID = {
+    SecretaryAgent: 'secretary',
+    MainChatAgent: 'chat',
+    MemoryAgent: 'memory',
+    EnerAgent: 'ener',
+    ContentAgent: 'content',
+    TarotAgent: 'tarot',
+    CodeAgent: 'code',
+    MonitorAgent: 'monitor',
+    GithubAgent: 'github',
+    NewsAgent: 'news',
+    DigestAgent: 'digest',
+    ThinkTeam: 'think',
+    GmailAgent: 'gmail',
+    TaskAgent: 'tasks',
+    LogKeeper: 'logs',
+    SessionAgent: 'session',
+    BriefingAgent: 'briefing',
+  };
+
+  function _mapFrame() {
+    const f = document.getElementById('office-map-frame');
+    return f ? f.contentWindow : null;
+  }
+
+  function _agentNameToMapId(name) {
+    return _OFFICE_AGENT_MAP_ID[name] || '';
+  }
+
+  function notifyMapRoute(fromId, toId, msg) {
+    const w = _mapFrame();
+    if (w && w.triggerRoute) w.triggerRoute(fromId, toId, msg || '');
+  }
+
+  function pillClickAgent(agentName, shortName) {
+    const inp = document.getElementById('office-sec-input');
+    if (inp) {
+      inp.value = '@' + shortName + ' ';
+      inp.dispatchEvent(new Event('input'));
+      inp.focus();
+    }
+  }
+
+  function _handleOfficeMapEvent(evt) {
+    if (!evt || !evt.from || !evt.to) return;
+    const fromId = _agentNameToMapId(evt.from);
+    const toId = _agentNameToMapId(evt.to);
+    if (fromId && toId) notifyMapRoute(fromId, toId, evt.msg || evt.message || '');
+  }
+
+  async function syncMapAgentStatus() {
+    try {
+      const r = await fetch('/workspace/office/activity');
+      if (!r.ok) return;
+      const data = await r.json();
+      const activeSet = new Set();
+      (data.items || []).forEach((e) => {
+        if (e.mins_ago <= 5 && e.success) {
+          const id = _agentNameToMapId(e.agent);
+          if (id) activeSet.add(id);
+        }
+      });
+
+      document.querySelectorAll('.agent-pill').forEach((p) => {
+        const mapId = _agentNameToMapId(p.dataset.agentId || '');
+        if (mapId && activeSet.has(mapId)) {
+          p.className = 'agent-pill agent-pill--active';
+        }
+      });
+
+      const w = _mapFrame();
+      if (w && w.setAgentStatus) {
+        activeSet.forEach((id) => w.setAgentStatus(id, 'active'));
+      }
+    } catch (err) {
+      console.debug('map agent sync failed', err);
+    }
+  }
+
+  function stopOfficeMapSync() {
+    if (state.officeMapSyncTimer) {
+      clearInterval(state.officeMapSyncTimer);
+      state.officeMapSyncTimer = null;
+    }
+  }
+
+  function startOfficeMapSync() {
+    stopOfficeMapSync();
+    syncMapAgentStatus();
+    state.officeMapSyncTimer = setInterval(syncMapAgentStatus, 30000);
+    const frame = document.getElementById('office-map-frame');
+    if (frame && !frame.dataset.mapBridgeBound) {
+      frame.dataset.mapBridgeBound = '1';
+      frame.addEventListener('load', () => setTimeout(syncMapAgentStatus, 500));
+    }
+  }
+
   function stopOfficeEventStream() {
     if (state.officeEventReconnectTimer) {
       clearTimeout(state.officeEventReconnectTimer);
@@ -820,6 +918,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         drawOfficeConnection(fromA, toA, type);
         _updateActivityFeedItem(fromA, toA, msg, type);
+        _handleOfficeMapEvent(evt);
       } catch (err) {
         console.warn('office event parse failed', err);
       }
@@ -842,6 +941,7 @@ document.addEventListener('DOMContentLoaded', function() {
     state.officeActivityTimer = setInterval(loadOfficeActivity, 15000);
     loadSecretaryHistory();
     startOfficeEventStream();
+    startOfficeMapSync();
     startPBClock();
   }
 
@@ -1120,6 +1220,7 @@ document.addEventListener('DOMContentLoaded', function() {
     } else {
       stopOfficeActivityRefresh();
       stopOfficeEventStream();
+      stopOfficeMapSync();
       stopPBClock();
     }
   }
@@ -2238,6 +2339,9 @@ document.addEventListener('DOMContentLoaded', function() {
   window.loadOfficeActivity = loadOfficeActivity;
   window.startOfficeEventStream = startOfficeEventStream;
   window.stopOfficeEventStream = stopOfficeEventStream;
+  window.pillClickAgent = pillClickAgent;
+  window.notifyMapRoute = notifyMapRoute;
+  window.syncMapAgentStatus = syncMapAgentStatus;
   window.focusOfficeSecretary = focusOfficeSecretary;
   window.showToast = showToast;
   window.api = api;
