@@ -9,6 +9,10 @@ services:
     volumes:
       - ./data:/app/data
       - ./backups:/app/backups
+      - ./app:/app/app
+      - ./templates:/app/templates
+      - ./static:/app/static
+      - ./scripts:/app/scripts
       - /root/.codex:/root/.codex
       - /root/ener-ai:/root/ener-ai
       - /root/ener-code:/root/ener-code
