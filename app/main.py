@@ -6975,6 +6975,86 @@ async def workspace_code_chat(request: Request):
     return JSONResponse({"answer": str(answer)})
 
 
+_WRITE_FILE_RE = __import__("re").compile(
+    r'<WRITE_FILE\s+path="([^"]+)">([\s\S]*?)</WRITE_FILE>', __import__("re").MULTILINE
+)
+
+
+@app.post("/workspace/code/agent")
+async def workspace_code_agent(request: Request):
+    """Code agent: AI can create/modify files via <WRITE_FILE> tags."""
+    await _require_admin(request)
+    import os
+
+    body = await request.json()
+    question = body.get("question", "").strip()
+    file_path = body.get("file_path", "")
+    file_content = body.get("file_content", "")
+    project = body.get("project", "") or (file_path.split("/")[0] if file_path else "")
+    model = body.get("model", "featherless-coder")
+    if not question:
+        raise HTTPException(400, "question required")
+
+    from app.core.ai import chat as ai_chat, _VALID_MODELS
+    if model not in _VALID_MODELS:
+        model = "featherless-coder"
+
+    file_ctx = ""
+    if file_path and file_content:
+        lines = file_content.splitlines()
+        preview = "\n".join(lines[:200])
+        file_ctx = f"\n\n=== Current File: {file_path} ({len(lines)} lines) ===\n```\n{preview}\n```\n"
+
+    system = (
+        f"คุณเป็น Ener-AI Code Agent — coding agent บน Ener-AI Web IDE\n\n"
+        f"=== Context ===\n"
+        f"Project: {project or 'ยังไม่ได้เลือก'}\n"
+        f"File: {file_path or 'ยังไม่ได้เลือก'}\n"
+        f"Stack: Python 3.11 / FastAPI / aiosqlite / Docker / Server my-ener.uk\n"
+        f"{file_ctx}\n"
+        f"=== Tools ===\n"
+        f"คุณสร้าง/แก้ไขไฟล์ได้โดยใช้ XML tag ต่อไปนี้:\n"
+        f'<WRITE_FILE path="project/filename.py">\n'
+        f"...file content...\n"
+        f"</WRITE_FILE>\n\n"
+        f"ตัวอย่าง — ถ้า project = my-app ให้ใช้:\n"
+        f'<WRITE_FILE path="my-app/main.py">\n'
+        f"from fastapi import FastAPI\n"
+        f"app = FastAPI()\n"
+        f"</WRITE_FILE>\n\n"
+        f"=== กฎ ===\n"
+        f"- ถ้าถามให้เขียน/สร้าง/แก้ไข code → ใช้ WRITE_FILE ทันที อย่าแค่แสดง code block\n"
+        f"- ใช้ path แบบ project/filename เสมอ (project = '{project or 'ชื่อ-project'}')\n"
+        f"- สร้างหลายไฟล์พร้อมกันได้ถ้าจำเป็น\n"
+        f"- อธิบายสั้นๆ หลัง WRITE_FILE ว่าทำอะไรไปแล้ว\n"
+        f"- ใช้ภาษาไทยผสม technical terms"
+    )
+
+    raw_answer = await ai_chat(
+        question, system=system, agent="CodeAgent",
+        messages=[], preferred_model=model, strict_model=False,
+    )
+
+    # Execute WRITE_FILE actions
+    actions: list[dict] = []
+    for m in _WRITE_FILE_RE.finditer(raw_answer):
+        rel_path = m.group(1).strip()
+        content = m.group(2).lstrip("\n").rstrip("\n")
+        try:
+            full = _ener_code_resolve(rel_path)
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, "w", encoding="utf-8") as fh:
+                fh.write(content)
+            actions.append({"type": "write_file", "path": rel_path, "ok": True, "lines": len(content.splitlines())})
+        except Exception as exc:
+            actions.append({"type": "write_file", "path": rel_path, "ok": False, "error": str(exc)})
+
+    # Strip WRITE_FILE tags from display text
+    display = _WRITE_FILE_RE.sub("", raw_answer).strip()
+
+    return JSONResponse({"answer": display, "actions": actions})
+
+
 @app.post("/workspace/code/remember")
 async def workspace_code_remember(request: Request):
     await _require_admin(request)

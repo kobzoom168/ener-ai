@@ -347,6 +347,9 @@
       #panel-code .ai-apply-btn { background:#7c3aed; border:none; color:#fff; font-size:11px; cursor:pointer; padding:3px 10px; border-radius:4px; white-space:nowrap; }
       #panel-code .ai-apply-btn:hover { background:#6d28d9; }
       #panel-code .ai-code-pre { margin:0; padding:10px 12px; font-size:12px; font-family:monospace; overflow-x:auto; color:#e2e8f0; white-space:pre; }
+      #panel-code .code-agent-action { font-size:11px; padding:3px 6px; border-radius:4px; margin:2px 0; }
+      #panel-code .code-agent-action.ok { background:#0f2a1a; color:#4ade80; border-left:2px solid #16a34a; }
+      #panel-code .code-agent-action.err { background:#2a0f0f; color:#f87171; border-left:2px solid #dc2626; }
     </style>
       <div id="code-toolbar" class="code-toolbar">
         <div class="code-toolbar-left">
@@ -951,13 +954,14 @@
         msgs.innerHTML += `<div id="${thinkId}" class="code-chat-thinking">💭 กำลังวิเคราะห์...</div>`;
         msgs.scrollTop = msgs.scrollHeight;
         try {
-          const res = await fetch('/workspace/code/chat', {
+          const res = await fetch('/workspace/code/agent', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               question,
               file_path: currentFilePath,
               file_content: fileContent,
+              project: currentProject,
               model: selectedModel,
             }),
           });
@@ -966,13 +970,47 @@
           const el = document.getElementById(thinkId);
           if (el) el.remove();
           const answer = d.answer || '';
+          const actions = d.actions || [];
           updateTokenCounter(question, answer);
+
+          // Build action summary HTML
+          let actionsHtml = '';
+          const writtenProjects = new Set();
+          let lastWrittenPath = null;
+          for (const a of actions) {
+            if (a.type === 'write_file') {
+              if (a.ok) {
+                actionsHtml += `<div class="code-agent-action ok">✅ สร้าง/แก้ไข: <strong>${a.path}</strong> (${a.lines} lines)</div>`;
+                writtenProjects.add(a.path.split('/')[0]);
+                lastWrittenPath = a.path;
+              } else {
+                actionsHtml += `<div class="code-agent-action err">❌ ไม่สำเร็จ: ${a.path} — ${a.error}</div>`;
+              }
+            }
+          }
+
           const aiDiv = document.createElement('div');
           aiDiv.className = 'code-chat-ai';
           aiDiv.innerHTML = `<div class="code-chat-ai-label">🤖 ${selectedModel}</div>
+            ${actionsHtml}
             <div class="code-chat-ai-body">${formatAIResponse(answer)}</div>`;
           msgs.appendChild(aiDiv);
           msgs.scrollTop = msgs.scrollHeight;
+
+          // Refresh file trees for affected projects
+          for (const proj of writtenProjects) {
+            const filesDiv = document.querySelector(`.code-project-files[data-project="${proj}"]`);
+            if (filesDiv && filesDiv.style.display !== 'none') {
+              filesDiv.dataset.loaded = '';
+              await loadFilesInto(proj, filesDiv);
+            } else if (filesDiv) {
+              // Project is collapsed — expand it
+              await toggleProject(proj);
+            }
+          }
+          // Auto-open last written file
+          if (lastWrittenPath) await loadEnerFile(lastWrittenPath);
+
         } catch (e) {
           const el = document.getElementById(thinkId);
           if (el) el.outerHTML = `<div class="code-chat-error">Error: ${e.message}</div>`;
