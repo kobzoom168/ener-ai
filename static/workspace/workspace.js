@@ -1066,6 +1066,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
       const handlePayload = (payload) => {
         if (!payload || !payload.type) return;
+        if (window._handleSecSSEEvent) window._handleSecSSEEvent(payload);
         if (payload.type === 'token' && payload.text) {
           accumulated += payload.text;
           if (textEl) textEl.textContent = accumulated;

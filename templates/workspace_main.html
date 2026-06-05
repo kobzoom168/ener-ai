@@ -324,4 +324,47 @@
         </div>
       </div>
     </div>
+
+    <script>
+    // ── Office Map Real-Agent Bridge ─────────────────────────────────
+    function _mapWin() {
+      const f = document.getElementById('office-map-frame');
+      return (f && f.contentWindow && f.contentWindow.triggerRoute) ? f.contentWindow : null;
+    }
+
+    const _origHandleSecSSE = window._handleSecSSEEvent;
+    window._handleSecSSEEvent = function(evt) {
+      if (evt && evt.type === 'route' && evt.from && evt.to) {
+        const w = _mapWin();
+        if (w) {
+          setTimeout(() => w.triggerRoute(evt.from, evt.to, evt.message || ''), 200);
+        }
+        document.querySelectorAll('.agent-pill').forEach(p => {
+          p.classList.remove('agent-pill--active');
+          p.classList.add('agent-pill--idle');
+        });
+        const toId = evt.to.toLowerCase();
+        document.querySelectorAll('.agent-pill').forEach(p => {
+          const agId = (p.dataset.agentId || '').toLowerCase();
+          if (agId.includes(toId) || toId.includes(agId.replace('agent','').replace('team',''))) {
+            p.classList.remove('agent-pill--idle');
+            p.classList.add('agent-pill--active');
+          }
+        });
+      }
+      if (_origHandleSecSSE) _origHandleSecSSE(evt);
+    };
+
+    function pillClickAgent(agentName, shortName) {
+      const inp = document.getElementById('office-sec-input');
+      if (inp) { inp.value = '@' + shortName + ' '; inp.focus(); }
+    }
+
+    document.getElementById('office-map-frame')?.addEventListener('load', () => {
+      setTimeout(() => {
+        const w = _mapWin();
+        if (w) { /* demo continues as fallback — real events override it */ }
+      }, 5000);
+    });
+    </script>
   </main>

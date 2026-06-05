@@ -6364,12 +6364,22 @@ async def workspace_secretary_stream(request: Request):
     if not message:
         raise HTTPException(status_code=400, detail="empty message")
 
-    from app.agents.secretary_agent import handle_secretary
+    from app.agents.secretary_agent import _last_route, handle_secretary
 
     async def generate():
         try:
             yield f"data: {json.dumps({'type': 'start'}, ensure_ascii=False)}\n\n"
+            _last_route.clear()
             reply = await handle_secretary(message)
+            if _last_route.get("agent"):
+                route_evt = {
+                    "type": "route",
+                    "from": "secretary",
+                    "to": _last_route["agent"],
+                    "dept": _last_route.get("dept", ""),
+                    "message": message[:40],
+                }
+                yield f"data: {json.dumps(route_evt, ensure_ascii=False)}\n\n"
             reply_text = str(reply or "").strip() or "เอรับทราบแล้วค่ะ"
             chunk_size = 50
             for i in range(0, len(reply_text), chunk_size):

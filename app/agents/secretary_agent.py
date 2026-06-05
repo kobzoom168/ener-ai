@@ -62,6 +62,16 @@ _DEPT_LABELS: dict[str, str] = {
     "hq": "HQ",
 }
 
+_last_route: dict = {}
+
+_DEPT_TO_MAP_ID: dict[str, str] = {
+    "tech": "code",
+    "intel": "news",
+    "ops": "gmail",
+    "ener": "ener",
+    "hq": "memory",
+}
+
 
 def agent_key_to_agent_name(key: str) -> str:
     from app.agents.agent_dispatch import agent_key_to_agent_name as _map
@@ -173,6 +183,8 @@ async def handle_secretary(message: str) -> str:
     if use_head and head:
         ctx = RunContext(query=query, department=dept_key)
         body = str(await head.handle(ctx) or "").strip()
+        _last_route["dept"] = dept_key
+        _last_route["agent"] = _DEPT_TO_MAP_ID.get(dept_key, dept_key)
         if body and not body.startswith("⚠️"):
             label = _DEPT_LABELS.get(dept_key, dept_key)
             return f"👩‍💼 เอส่งเรื่อง{label}ให้แล้วค่ะ\n\n{body}"
