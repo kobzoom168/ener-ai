@@ -1216,11 +1216,12 @@
 
     .floor-sprite-slot {
       position: absolute;
-      left: 6%;
-      width: 18%;
-      max-height: 9%;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 20%;
+      max-height: 10%;
       display: flex;
-      align-items: flex-end;
+      align-items: center;
       justify-content: center;
       z-index: 3;
       pointer-events: none;
@@ -1230,12 +1231,13 @@
       pointer-events: auto;
     }
 
-    .floor-sprite-slot--hq { top: 10%; height: 9%; }
-    .floor-sprite-slot--ener { top: 23%; height: 9%; }
-    .floor-sprite-slot--tech { top: 36%; height: 9%; }
-    .floor-sprite-slot--intel { top: 49%; height: 9%; }
-    .floor-sprite-slot--ops { top: 62%; height: 9%; }
-    .floor-sprite-slot--exec { top: 75%; height: 9%; }
+    /* กึ่งกลางแต่ละชั้น (ตรงป้าย HQ / ENER / …) */
+    .floor-sprite-slot--hq { top: 11%; height: 10%; }
+    .floor-sprite-slot--ener { top: 24%; height: 10%; }
+    .floor-sprite-slot--tech { top: 37%; height: 10%; }
+    .floor-sprite-slot--intel { top: 50%; height: 10%; }
+    .floor-sprite-slot--ops { top: 63%; height: 10%; }
+    .floor-sprite-slot--exec { top: 76%; height: 10%; }
 
     .floor-sprite {
       width: auto;
@@ -1318,8 +1320,8 @@
 
     .floor-agents-list {
       position: absolute;
-      left: 44%;
-      width: 52%;
+      left: 72%;
+      width: 26%;
       display: flex;
       flex-direction: column;
       gap: 1px;
@@ -1329,12 +1331,12 @@
       overflow: hidden;
     }
 
-    .floor-agents-list--hq { top: 10%; }
-    .floor-agents-list--ener { top: 23%; }
-    .floor-agents-list--tech { top: 36%; }
-    .floor-agents-list--intel { top: 49%; }
-    .floor-agents-list--ops { top: 62%; }
-    .floor-agents-list--exec { top: 75%; }
+    .floor-agents-list--hq { top: 11%; }
+    .floor-agents-list--ener { top: 24%; }
+    .floor-agents-list--tech { top: 37%; }
+    .floor-agents-list--intel { top: 50%; }
+    .floor-agents-list--ops { top: 63%; }
+    .floor-agents-list--exec { top: 76%; }
 
     .floor-agent-row {
       font-size: 4px;
