@@ -340,6 +340,13 @@
       }
       #panel-code .code-tree-item:hover .code-file-del { display: block; }
       #panel-code .code-file-del:hover { color: #f87171; }
+      /* AI chat code block */
+      #panel-code .ai-code-block { background:#0d0d14; border:1px solid #2a2a2a; border-radius:6px; margin:8px 0; overflow:hidden; }
+      #panel-code .ai-code-header { display:flex; align-items:center; padding:4px 10px; background:#1a1a2a; font-size:11px; color:#777; gap:8px; }
+      #panel-code .ai-code-lang { flex:1; }
+      #panel-code .ai-apply-btn { background:#7c3aed; border:none; color:#fff; font-size:11px; cursor:pointer; padding:3px 10px; border-radius:4px; white-space:nowrap; }
+      #panel-code .ai-apply-btn:hover { background:#6d28d9; }
+      #panel-code .ai-code-pre { margin:0; padding:10px 12px; font-size:12px; font-family:monospace; overflow-x:auto; color:#e2e8f0; white-space:pre; }
     </style>
       <div id="code-toolbar" class="code-toolbar">
         <div class="code-toolbar-left">
@@ -400,7 +407,10 @@
         </div>
 
         <div id="code-chat-column" class="code-chat-column">
-          <div class="code-chat-header" style="padding:8px 12px;font-size:12px;color:#999;border-bottom:1px solid #333;flex-shrink:0">💬 AI Chat</div>
+          <div style="padding:6px 12px 4px;font-size:12px;color:#999;border-bottom:1px solid #333;flex-shrink:0;display:flex;flex-direction:column;gap:2px">
+            <span>💬 AI Chat</span>
+            <span id="code-chat-context" style="font-size:10px;color:#555;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">— ยังไม่ได้เลือกไฟล์ —</span>
+          </div>
           <div id="code-chat-messages" class="code-chat-messages" role="log" aria-live="polite">
             <div class="code-chat-empty-placeholder" style="color:#666;font-size:12px;text-align:center;margin-top:40px">เลือกไฟล์แล้วถามได้เลย</div>
           </div>
@@ -783,6 +793,7 @@
           const d = await res.json();
           currentFilePath = d.path;
           savedContent = d.content || '';
+          updateChatContext();
           if (monacoReady && monacoEditor) {
             monacoEditor.setValue(savedContent);
             const model = monacoEditor.getModel();
@@ -887,6 +898,44 @@
         }
       }
 
+      function formatAIResponse(text) {
+        let html = '';
+        const parts = text.split(/(```[\w]*\n[\s\S]*?```)/g);
+        parts.forEach(part => {
+          const m = part.match(/^```(\w*)\n([\s\S]*?)```$/);
+          if (m) {
+            const lang = m[1] || 'code';
+            const code = m[2];
+            const escaped = code.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            html += `<div class="ai-code-block">
+              <div class="ai-code-header">
+                <span class="ai-code-lang">${lang}</span>
+                <button type="button" class="ai-apply-btn" onclick="applyToEditor(this)">▶ Apply to editor</button>
+              </div>
+              <pre class="ai-code-pre">${escaped}</pre>
+            </div>`;
+          } else if (part.trim()) {
+            html += `<div style="margin:4px 0;line-height:1.5">${part.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>')}</div>`;
+          }
+        });
+        return html || text.replace(/</g,'&lt;');
+      }
+
+      function applyToEditor(btn) {
+        const pre = btn.closest('.ai-code-block')?.querySelector('.ai-code-pre');
+        if (!pre || !monacoEditor) return;
+        const code = pre.textContent;
+        monacoEditor.setValue(code);
+        setUnsaved(true);
+        codeToast('✅ Applied — กด Ctrl+S เพื่อ Save');
+      }
+
+      function updateChatContext() {
+        const bar = document.getElementById('code-chat-context');
+        if (!bar) return;
+        bar.textContent = currentFilePath ? `📄 ${currentFilePath}` : '— ยังไม่ได้เลือกไฟล์ —';
+      }
+
       async function askCodeAI(preset) {
         const input = document.getElementById('code-question-input');
         const question = preset || (input ? input.value.trim() : '');
@@ -899,7 +948,7 @@
         const fileContent = monacoEditor ? monacoEditor.getValue().substring(0, 8000) : '';
         msgs.innerHTML += `<div class="code-chat-user">${question.replace(/</g,'&lt;')}</div>`;
         const thinkId = 'think-' + Date.now();
-        msgs.innerHTML += `<div id="${thinkId}" class="code-chat-thinking">💭 กำลังวิเคราะห์ด้วย ${selectedModel}...</div>`;
+        msgs.innerHTML += `<div id="${thinkId}" class="code-chat-thinking">💭 กำลังวิเคราะห์...</div>`;
         msgs.scrollTop = msgs.scrollHeight;
         try {
           const res = await fetch('/workspace/code/chat', {
@@ -918,11 +967,11 @@
           if (el) el.remove();
           const answer = d.answer || '';
           updateTokenCounter(question, answer);
-          msgs.innerHTML += `
-            <div class="code-chat-ai">
-              <div class="code-chat-ai-label">🤖 ${selectedModel}</div>
-              <div class="code-chat-ai-body">${answer.replace(/</g,'&lt;').replace(/\n/g,'<br>')}</div>
-            </div>`;
+          const aiDiv = document.createElement('div');
+          aiDiv.className = 'code-chat-ai';
+          aiDiv.innerHTML = `<div class="code-chat-ai-label">🤖 ${selectedModel}</div>
+            <div class="code-chat-ai-body">${formatAIResponse(answer)}</div>`;
+          msgs.appendChild(aiDiv);
           msgs.scrollTop = msgs.scrollHeight;
         } catch (e) {
           const el = document.getElementById(thinkId);
@@ -1004,6 +1053,7 @@
       window.deleteProject = deleteProject;
       window.newFile = newFile;
       window.deleteFile = deleteFile;
+      window.applyToEditor = applyToEditor;
       window.loadEnerFile = loadEnerFile;
       window.saveFile = saveFile;
       window.gitAction = gitAction;
