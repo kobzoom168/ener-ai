@@ -1170,15 +1170,9 @@
       }
     }
 
-    /* ===== BUILDING SIDE PANEL (3-column layout) ===== */
+    /* ===== BUILDING SIDE PANEL (removed — map is in #panel-office iframe) ===== */
     #building-panel {
-      width: 300px;
-      flex-shrink: 0;
-      border-right: 1px solid oklch(0.22 0.01 250);
-      overflow-y: auto;
-      overflow-x: hidden;
-      background: #02020e;
-      position: relative;
+      display: none !important;
     }
 
     .mini-building {
