@@ -60,7 +60,7 @@ const ROOMS=[
   {id:'intel', name:'Intelligence',x:580, y:8,   w:172,h:148, clr:'#ffee44', bgL:'#201c00', bgD:'#1c1800', wallL:'#484000', wallD:'#383000'},
   {id:'ops',   name:'Operations',  x:8,   y:185, w:178,h:148, clr:'#ff9922', bgL:'#201400', bgD:'#1c1000', wallL:'#4a2c00', wallD:'#3c2200'},
   {id:'exec',  name:'Executive',   x:194, y:185, w:192,h:148, clr:'#ffcc66', bgL:'#201808', bgD:'#1c1400', wallL:'#4a3010', wallD:'#3c2808'},
-  {id:'meet',  name:'War Room',    x:394, y:185, w:178,h:148, clr:'#6688ff', bgL:'#101828', bgD:'#0e1630', wallL:'#202860', wallD:'#1a2050'},
+  {id:'meet',  name:'War Room',    x:394, y:185, w:358,h:148, clr:'#6688ff', bgL:'#101828', bgD:'#0e1630', wallL:'#202860', wallD:'#1a2050'},
 ];
 const rMap={};ROOMS.forEach(r=>{rMap[r.id]=r;});
 
@@ -141,10 +141,12 @@ function drawRoom(r){
   ctx.fillStyle=r.clr+(night?'bb':'99');
   ctx.fillRect(r.x+5,r.y+14,r.w-10,3);
   // Room label badge on top wall
-  ctx.fillStyle=r.clr+(night?'ee':'cc');
-  ctx.beginPath();ctx.roundRect(r.x+r.w/2-45,r.y+1,90,13,2);ctx.fill();
-  ctx.fillStyle='#fff';ctx.font='bold 8px Courier New';ctx.textAlign='center';
-  ctx.fillText(r.name.toUpperCase(),r.x+r.w/2,r.y+10);ctx.textAlign='left';
+  ctx.fillStyle=r.clr+(night?'ff':'dd');
+  ctx.beginPath();ctx.roundRect(r.x+r.w/2-50,r.y+1,100,14,2);ctx.fill();
+  ctx.shadowColor='rgba(0,0,0,0.9)';ctx.shadowBlur=3;
+  ctx.fillStyle='#000';ctx.font='bold 9px Courier New';ctx.textAlign='center';
+  ctx.fillText(r.name.toUpperCase(),r.x+r.w/2,r.y+11);
+  ctx.shadowBlur=0;ctx.textAlign='left';
   // Night: overhead lamp glow
   if(night){
     const lx=r.x+r.w/2,ly=r.y+r.h/2;
@@ -410,19 +412,17 @@ function drawAgent(a){
 
   drawWorker(a,bob);
 
-  // === NAME TAG (big, clear, always readable) ===
-  const ny=a.y+22+bob;
-  // Badge background with agent's unique color
-  ctx.fillStyle=a.color+'dd';
-  ctx.beginPath();ctx.roundRect(a.x-22,ny-9,44,10,3);ctx.fill();
-  ctx.fillStyle='#000000cc';
-  ctx.font='bold 8px Courier New';ctx.textAlign='center';
+  // === NAME TAG ===
+  const ny=a.y+24+bob;
+  ctx.fillStyle=a.color+'f0';
+  ctx.beginPath();ctx.roundRect(a.x-28,ny-10,56,13,3);ctx.fill();
+  ctx.fillStyle='#000';ctx.font='bold 9px Courier New';ctx.textAlign='center';
   ctx.fillText(a.name,a.x,ny);
   // Role below
-  ctx.fillStyle='rgba(0,0,0,0.5)';
-  ctx.beginPath();ctx.roundRect(a.x-22,ny+1,44,8,2);ctx.fill();
-  ctx.fillStyle=a.color+'cc';ctx.font='6px Courier New';
-  ctx.fillText(a.title,a.x,ny+7);
+  ctx.fillStyle='rgba(0,0,0,0.7)';
+  ctx.beginPath();ctx.roundRect(a.x-28,ny+3,56,10,2);ctx.fill();
+  ctx.fillStyle=a.color+'ff';ctx.font='bold 7px Courier New';
+  ctx.fillText(a.title,a.x,ny+11);
   ctx.textAlign='left';
 
   // HP/MP bars
@@ -723,10 +723,10 @@ function loop(){
   [...AGENTS].sort((a,b)=>a.y-b.y).forEach(a=>{updateAgent(a);drawAgent(a);});
   drawParticles();
 
-  // Live status pill
-  ctx.fillStyle='rgba(0,0,0,0.65)';ctx.beginPath();ctx.roundRect(W-145,6,138,17,3);ctx.fill();
+  // Live status pill — in hallway strip (y=156-185), won't overlap rooms
+  ctx.fillStyle='rgba(0,0,0,0.7)';ctx.beginPath();ctx.roundRect(W-148,159,142,20,4);ctx.fill();
   ctx.fillStyle='#44dd66';ctx.font='bold 9px Courier New';ctx.textAlign='right';
-  ctx.fillText('● LIVE  staff: '+AGENTS.length,W-8,19);ctx.textAlign='left';
+  ctx.fillText('● LIVE  staff: '+AGENTS.length,W-8,173);ctx.textAlign='left';
 
   // Advance routes
   for(let i=routes.length-1;i>=0;i--){routes[i].phase++;if(routes[i].phase>=routes[i].dur){routes[i].onDone&&routes[i].onDone();routes.splice(i,1);}}
