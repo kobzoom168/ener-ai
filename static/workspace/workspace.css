@@ -2251,23 +2251,38 @@
     /* ── Code IDE panel (panel-code only) ── */
     #panel-code.code-ide-panel {
       background: #0d0d0d;
+      min-height: 0;
     }
 
     #panel-code .code-toolbar {
       display: flex;
       align-items: center;
-      gap: 8px;
-      flex-wrap: wrap;
-      padding: 10px 14px;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: nowrap;
+      height: 44px;
+      min-height: 44px;
+      padding: 0 12px;
       border-bottom: 1px solid var(--border);
       background: #141414;
       flex-shrink: 0;
+      overflow: hidden;
     }
 
-    #panel-code .code-toolbar-title {
-      font-size: 14px;
-      font-weight: 600;
-      margin-right: 4px;
+    #panel-code .code-toolbar-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    #panel-code .code-toolbar-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
     }
 
     #panel-code .code-toolbar-select,
@@ -2275,13 +2290,25 @@
       background: #2a2a2a;
       border: 1px solid #444;
       border-radius: 6px;
-      padding: 6px 12px;
+      padding: 6px 10px;
       color: #e5e5e5;
-      font-size: 13px;
+      font-size: 12px;
       cursor: pointer;
+      height: 32px;
+      line-height: 1.2;
+      box-sizing: border-box;
+    }
+
+    #panel-code .code-project-select {
+      min-width: 140px;
+      max-width: 200px;
+      flex-shrink: 0;
     }
 
     #panel-code .code-model-select {
+      flex: 1;
+      min-width: 0;
+      max-width: 100%;
       border-color: #7c3aed;
     }
 
@@ -2303,7 +2330,6 @@
 
     #panel-code .code-git-dropdown {
       position: relative;
-      margin-left: auto;
     }
 
     #panel-code .code-git-menu {
@@ -2390,14 +2416,24 @@
 
     #panel-code .code-ide-body {
       display: flex;
-      flex: 1;
+      flex-direction: row;
+      flex: 1 1 0;
       min-height: 0;
+      overflow: hidden;
+      height: calc(100% - 44px);
+    }
+
+    #panel-code .code-editor-wrap {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
       overflow: hidden;
     }
 
     #panel-code .code-explorer {
-      width: 250px;
-      min-width: 250px;
+      width: 220px;
+      min-width: 220px;
       flex-shrink: 0;
       display: flex;
       flex-direction: column;
@@ -2406,35 +2442,59 @@
     }
 
     #panel-code .code-explorer-header {
-      padding: 8px 12px;
-      font-size: 11px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 10px 12px;
+      font-size: 12px;
       font-weight: 600;
-      letter-spacing: 0.05em;
-      color: #888;
+      color: #ccc;
       border-bottom: 1px solid #2a2a2a;
+      flex-shrink: 0;
+    }
+
+    #panel-code .code-explorer-icon {
+      font-size: 14px;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+
+    #panel-code .code-explorer-project-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #e5e5e5;
     }
 
     #panel-code .code-explorer-tree {
       flex: 1;
       overflow-y: auto;
-      padding: 6px 0;
+      padding: 8px 0;
     }
 
     #panel-code .code-explorer-empty {
-      padding: 12px;
+      padding: 12px 14px;
       font-size: 12px;
       color: #666;
     }
 
     #panel-code .code-tree-item {
-      padding: 4px 10px;
-      font-size: 13px;
+      padding: 5px 10px;
+      font-size: 12px;
       cursor: pointer;
       user-select: none;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      border-radius: 4px;
+      margin: 1px 6px;
     }
+
+    #panel-code .code-tree-item[data-depth="1"] { padding-left: 10px !important; }
+    #panel-code .code-tree-item[data-depth="2"] { padding-left: 26px !important; }
+    #panel-code .code-tree-item[data-depth="3"] { padding-left: 42px !important; }
+    #panel-code .code-tree-item[data-depth="4"] { padding-left: 58px !important; }
+    #panel-code .code-tree-item[data-depth="5"] { padding-left: 74px !important; }
 
     #panel-code .code-tree-dir {
       color: #7c3aed;
@@ -2451,33 +2511,42 @@
 
     #panel-code .code-tree-file.active {
       color: #fff;
-      background: rgba(124, 58, 237, 0.25);
-      border-left: 2px solid #7c3aed;
+      background: #7c3aed;
     }
 
-    #panel-code .code-monaco-wrap {
-      flex: 1;
+    #panel-code .code-monaco-wrap,
+    #panel-code #monaco-container {
+      flex: 1 1 0;
       min-width: 0;
-      height: 100%;
+      min-height: 0;
+      width: auto;
+      height: auto;
+      overflow: hidden;
     }
 
     #panel-code .code-chat-column {
-      width: 380px;
-      min-width: 380px;
+      width: 360px;
+      min-width: 360px;
+      max-width: 360px;
       flex-shrink: 0;
       display: flex;
       flex-direction: column;
+      min-height: 0;
+      height: 100%;
+      overflow: hidden;
       border-left: 1px solid #2a2a2a;
       background: #111;
     }
 
     #panel-code .code-chat-messages {
-      flex: 1;
+      flex: 1 1 0;
+      min-height: 0;
       overflow-y: auto;
       padding: 12px;
       display: flex;
       flex-direction: column;
       gap: 8px;
+      background: #0d0d0d;
     }
 
     #panel-code .code-chat-user {
@@ -2516,26 +2585,39 @@
       color: #ef4444;
     }
 
-    #panel-code .code-chat-input-area {
-      padding: 12px;
-      border-top: 1px solid #2a2a2a;
-    }
-
-    #panel-code .code-chat-presets {
+    #panel-code .code-chat-actions {
       display: flex;
       gap: 6px;
       flex-wrap: wrap;
-      margin-bottom: 8px;
+      padding: 10px 12px;
+      border-top: 1px solid #2a2a2a;
+      flex-shrink: 0;
+      background: #111;
+    }
+
+    #panel-code .code-chat-input-area {
+      padding: 10px 12px 12px;
+      border-top: 1px solid #2a2a2a;
+      flex-shrink: 0;
+      background: #111;
     }
 
     #panel-code .code-preset-btn {
       font-size: 11px;
-      padding: 4px 10px;
+      padding: 5px 10px;
       background: #2a2a2a;
       border: 1px solid #444;
       border-radius: 6px;
       color: #aaa;
       cursor: pointer;
+      flex: 1;
+      min-width: 0;
+      text-align: center;
+    }
+
+    #panel-code .code-preset-btn:hover {
+      color: #e5e5e5;
+      border-color: #555;
     }
 
     #panel-code .code-chat-input-row {

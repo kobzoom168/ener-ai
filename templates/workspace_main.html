@@ -195,31 +195,78 @@
     </div>
 
     <div id="panel-code" class="panel code-ide-panel" style="display:none">
+    <style>
+      #panel-code.code-ide-panel { height: 100%; overflow: hidden; }
+      #panel-code .code-ide-body {
+        display: flex;
+        flex-direction: row;
+        flex: 1 1 0;
+        min-height: 0;
+        overflow: hidden;
+        height: calc(100% - 44px);
+      }
+      #panel-code .code-editor-wrap {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      #panel-code #monaco-container.code-monaco-wrap {
+        flex: 1 1 0;
+        min-width: 0;
+        min-height: 0;
+        width: auto;
+        height: auto;
+        overflow: hidden;
+      }
+      #panel-code .code-chat-column {
+        display: flex;
+        flex-direction: column;
+        width: 360px;
+        min-width: 360px;
+        max-width: 360px;
+        flex-shrink: 0;
+        min-height: 0;
+        height: 100%;
+        overflow: hidden;
+        border-left: 1px solid #2a2a2a;
+      }
+      #panel-code #code-chat-messages.code-chat-messages {
+        flex: 1 1 0;
+        min-height: 0;
+        overflow-y: auto;
+        padding: 12px;
+      }
+    </style>
       <div id="code-toolbar" class="code-toolbar">
-        <span class="code-toolbar-title">💻 Code IDE</span>
-        <select id="code-project-select" class="code-toolbar-select" title="Project">
-          <option value="">-- Select project --</option>
-        </select>
-        <button type="button" id="btn-new-project" class="code-toolbar-btn">＋ New</button>
-        <select id="code-model-select" class="code-toolbar-select code-model-select">
-          <option value="featherless-coder">💻 Qwen2.5 Coder 32B (Featherless)</option>
-          <option value="featherless-deepseek">⚡ DeepSeek V3 (Featherless)</option>
-          <option value="featherless-qwen3">🧠 Qwen3 32B (Featherless)</option>
-          <option value="featherless-abliterated">🔓 No Filter 72B (Featherless)</option>
-          <option value="sonnet">🔴 Claude Sonnet</option>
-          <option value="haiku" selected>🟠 Claude Haiku</option>
-          <option value="groq">💚 Groq (ฟรี)</option>
-        </select>
-        <button type="button" id="btn-save-file" class="code-toolbar-btn code-save-btn" disabled>💾 Save</button>
-        <div id="git-dropdown" class="code-git-dropdown">
-          <button type="button" id="btn-git-menu" class="code-toolbar-btn">Git ▾</button>
-          <div id="git-dropdown-menu" class="code-git-menu" style="display:none">
-            <button type="button" data-git-cmd="status">Status</button>
-            <button type="button" data-git-cmd="log">Log</button>
-            <button type="button" data-git-cmd="diff">Diff</button>
-            <button type="button" data-git-cmd="add">Add All</button>
-            <button type="button" data-git-cmd="pull">Pull</button>
-            <button type="button" data-git-cmd="push">Push</button>
+        <div class="code-toolbar-left">
+          <select id="code-project-select" class="code-toolbar-select code-project-select" title="Project">
+            <option value="">📁 -- Select project --</option>
+          </select>
+          <button type="button" id="btn-new-project" class="code-toolbar-btn">＋ New</button>
+          <select id="code-model-select" class="code-toolbar-select code-model-select">
+            <option value="featherless-coder">💻 Qwen2.5 Coder 32B (Featherless)</option>
+            <option value="featherless-deepseek">⚡ DeepSeek V3 (Featherless)</option>
+            <option value="featherless-qwen3">🧠 Qwen3 32B (Featherless)</option>
+            <option value="featherless-abliterated">🔓 No Filter 72B (Featherless)</option>
+            <option value="sonnet">🔴 Claude Sonnet</option>
+            <option value="haiku" selected>🟠 Claude Haiku</option>
+            <option value="groq">💚 Groq (ฟรี)</option>
+          </select>
+        </div>
+        <div class="code-toolbar-right">
+          <button type="button" id="btn-save-file" class="code-toolbar-btn code-save-btn" disabled>💾 Save</button>
+          <div id="git-dropdown" class="code-git-dropdown">
+            <button type="button" id="btn-git-menu" class="code-toolbar-btn">Git ▾</button>
+            <div id="git-dropdown-menu" class="code-git-menu" style="display:none">
+              <button type="button" data-git-cmd="status">Status</button>
+              <button type="button" data-git-cmd="log">Log</button>
+              <button type="button" data-git-cmd="diff">Diff</button>
+              <button type="button" data-git-cmd="add">Add All</button>
+              <button type="button" data-git-cmd="pull">Pull</button>
+              <button type="button" data-git-cmd="push">Push</button>
+            </div>
           </div>
         </div>
       </div>
@@ -238,22 +285,27 @@
 
       <div class="code-ide-body">
         <div id="code-explorer" class="code-explorer">
-          <div class="code-explorer-header">EXPLORER</div>
+          <div class="code-explorer-header">
+            <span class="code-explorer-icon" aria-hidden="true">📁</span>
+            <span id="code-explorer-project-name" class="code-explorer-project-name">Select project</span>
+          </div>
           <div id="code-explorer-tree" class="code-explorer-tree">
             <div class="code-explorer-empty">Select a project</div>
           </div>
         </div>
 
-        <div id="monaco-container" class="code-monaco-wrap"></div>
+        <div class="code-editor-wrap">
+          <div id="monaco-container" class="code-monaco-wrap"></div>
+        </div>
 
         <div id="code-chat-column" class="code-chat-column">
-          <div id="code-chat-messages" class="code-chat-messages"></div>
+          <div id="code-chat-messages" class="code-chat-messages" role="log" aria-live="polite"></div>
+          <div class="code-chat-actions">
+            <button type="button" class="code-preset-btn" data-preset="อธิบาย file นี้">📖 อธิบาย</button>
+            <button type="button" class="code-preset-btn" data-preset="หา bug ใน code นี้">🐛 หา Bug</button>
+            <button type="button" class="code-preset-btn" data-preset="สร้าง Cursor prompt เพื่อปรับปรุง code นี้">⚡ Cursor Prompt</button>
+          </div>
           <div class="code-chat-input-area">
-            <div class="code-chat-presets">
-              <button type="button" class="code-preset-btn" data-preset="อธิบาย file นี้">📖 อธิบาย</button>
-              <button type="button" class="code-preset-btn" data-preset="หา bug ใน code นี้">🐛 หา Bug</button>
-              <button type="button" class="code-preset-btn" data-preset="สร้าง Cursor prompt เพื่อปรับปรุง code นี้">⚡ Cursor Prompt</button>
-            </div>
             <div class="code-chat-input-row">
               <input id="code-question-input" type="text" placeholder="ถามเกี่ยวกับ code..." class="code-chat-input">
               <button type="button" id="btn-code-send" class="code-chat-send">↑</button>
