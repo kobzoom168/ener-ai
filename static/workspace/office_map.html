@@ -1,0 +1,760 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>Ener-AI HQ</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#1a1c2e;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:'Courier New',monospace}
+#wrap{border:2px solid #2a3040;border-radius:6px;overflow:hidden;box-shadow:0 8px 40px rgba(0,0,0,0.5)}
+#topbar{background:#12141e;border-bottom:1px solid #1e2230;padding:6px 14px;display:flex;justify-content:space-between;align-items:center}
+.title{color:#4af;font-weight:bold;font-size:13px;letter-spacing:2px;text-shadow:0 0 8px rgba(68,170,255,0.6)}
+.stats{color:#7888a0;display:flex;gap:16px;font-size:11px}
+#gc{display:block;cursor:default}
+#hud{background:#10121c;border-top:1px solid #1e2230;padding:6px 12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+#hud button{font-size:11px;padding:5px 14px;background:#1a1e2e;border:1px solid #303550;color:#a8c0d8;border-radius:4px;cursor:pointer;font-family:'Courier New',monospace}
+#hud button:hover{background:#22283e;border-color:#5060a0}
+#chatbox{background:#0c0e18;border-top:1px solid #1a1e28;padding:5px 12px;height:56px;overflow:hidden}
+#chatbox div{font-size:10px;color:#3a5068;line-height:1.8;font-family:'Courier New',monospace}
+#chatbox div.hi{color:#80a8c8}
+#infopanel{position:absolute;right:0;top:0;bottom:0;width:155px;background:#0c0f1af8;border-left:1px solid #1a2535;padding:10px 9px;display:none;font-size:10px;font-family:'Courier New',monospace;overflow-y:auto;z-index:20}
+#tooltip{position:absolute;background:#060910f8;border:1px solid #304060;border-radius:4px;padding:7px 10px;font-size:10px;pointer-events:none;display:none;z-index:30;font-family:'Courier New',monospace;min-width:130px}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="topbar">
+    <span class="title">⚡ ENER-AI HQ</span>
+    <div class="stats"><span id="sCnt">Staff: 0</span><span id="sFps">FPS: 60</span><span id="sEvt">Events: 0</span></div>
+  </div>
+  <div style="position:relative">
+    <canvas id="gc" width="760" height="500"></canvas>
+    <div id="tooltip"></div>
+    <div id="infopanel"></div>
+  </div>
+  <div id="hud">
+    <button onclick="doNight()">🌙 Night</button>
+    <button onclick="doMeeting()">☎ War Room</button>
+    <button onclick="doAllWork()">⚡ All Work</button>
+    <span style="font-size:10px;color:#2a4060;margin-left:4px">คลิก agent เพื่อดูข้อมูล · Demo รันอัตโนมัติ</span>
+  </div>
+  <div id="chatbox">
+    <div id="cl0">[System] ENER-AI HQ ออนไลน์ ทุก agent พร้อมทำงาน</div>
+    <div id="cl1">[เลขา] รับคำสั่งและกระจายงานให้แต่ละแผนกค่ะ</div>
+    <div id="cl2">[Boss] วันนี้ลุยกันเต็มที่นะทุกคน!</div>
+  </div>
+</div>
+<script>
+const C=document.getElementById('gc'),ctx=C.getContext('2d');
+const W=760,H=500;
+let tick=0,night=false,sel=null;
+let fC=0,fps=60,fT=performance.now(),evts=0;
+let routes=[],parts=[],floats=[];
+let chatLines=['[System] ENER-AI HQ ออนไลน์!','[เลขา] พร้อมกระจายงานค่ะ','[Boss] ลุยกันเต็มที่นะ!'];
+
+// ── ROOMS ────────────────────────────────────────────────────────
+const ROOMS=[
+  {id:'hq',    name:'HQ Dept',     x:8,   y:8,   w:178,h:148, clr:'#00ff88', bgL:'#d2f5e2', bgD:'#06160e', wallL:'#80d8a8', wallD:'#0a3a22'},
+  {id:'ener',  name:'Ener Scan',   x:194, y:8,   w:192,h:148, clr:'#aa44ff', bgL:'#ecd8f8', bgD:'#140822', wallL:'#c088e0', wallD:'#2a0a48'},
+  {id:'tech',  name:'Tech Dept',   x:394, y:8,   w:178,h:148, clr:'#00ccff', bgL:'#d2eef8', bgD:'#06141e', wallL:'#80c8e0', wallD:'#0a3048'},
+  {id:'intel', name:'Intelligence',x:580, y:8,   w:172,h:148, clr:'#ffee00', bgL:'#f8f4d0', bgD:'#161400', wallL:'#d8d070', wallD:'#3a3600'},
+  {id:'ops',   name:'Operations',  x:8,   y:300, w:178,h:148, clr:'#ff8800', bgL:'#f8e8d0', bgD:'#1a0f00', wallL:'#d8a868', wallD:'#3a2400'},
+  {id:'exec',  name:'Executive',   x:194, y:300, w:192,h:148, clr:'#ffaa44', bgL:'#f8ecd8', bgD:'#1a1206', wallL:'#d8b878', wallD:'#3a2a10'},
+  {id:'meet',  name:'War Room',    x:394, y:300, w:178,h:148, clr:'#3858c0', bgL:'#d8ddf5', bgD:'#0a0e1e', wallL:'#7888d0', wallD:'#141d50'},
+];
+const rMap={};ROOMS.forEach(r=>{rMap[r.id]=r;});
+
+// ── AGENTS ───────────────────────────────────────────────────────
+// deskCol = desk column inside room (0,1,2...)  deskRow = 0 top, 1 bottom
+const AGENTS=[
+  {id:'secretary',name:'เลขา',    title:'Secretary',     room:'hq',    color:'#00ff88', skin:'#f0c8a0', hair:'#080808', suitH:'#0a2818', suitL:'#143828',
+   deskCol:0, deskRow:0, skills:['Route','Guard','Delegate'], tasks:['Routing request','Checking dept','Coordinating agents','Briefing summary','Prioritizing']},
+  {id:'chat',     name:'Chat',    title:'Chat Agent',    room:'hq',    color:'#88ffcc', skin:'#e8c090', hair:'#100808', suitH:'#102018', suitL:'#1a3028',
+   deskCol:1, deskRow:0, skills:['Chat','Context','Recall'], tasks:['Chatting','Answering question','Reading history','Context check','Summarizing']},
+  {id:'memory',   name:'Memory',  title:'Memory Agent',  room:'hq',    color:'#44ffaa', skin:'#d8b890', hair:'#050510', suitH:'#0a1a18', suitL:'#142820',
+   deskCol:2, deskRow:0, skills:['Store','Search','Recall'], tasks:['Saving memory','Searching context','Pruning old data','Cross-referencing','Updating facts']},
+
+  {id:'ener',     name:'Ener',    title:'Ener Agent',    room:'ener',  color:'#cc66ff', skin:'#f0c0a0', hair:'#180818', suitH:'#200838', suitL:'#380858',
+   deskCol:0, deskRow:0, skills:['Scan','Analyze','Report'], tasks:['Scanning amulet','Energy analysis','Writing report','Thai context check','Calibrating model']},
+  {id:'content',  name:'Content', title:'Content Agent', room:'ener',  color:'#ee88ff', skin:'#f8d0b0', hair:'#100010', suitH:'#280820', suitL:'#401838',
+   deskCol:1, deskRow:0, skills:['Write','TikTok','FB'], tasks:['Writing post','TikTok script','FB caption','Content calendar','Hashtag research']},
+  {id:'tarot',    name:'Tarot',   title:'Tarot Agent',   room:'ener',  color:'#ff44cc', skin:'#e8b8a0', hair:'#0a0018', suitH:'#200818', suitL:'#381030',
+   deskCol:2, deskRow:0, skills:['Tarot','Spiritual','Guide'], tasks:['Drawing card','Reading spread','Energy check','Daily guidance','Writing insight']},
+
+  {id:'code',     name:'Code',    title:'Code Agent',    room:'tech',  color:'#00ddff', skin:'#e0c090', hair:'#080808', suitH:'#082028', suitL:'#103040',
+   deskCol:0, deskRow:0, skills:['Code','Debug','Deploy'], tasks:['Writing code','Debugging','Code review','Cursor prompt','Refactoring']},
+  {id:'monitor',  name:'Monitor', title:'Monitor Agent', room:'tech',  color:'#44eeff', skin:'#e8c888', hair:'#0a0808', suitH:'#101828', suitL:'#182838',
+   deskCol:1, deskRow:0, skills:['Watch','Alert','Metrics'], tasks:['Server check','Error scan','CPU watch','Memory check','Uptime report']},
+  {id:'github',   name:'GitHub',  title:'GitHub Agent',  room:'tech',  color:'#88ccff', skin:'#d8c080', hair:'#050808', suitH:'#0c1420', suitL:'#182030',
+   deskCol:2, deskRow:0, skills:['Git','PR','Review'], tasks:['Checking commits','PR review','Branch status','Deploy check','Repo scan']},
+
+  {id:'news',     name:'News',    title:'News Agent',    room:'intel', color:'#ffee00', skin:'#f0b880', hair:'#080800', suitH:'#281800', suitL:'#402800',
+   deskCol:0, deskRow:0, skills:['Fetch','Filter','Tag'], tasks:['Fetching news','Filtering sources','Tagging topics','Breaking news','Source check']},
+  {id:'digest',   name:'Digest',  title:'Digest Agent',  room:'intel', color:'#ffe044', skin:'#e8c078', hair:'#100800', suitH:'#201000', suitL:'#382000',
+   deskCol:1, deskRow:0, skills:['Summarize','Daily','Weekly'], tasks:['Daily digest','Weekly review','Trend analysis','Top 5 stories','Curating news']},
+  {id:'think',    name:'Think',   title:'Think Team',    room:'intel', color:'#ffcc22', skin:'#f0c888', hair:'#0a0800', suitH:'#241400', suitL:'#3a2400',
+   deskCol:2, deskRow:0, skills:['Analyze','Reason','Plan'], tasks:['Brainstorming','Analysis','Strategy planning','Problem solving','Reasoning']},
+
+  {id:'gmail',    name:'Gmail',   title:'Gmail Agent',   room:'ops',   color:'#ff8800', skin:'#e8b878', hair:'#180800', suitH:'#281008', suitL:'#402018',
+   deskCol:0, deskRow:0, skills:['Email','Summarize','Flag'], tasks:['Reading email','Summarizing inbox','Flagging urgent','Draft reply','Archive old']},
+  {id:'tasks',    name:'Tasks',   title:'Task Agent',    room:'ops',   color:'#ffaa44', skin:'#f0c888', hair:'#100800', suitH:'#281808', suitL:'#402818',
+   deskCol:1, deskRow:0, skills:['Todo','Track','Done'], tasks:['Creating task','Updating status','Checking due','Prioritizing','Task report']},
+  {id:'logs',     name:'Logs',    title:'Log Keeper',    room:'ops',   color:'#ffcc88', skin:'#e0c070', hair:'#080800', suitH:'#201008', suitL:'#382018',
+   deskCol:2, deskRow:0, skills:['Log','Health','Track'], tasks:['Logging event','Health check','Error log','Activity track','Log cleanup']},
+
+  {id:'session',  name:'Session', title:'Session Agent', room:'exec',  color:'#ffcc44', skin:'#f0c898', hair:'#100808', suitH:'#281808', suitL:'#403018',
+   deskCol:0, deskRow:0, skills:['Session','Log','Context'], tasks:['Session log','Context save','Daily wrap','Week summary','Log export']},
+  {id:'briefing', name:'Briefing',title:'Briefing Agent',room:'exec',  color:'#ffddaa', skin:'#e8c888', hair:'#080808', suitH:'#201808', suitL:'#382808',
+   deskCol:1, deskRow:0, skills:['Brief','Report','KPI'], tasks:['Morning brief','KPI report','Status update','Risk flag','Executive summary']},
+];
+
+const aMap={};
+function initAgent(a){
+  const r=rMap[a.room]||ROOMS[0];
+  const deskSpacing=58;
+  a.deskAbsX = r.x + 14 + a.deskCol*deskSpacing;
+  a.deskAbsY = r.y + 48;
+  a.seatX = a.deskAbsX + 20;
+  a.seatY = a.deskAbsY + 30;
+  a.zx1=r.x+10; a.zy1=r.y+20; a.zx2=r.x+r.w-14; a.zy2=r.y+r.h-14;
+  a.x=a.seatX; a.y=a.seatY; a.tx=a.seatX; a.ty=a.seatY;
+  a.bobPhase=Math.random()*Math.PI*2;
+  a.status=a.status||'active';
+  a.state='sit';
+  a.stateTimer=0; a.stateDur=120+Math.random()*200;
+  // lv 8-28, hp 70-100, mp 50-120 (random per agent)
+  if(a.lv==null) a.lv=8+Math.floor(Math.random()*21);
+  if(a.hp==null) a.hp=70+Math.floor(Math.random()*31);
+  if(a.mp==null) a.mp=50+Math.floor(Math.random()*71);
+  if(!a.skills) a.skills=[];
+  if(!a.tasks||!a.tasks.length) a.tasks=['Working'];
+  a.currentTask=a.tasks[0];
+  a.taskTimer=0;
+  a.bubbleTxt=null; a.bubbleTimer=0;
+  a.exp=Math.floor(Math.random()*80);
+  a.routed=false;
+  aMap[a.id]=a;
+}
+AGENTS.forEach(initAgent);
+
+// ── DRAW HELPERS ─────────────────────────────────────────────────
+function sh(hex,amt){
+  if(!hex||hex.length<7)return hex||'#888';
+  return '#'+[1,3,5].map(i=>Math.max(0,Math.min(255,parseInt(hex.slice(i,i+2),16)+amt)).toString(16).padStart(2,'0')).join('');
+}
+
+// ── DRAW ROOM ────────────────────────────────────────────────────
+function drawRoom(r){
+  const bg=night?r.bgD:r.bgL;
+  const wall=night?r.wallD:r.wallL;
+  // Checkerboard floor
+  for(let row=0;row<r.h;row+=18)
+    for(let col=0;col<r.w;col+=18){
+      ctx.fillStyle=((Math.floor(row/18)+Math.floor(col/18))%2===0)?bg:sh(bg,night?5:-8);
+      ctx.fillRect(r.x+col,r.y+row,18,18);
+    }
+  // Top wall (thick)
+  ctx.fillStyle=wall;
+  ctx.fillRect(r.x,r.y,r.w,16);
+  // Left/right wall strips
+  ctx.fillStyle=sh(wall,-15);
+  ctx.fillRect(r.x,r.y,5,r.h);
+  ctx.fillRect(r.x+r.w-5,r.y,5,r.h);
+  // Bottom wall
+  ctx.fillStyle=sh(wall,-10);
+  ctx.fillRect(r.x,r.y+r.h-5,r.w,5);
+  // Room accent border line on top wall
+  ctx.fillStyle=r.clr+(night?'bb':'99');
+  ctx.fillRect(r.x+5,r.y+14,r.w-10,3);
+  // Room label badge on top wall
+  ctx.fillStyle=r.clr+(night?'ee':'cc');
+  ctx.beginPath();ctx.roundRect(r.x+r.w/2-45,r.y+1,90,13,2);ctx.fill();
+  ctx.fillStyle='#fff';ctx.font='bold 8px Courier New';ctx.textAlign='center';
+  ctx.fillText(r.name.toUpperCase(),r.x+r.w/2,r.y+10);ctx.textAlign='left';
+  // Night: overhead lamp glow
+  if(night){
+    const lx=r.x+r.w/2,ly=r.y+r.h/2;
+    const g=ctx.createRadialGradient(lx,ly,0,lx,ly,r.w*0.6);
+    g.addColorStop(0,r.clr+'20');g.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=g;ctx.fillRect(r.x,r.y,r.w,r.h);
+    ctx.fillStyle=r.clr+'aa';ctx.beginPath();ctx.arc(lx,r.y+20,3,0,Math.PI*2);ctx.fill();
+  }
+  // Window (right side of room)
+  drawWindow(r.x+r.w-38,r.y+18,28,22);
+}
+
+function drawWindow(x,y,w,h){
+  ctx.fillStyle=night?'#0a1a3a':'#7ab8e8';
+  ctx.fillRect(x,y,w,h);
+  // window panes
+  ctx.fillStyle=night?'#0d2248':'#90d0f8';
+  ctx.fillRect(x+2,y+2,w/2-3,h/2-3);
+  ctx.fillRect(x+w/2+1,y+2,w/2-3,h/2-3);
+  ctx.fillRect(x+2,y+h/2+1,w/2-3,h/2-3);
+  ctx.fillRect(x+w/2+1,y+h/2+1,w/2-3,h/2-3);
+  // reflection
+  ctx.fillStyle=night?'rgba(100,150,255,0.1)':'rgba(255,255,255,0.5)';
+  ctx.fillRect(x+2,y+2,5,4);
+  ctx.fillRect(x+w/2+1,y+2,5,4);
+  // frame
+  ctx.strokeStyle=night?'#30507a':'#5090b0';ctx.lineWidth=1.5;
+  ctx.strokeRect(x,y,w,h);
+  ctx.fillStyle=night?'#30507a':'#5090b0';
+  ctx.fillRect(x+w/2-1,y,2,h);ctx.fillRect(x,y+h/2-1,w,2);
+}
+
+function drawDesk(x,y,clr){
+  // Table top
+  ctx.fillStyle=night?'#4a3018':'#c8a060';
+  ctx.beginPath();ctx.roundRect(x,y,50,20,2);ctx.fill();
+  // 3D front face
+  ctx.fillStyle=night?'#382008':'#a07840';
+  ctx.fillRect(x,y+20,50,5);
+  // 3D right side
+  ctx.fillStyle=night?'#2a1808':'#8a6030';
+  ctx.fillRect(x+50,y+2,4,23);
+  // top highlight
+  ctx.fillStyle=night?'rgba(255,255,255,0.06)':'rgba(255,255,255,0.35)';
+  ctx.fillRect(x+2,y+1,46,4);
+  // shadow
+  ctx.fillStyle='rgba(0,0,0,0.12)';ctx.fillRect(x+2,y+25,52,3);
+}
+
+function drawMonitor(x,y){
+  // stand
+  ctx.fillStyle='#445566';ctx.fillRect(x+8,y+20,6,5);
+  ctx.fillStyle='#334455';ctx.fillRect(x+4,y+24,14,3);
+  // bezel
+  ctx.fillStyle=night?'#1a2a3a':'#2a3a4a';
+  ctx.beginPath();ctx.roundRect(x,y,22,18,2);ctx.fill();
+  // screen
+  ctx.fillStyle=night?'#0a1828':'#a8d8f8';
+  ctx.fillRect(x+2,y+2,18,14);
+  // screen content
+  if(night){
+    ctx.fillStyle='#1060a8';ctx.fillRect(x+2,y+2,18,4);
+    ctx.fillStyle='#084070';for(let i=0;i<2;i++)ctx.fillRect(x+3,y+7+i*3,6+i*3,1.5);
+  } else {
+    ctx.fillStyle='#3080c0';ctx.fillRect(x+2,y+2,18,4);
+    ctx.fillStyle='#c8e8ff';for(let i=0;i<2;i++)ctx.fillRect(x+3,y+7+i*3,6+i*3,1.5);
+  }
+  // glow
+  ctx.globalAlpha=night?0.3:0.1;
+  ctx.fillStyle='#60b8ff';ctx.beginPath();ctx.roundRect(x-1,y-1,24,20,3);ctx.fill();
+  ctx.globalAlpha=1;
+  // power light
+  ctx.fillStyle='#00ee88';ctx.beginPath();ctx.arc(x+20,y+17,1.5,0,Math.PI*2);ctx.fill();
+}
+
+function drawChair(x,y,clr){
+  // Backrest
+  ctx.fillStyle=night?sh(clr,-40):sh(clr,-20);
+  ctx.beginPath();ctx.roundRect(x+1,y-12,13,12,2);ctx.fill();
+  ctx.fillStyle=night?'rgba(255,255,255,0.06)':'rgba(255,255,255,0.18)';
+  ctx.fillRect(x+2,y-11,11,3);
+  // Seat
+  ctx.fillStyle=night?sh(clr,-30):clr;
+  ctx.beginPath();ctx.roundRect(x,y,15,12,2);ctx.fill();
+  ctx.fillStyle=night?'rgba(255,255,255,0.05)':'rgba(255,255,255,0.2)';
+  ctx.fillRect(x+1,y+1,13,3);
+  // Legs
+  ctx.fillStyle='#222830';
+  ctx.fillRect(x+1,y+12,3,5);ctx.fillRect(x+11,y+12,3,5);
+}
+
+function drawPlant(x,y){
+  ctx.fillStyle=night?'#3a2010':'#7a4020';ctx.beginPath();ctx.roundRect(x+4,y+14,10,8,1);ctx.fill();
+  ctx.fillStyle=night?'#1a3a18':'#2a6828';ctx.beginPath();ctx.arc(x+9,y+8,9,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle=night?'#12280e':'#1e4e1c';ctx.beginPath();ctx.arc(x+5,y+6,6,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(x+13,y+7,5,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle=night?'rgba(255,255,255,0.06)':'rgba(255,255,255,0.2)';
+  ctx.beginPath();ctx.arc(x+7,y+5,2.5,0,Math.PI*2);ctx.fill();
+}
+
+function drawMeetingTable(r){
+  const tx=r.x+20,ty=r.y+35,tw=r.w-40,th=r.h-70;
+  ctx.fillStyle='rgba(0,0,0,0.1)';ctx.fillRect(tx+3,ty+3,tw,th);
+  ctx.fillStyle=night?'#2a1a08':'#c87840';
+  ctx.beginPath();ctx.roundRect(tx,ty,tw,th,5);ctx.fill();
+  ctx.strokeStyle=night?'#402010':'#a06030';ctx.lineWidth=2;
+  ctx.beginPath();ctx.roundRect(tx+3,ty+3,tw-6,th-6,4);ctx.stroke();
+  ctx.fillStyle=night?'rgba(255,255,255,0.04)':'rgba(255,255,255,0.12)';
+  ctx.fillRect(tx+4,ty+4,tw-8,6);
+  // chairs around table
+  const chairClr=night?'#304060':'#5070a0';
+  for(let i=0;i<3;i++){drawChair(tx+10+i*45,ty-14,chairClr);}
+  for(let i=0;i<3;i++){drawChair(tx+10+i*45,ty+th+2,chairClr);}
+}
+
+function drawWhiteboard(x,y){
+  ctx.fillStyle=night?'#5a6070':'#8a9aaa';ctx.fillRect(x,y,55,34);
+  ctx.fillStyle=night?'#c8d0d8':'#f0f4f8';ctx.fillRect(x+2,y+2,51,30);
+  ctx.strokeStyle='#5080c0';ctx.lineWidth=1.5;
+  ctx.beginPath();ctx.moveTo(x+5,y+18);ctx.lineTo(x+22,y+12);ctx.lineTo(x+38,y+20);ctx.stroke();
+  ctx.fillStyle='#e04040';ctx.fillRect(x+5,y+22,12,2);
+  ctx.fillStyle='#40a040';ctx.fillRect(x+19,y+22,10,2);
+  ctx.fillStyle='#4080e0';ctx.fillRect(x+31,y+22,10,2);
+  ctx.fillStyle=night?'#5a6070':'#8a9aaa';ctx.fillRect(x,y+32,55,5);
+}
+
+// ── FURNISH ALL ROOMS ─────────────────────────────────────────────
+function furnishRooms(){
+  ROOMS.forEach(r=>{
+    if(r.id==='meet'){
+      drawMeetingTable(r);
+      drawWhiteboard(r.x+5,r.y+25);
+      drawPlant(r.x+r.w-30,r.y+r.h-38);
+      return;
+    }
+    // Desks for each deskCol in this room
+    const agents=AGENTS.filter(a=>a.room===r.id);
+    const numDesks=Math.max(agents.length,1);
+    for(let col=0;col<numDesks;col++){
+      const dx=r.x+14+col*58, dy=r.y+50;
+      drawDesk(dx,dy);
+      drawMonitor(dx+2,dy-20);
+      drawChair(dx+17,dy+20,r.clr);
+    }
+    // Always add a plant somewhere
+    drawPlant(r.x+r.w-32,r.y+r.h-38);
+    // Whiteboard in ener/intel
+    if(r.id==='ener'||r.id==='intel') drawWhiteboard(r.x+5,r.y+r.h-46);
+  });
+}
+
+// ── DRAW WORKER SPRITE ────────────────────────────────────────────
+function drawWorker(a,bobY){
+  const x=Math.round(a.x), y=Math.round(a.y);
+  const s=1.1; // uniform size — keep everyone same scale, use unique colors instead
+  const pw=Math.round(13*s), ph=Math.round(22*s);
+  const px=Math.round(x-pw/2), py=Math.round(y-ph/2+bobY);
+
+  if(a.status==='offline'){ctx.filter='grayscale(1) brightness(0.3)';}
+
+  const walk=a.state==='walk';
+  const wk=walk?Math.sin(tick*0.22+a.x)*3.5:0;
+  const sc=night?sh(a.skin,-20):a.skin;
+  const suH=night?sh(a.suitH||'#202030',-15):a.suitH||'#202030';
+  const suL=night?sh(a.suitL||'#303050',-15):a.suitL||'#303050';
+
+  // Shadow
+  ctx.filter=a.status==='offline'?'grayscale(1) brightness(0.3)':'none';
+  ctx.fillStyle='rgba(0,0,0,0.2)';
+  ctx.beginPath();ctx.ellipse(px+pw/2,py+ph+1,pw/2+1,2.5,0,0,Math.PI*2);ctx.fill();
+
+  // Shoes
+  ctx.fillStyle='#181010';
+  ctx.beginPath();ctx.roundRect(px,py+ph-2,Math.round(5*s),Math.round(3*s),1);ctx.fill();
+  ctx.beginPath();ctx.roundRect(px+Math.round(8*s),py+ph-2,Math.round(5*s),Math.round(3*s),1);ctx.fill();
+
+  // Trousers (dark suit bottom)
+  ctx.fillStyle=suH;
+  ctx.fillRect(px+Math.round(1*s),py+Math.round(14*s)+wk,Math.round(4*s),Math.round(8*s));
+  ctx.fillRect(px+Math.round(8*s),py+Math.round(14*s)-wk,Math.round(4*s),Math.round(8*s));
+
+  // Body (suit jacket)
+  ctx.fillStyle=suL;
+  ctx.fillRect(px+Math.round(1*s),py+Math.round(7*s),Math.round(11*s),Math.round(8*s));
+  // Shirt white strip
+  ctx.fillStyle='#e8eef4';
+  ctx.fillRect(px+Math.round(4*s),py+Math.round(7*s),Math.round(5*s),Math.round(8*s));
+  // TIE = agent's unique color! This makes them visually distinct
+  ctx.fillStyle=a.color;
+  ctx.fillRect(px+Math.round(5.5*s),py+Math.round(7.5*s),Math.round(2*s),Math.round(7*s));
+  ctx.fillStyle=sh(a.color,-30);
+  ctx.fillRect(px+Math.round(6*s),py+Math.round(7.5*s),Math.round(1*s),Math.round(7*s));
+  // Lapels
+  ctx.fillStyle=suH;
+  ctx.fillRect(px+Math.round(1.5*s),py+Math.round(7.5*s),Math.round(3*s),Math.round(5*s));
+  ctx.fillRect(px+Math.round(8.5*s),py+Math.round(7.5*s),Math.round(3*s),Math.round(5*s));
+
+  // Arms
+  const aS=walk?wk:0;
+  ctx.fillStyle=suL;
+  ctx.fillRect(px-Math.round(0.5*s),py+Math.round(7.5*s)+aS,Math.round(3*s),Math.round(8*s));
+  ctx.fillRect(px+Math.round(11*s),py+Math.round(7.5*s)-aS,Math.round(3*s),Math.round(8*s));
+  ctx.fillStyle=sc;
+  ctx.beginPath();ctx.arc(px+Math.round(0.5*s),py+Math.round(15*s)+aS,Math.round(2*s),0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(px+Math.round(12.5*s),py+Math.round(15*s)-aS,Math.round(2*s),0,Math.PI*2);ctx.fill();
+
+  // Neck
+  ctx.fillStyle=sc;
+  ctx.fillRect(px+Math.round(5*s),py+Math.round(5*s),Math.round(3*s),Math.round(3*s));
+
+  // Head — COLORED HAIR makes each person distinct
+  ctx.fillStyle=sc;
+  ctx.beginPath();ctx.roundRect(px+Math.round(2*s),py,Math.round(9*s),Math.round(8*s),Math.round(2*s));ctx.fill();
+  // Hair (unique color per person)
+  ctx.fillStyle=a.hair;
+  ctx.fillRect(px+Math.round(2*s),py,Math.round(9*s),Math.round(3*s));
+  ctx.fillRect(px+Math.round(1.5*s),py+Math.round(0.5*s),Math.round(2*s),Math.round(4*s));
+  ctx.fillRect(px+Math.round(9.5*s),py+Math.round(0.5*s),Math.round(2*s),Math.round(4*s));
+
+  // Ears
+  ctx.fillStyle=sc;
+  ctx.fillRect(px+Math.round(1*s),py+Math.round(2.5*s),Math.round(1.5*s),Math.round(2.5*s));
+  ctx.fillRect(px+Math.round(10.5*s),py+Math.round(2.5*s),Math.round(1.5*s),Math.round(2.5*s));
+
+  // Eyes
+  const blink=Math.sin(tick*0.038+a.x*0.05)>0.95;
+  ctx.fillStyle='#150800';
+  if(!blink){
+    ctx.fillRect(px+Math.round(3.5*s),py+Math.round(3*s),Math.round(1.8*s),Math.round(1.8*s));
+    ctx.fillRect(px+Math.round(7*s),py+Math.round(3*s),Math.round(1.8*s),Math.round(1.8*s));
+    ctx.fillStyle='#fff';
+    ctx.fillRect(px+Math.round(4*s),py+Math.round(3*s),Math.round(0.8*s),Math.round(0.8*s));
+    ctx.fillRect(px+Math.round(7.5*s),py+Math.round(3*s),Math.round(0.8*s),Math.round(0.8*s));
+  } else {
+    ctx.fillRect(px+Math.round(3.5*s),py+Math.round(3.8*s),Math.round(1.8*s),Math.round(0.8*s));
+    ctx.fillRect(px+Math.round(7*s),py+Math.round(3.8*s),Math.round(1.8*s),Math.round(0.8*s));
+  }
+  // Smile
+  ctx.fillStyle=sh(sc,-25);
+  ctx.fillRect(px+Math.round(5*s),py+Math.round(5.5*s),Math.round(3*s),Math.round(1*s));
+
+  ctx.filter='none';
+}
+
+// ── DRAW AGENT FULL (sprite + labels + bars) ──────────────────────
+function drawAgent(a){
+  const bob=a.status==='active'?Math.sin(tick*0.07+a.bobPhase)*1.2:0;
+
+  // Floor glow ring (colored, unique per agent)
+  if(a.status!=='offline'){
+    const gA=0.15+0.06*Math.sin(tick*0.05+a.bobPhase);
+    ctx.beginPath();ctx.ellipse(a.x,a.y+10,15,5,0,0,Math.PI*2);
+    ctx.fillStyle=a.color+Math.round(gA*255).toString(16).padStart(2,'0');
+    ctx.fill();
+  }
+
+  // Selection ring
+  if(a===sel){
+    ctx.strokeStyle=a.color;ctx.lineWidth=2;ctx.setLineDash([3,2]);
+    ctx.beginPath();ctx.arc(a.x,a.y,22,0,Math.PI*2);ctx.stroke();
+    ctx.setLineDash([]);ctx.lineWidth=1;
+  }
+
+  drawWorker(a,bob);
+
+  // === NAME TAG (big, clear, always readable) ===
+  const ny=a.y+22+bob;
+  // Badge background with agent's unique color
+  ctx.fillStyle=a.color+'dd';
+  ctx.beginPath();ctx.roundRect(a.x-22,ny-9,44,10,3);ctx.fill();
+  ctx.fillStyle='#000000cc';
+  ctx.font='bold 8px Courier New';ctx.textAlign='center';
+  ctx.fillText(a.name,a.x,ny);
+  // Role below
+  ctx.fillStyle='rgba(0,0,0,0.5)';
+  ctx.beginPath();ctx.roundRect(a.x-22,ny+1,44,8,2);ctx.fill();
+  ctx.fillStyle=a.color+'cc';ctx.font='6px Courier New';
+  ctx.fillText(a.title,a.x,ny+7);
+  ctx.textAlign='left';
+
+  // HP/MP bars
+  const bx=a.x-16,bby=a.y-28+bob;
+  ctx.fillStyle='#1a0000';ctx.fillRect(bx,bby,32,3);
+  ctx.fillStyle=a.hp>60?'#44dd66':a.hp>30?'#ddaa22':'#dd2222';
+  ctx.fillRect(bx,bby,Math.round(32*(a.hp/100)),3);
+  ctx.fillStyle='#00001a';ctx.fillRect(bx,bby+4,32,2.5);
+  ctx.fillStyle='#3366dd';ctx.fillRect(bx,bby+4,Math.round(32*Math.min(a.mp/100,1)),2.5);
+
+  // Status dot
+  ctx.fillStyle=a.status==='active'?'#44dd66':a.status==='idle'?'#ddaa22':'#555';
+  ctx.beginPath();ctx.arc(a.x+12,a.y-24+bob,2.5,0,Math.PI*2);ctx.fill();
+
+  // Task bubble (what are they doing right now)
+  if(a.status!=='offline'&&a.bubbleTimer>0&&a.bubbleTxt){
+    drawTaskBubble(a.x,a.y-36+bob,a.bubbleTxt,a.color);
+  }
+}
+
+function drawTaskBubble(x,y,txt,color){
+  ctx.font='7.5px Courier New';
+  const tw=ctx.measureText(txt).width+12;
+  const bx=x-tw/2,by=y-12;
+  // White bubble with colored border
+  ctx.fillStyle='rgba(245,248,255,0.96)';
+  ctx.strokeStyle=color;ctx.lineWidth=1.2;
+  ctx.beginPath();ctx.roundRect(bx,by,tw,13,3);ctx.fill();ctx.stroke();
+  // Tail
+  ctx.fillStyle='rgba(245,248,255,0.96)';ctx.strokeStyle=color;
+  ctx.beginPath();ctx.moveTo(x-3,by+13);ctx.lineTo(x,by+17);ctx.lineTo(x+3,by+13);
+  ctx.fill();ctx.stroke();
+  ctx.fillStyle='#0a1a2a';ctx.textAlign='center';
+  ctx.fillText(txt,x,by+9);ctx.textAlign='left';
+}
+
+// ── ROUTE CONNECTION ──────────────────────────────────────────────
+function drawRoutes(){
+  for(const r of routes){
+    const p=r.phase/r.dur;
+    // Sender moves to edge of receiver's room (NOT across rooms)
+    if(p<0.5){
+      const prog=p/0.5;
+      r.from.x=r.from.seatX+(r.from.tx-r.from.seatX)*prog;
+      r.from.y=r.from.seatY+(r.from.ty-r.from.seatY)*prog;
+      r.from.state='walk';
+    }
+    // Connection line
+    if(p>0.35){
+      const lA=Math.min((p-0.35)*4,0.8);
+      ctx.save();ctx.globalAlpha=lA;
+      ctx.strokeStyle=r.from.color;ctx.lineWidth=1.5;ctx.setLineDash([4,5]);
+      ctx.beginPath();ctx.moveTo(r.from.x,r.from.y);ctx.lineTo(r.to.x,r.to.y);ctx.stroke();
+      ctx.setLineDash([]);
+      // Data packet
+      if(p<0.9){
+        const dp=(p-0.35)/0.55;
+        const dx=r.from.x+(r.to.x-r.from.x)*dp,dy=r.from.y+(r.to.y-r.from.y)*dp;
+        ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(dx,dy,3,0,Math.PI*2);ctx.fill();
+        ctx.globalAlpha=lA*0.5;ctx.fillStyle=r.from.color;
+        ctx.beginPath();ctx.arc(dx-2,dy-1,1.8,0,Math.PI*2);ctx.fill();
+      }
+      ctx.restore();
+    }
+    // Bubbles
+    if(p>0.1&&p<0.9){r.from.bubbleTxt='→ '+r.to.name;r.from.bubbleTimer=5;}
+    if(p>0.65&&p<0.95){
+      ctx.globalAlpha=(p-0.65)*3*0.2;ctx.fillStyle=r.to.color;
+      ctx.beginPath();ctx.arc(r.to.x,r.to.y,20,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;
+      r.to.bubbleTxt='📥 กำลังรับ...';r.to.bubbleTimer=5;
+    }
+    if(p>0.92){r.to.bubbleTxt='✓ รับแล้ว!';r.to.bubbleTimer=5;}
+  }
+}
+
+// ── AGENT BEHAVIOR ────────────────────────────────────────────────
+function updateAgent(a){
+  a.stateTimer++;
+  if(a.bubbleTimer>0)a.bubbleTimer--;
+  a.taskTimer++;
+  // Rotate tasks every ~5s
+  if(a.taskTimer>300){
+    a.taskTimer=0;
+    if(a.status==='active'){
+      a.currentTask=a.tasks[Math.floor(Math.random()*a.tasks.length)];
+      a.bubbleTxt=a.currentTask;a.bubbleTimer=120;
+    }
+  }
+
+  if(a.state==='walk'&&!a.routed){
+    const dx=a.tx-a.x,dy=a.ty-a.y,d=Math.sqrt(dx*dx+dy*dy);
+    if(d<2){a.x=a.tx;a.y=a.ty;a.state='sit';a.stateTimer=0;a.stateDur=80+Math.random()*120;}
+    else{a.x+=dx/d*1.4;a.y+=dy/d*1.4;}
+  } else if(a.state!=='walk'&&a.stateTimer>a.stateDur){
+    a.stateTimer=0;
+    const roll=Math.random();
+    if(roll<0.25&&a.status==='active'&&!a.routed){
+      // Wander INSIDE the room only
+      a.tx=a.zx1+(Math.random()*(a.zx2-a.zx1));
+      a.ty=a.zy1+(Math.random()*(a.zy2-a.zy1));
+      a.state='walk';a.stateDur=60+Math.random()*80;
+    } else if(roll<0.45){
+      a.state='idle';a.stateDur=50+Math.random()*80;a.status='idle';
+    } else {
+      a.state='sit';a.stateDur=80+Math.random()*150;a.status='active';
+      if(Math.random()<0.4){a.bubbleTxt=a.currentTask;a.bubbleTimer=100;spawnFloat(a.x,a.y-30,'+XP',a.color);}
+    }
+  }
+}
+
+// ── PARTICLES ────────────────────────────────────────────────────
+function spawnP(x,y,color,n=6){
+  for(let i=0;i<n;i++){const ang=Math.random()*Math.PI*2;
+    parts.push({x,y,vx:Math.cos(ang)*(0.5+Math.random()*2),vy:Math.sin(ang)*(0.5+Math.random()*2)-0.5,life:30+Math.random()*20,color});}
+}
+function spawnFloat(x,y,txt,color){floats.push({x,y,txt,color,life:55,vy:-0.6});}
+function drawParticles(){
+  parts=parts.filter(p=>p.life>0);
+  for(const p of parts){p.x+=p.vx;p.y+=p.vy;p.vy+=0.07;p.life--;
+    ctx.globalAlpha=p.life/50;ctx.fillStyle=p.color;ctx.fillRect(Math.round(p.x),Math.round(p.y),2.5,2.5);}
+  ctx.globalAlpha=1;
+  floats=floats.filter(f=>f.life>0);
+  for(const f of floats){f.y+=f.vy;f.life--;
+    ctx.globalAlpha=f.life/55;ctx.fillStyle=f.color;ctx.font='bold 9px Courier New';ctx.textAlign='center';
+    ctx.fillText(f.txt,f.x,f.y);}
+  ctx.textAlign='left';ctx.globalAlpha=1;
+}
+
+// ── INPUT ──────────────────────────────────────────────────────────
+function agentAt(mx,my){for(const a of AGENTS){if(Math.hypot(a.x-mx,a.y-my)<18)return a;}return null;}
+
+const tt=document.getElementById('tooltip');
+C.addEventListener('mousemove',e=>{
+  const r=C.getBoundingClientRect(),mx=(e.clientX-r.left)*(W/r.width),my=(e.clientY-r.top)*(H/r.height);
+  const ha=agentAt(mx,my);
+  if(ha){
+    tt.style.display='block';tt.style.left=(e.clientX-r.left+14)+'px';tt.style.top=(e.clientY-r.top-55)+'px';
+    tt.innerHTML=`<span style="color:${ha.color};font-weight:bold">${ha.name}</span>  <span style="color:#4a6a8a">Lv.${ha.lv}</span><br>`+
+    `<span style="color:#6a7a8a">${ha.title} · ${ha.room.toUpperCase()}</span><br>`+
+    `<span style="color:#3a7a4a">HP ${ha.hp}  </span><span style="color:#3a4a8a">MP ${ha.mp}</span><br>`+
+    `<span style="color:${ha.status==='active'?'#44dd66':'#ddaa22'}">● ${ha.status}</span>  <span style="color:#5a7a5a">${ha.currentTask||''}</span>`;
+  } else tt.style.display='none';
+});
+C.addEventListener('click',e=>{
+  const r=C.getBoundingClientRect(),mx=(e.clientX-r.left)*(W/r.width),my=(e.clientY-r.top)*(H/r.height);
+  const hit=agentAt(mx,my);
+  sel=(hit===sel)?null:hit;
+  if(sel)buildPanel(sel);else document.getElementById('infopanel').style.display='none';
+});
+
+function buildPanel(a){
+  const ip=document.getElementById('infopanel');
+  ip.style.display='block';
+  ip.innerHTML=`<div style="background:${a.color}22;border-left:3px solid ${a.color};padding:5px 6px;border-radius:0 3px 3px 0;margin-bottom:8px">
+<div style="color:${a.color};font-weight:bold;font-size:12px">${a.name}</div>
+<div style="color:#5a7a9a;font-size:9px">${a.title}</div></div>
+<div style="color:#4a6070;font-size:9px;margin-bottom:1px">Room: <span style="color:#7a98b0">${a.room}</span></div>
+<div style="color:#4a6070;font-size:9px;margin-bottom:6px">Level: <span style="color:#c0a040">${a.lv}</span>  EXP: <span style="color:#c0a040">${a.exp}%</span></div>
+<div style="font-size:9px;color:#3a5a3a;margin-bottom:1px">HP ${a.hp}/100</div>
+<div style="background:#100;height:5px;border-radius:2px;margin-bottom:5px"><div style="background:${a.hp>60?'#44dd66':a.hp>30?'#ddaa22':'#dd2222'};width:${a.hp}%;height:100%;border-radius:2px"></div></div>
+<div style="font-size:9px;color:#3a3a6a;margin-bottom:1px">MP ${a.mp}/120</div>
+<div style="background:#001;height:5px;border-radius:2px;margin-bottom:8px"><div style="background:#4466dd;width:${a.mp/1.2}%;height:100%;border-radius:2px"></div></div>
+<div style="color:#4a6070;font-size:9px;margin-bottom:3px">Skills:</div>
+<div style="color:#7a98b0;font-size:9px;margin-bottom:8px">${a.skills.join(' · ')}</div>
+<div style="color:#4a6070;font-size:9px;margin-bottom:2px">Now:</div>
+<div style="color:${a.color};font-size:9px;margin-bottom:8px">${a.currentTask||'—'}</div>
+<div style="display:flex;flex-direction:column;gap:3px">
+<button onclick="window.setAgentStatus('${a.id}','active')" style="background:#051508;border:1px solid #44dd66;color:#44dd66;font-size:9px;padding:3px;cursor:pointer;border-radius:3px;font-family:monospace">● Active</button>
+<button onclick="window.setAgentStatus('${a.id}','idle')" style="background:#150f00;border:1px solid #ddaa22;color:#ddaa22;font-size:9px;padding:3px;cursor:pointer;border-radius:3px;font-family:monospace">● Idle</button>
+<button onclick="window.setAgentStatus('${a.id}','offline')" style="background:#080808;border:1px solid #334;color:#556;font-size:9px;padding:3px;cursor:pointer;border-radius:3px;font-family:monospace">● Offline</button>
+<button onclick="sendMeeting('${a.id}')" style="background:#060c1a;border:1px solid #4466cc;color:#4466cc;font-size:9px;padding:3px;cursor:pointer;border-radius:3px;font-family:monospace;margin-top:3px">→ War Room</button>
+<button onclick="sel=null;document.getElementById('infopanel').style.display='none'" style="background:#0a0a0a;border:1px solid #222;color:#445;font-size:9px;padding:3px;cursor:pointer;border-radius:3px;font-family:monospace">✕ Close</button>
+</div>`;
+}
+
+function sendMeeting(id){
+  const a=aMap[id];if(!a)return;
+  const mr=rMap['meet'];
+  a.tx=mr.x+30+Math.random()*100;a.ty=mr.y+50+Math.random()*60;
+  a.routed=true;a.state='walk';
+  addLog('['+a.name+'] กำลังไป War Room...');
+  setTimeout(()=>{a.routed=false;},8000);
+}
+
+// ── PUBLIC API ────────────────────────────────────────────────────
+window.setAgentStatus=function(id,st){const a=aMap[id];if(!a)return;a.status=st;addLog('['+a.name+'] → '+st);spawnP(a.x,a.y,a.color,5);};
+window.triggerRoute=function(fId,tId,msg='data'){
+  const from=aMap[fId],to=aMap[tId];if(!from||!to)return;
+  routes=routes.filter(r=>r.from.id!==fId);
+  // Move sender to boundary of their room, aiming toward receiver
+  const fr=rMap[from.room];
+  from.tx=Math.min(fr.x+fr.w-15,Math.max(fr.x+10,to.x<from.x?fr.x+15:fr.x+fr.w-20));
+  from.ty=fr.y+fr.h/2;
+  from.routed=true;
+  evts++;document.getElementById('sEvt').textContent='Events: '+evts;
+  addLog('['+from.name+'→'+to.name+'] '+msg);
+  spawnP(from.x,from.y,from.color,5);
+  routes.push({from,to,dur:240,phase:0,onDone(){
+    from.x=from.seatX;from.y=from.seatY;from.state='sit';from.status='active';from.routed=false;
+    spawnP(to.x,to.y,to.color,8);spawnFloat(to.x,to.y-28,'✓ Done!','#44dd66');
+  }});
+};
+window.addAgent=function(cfg){
+  if(!cfg||!cfg.id||aMap[cfg.id])return null;
+  const a=Object.assign({room:'hq',color:'#88ffcc',skin:'#e8c090',hair:'#0a0808',
+    suitH:'#102018',suitL:'#1a3028',deskCol:0,deskRow:0,title:'Agent',
+    skills:['Work'],tasks:['Working']},cfg);
+  initAgent(a);
+  AGENTS.push(a);
+  addLog('[System] '+a.name+' เข้าร่วมแผนก '+a.room);
+  spawnFloat(a.x,a.y-28,'+ JOIN',a.color);
+  return a;
+};
+
+// ── BUTTONS ───────────────────────────────────────────────────────
+function doNight(){night=!night;addLog('[System] '+(night?'Night shift — ลดไฟ':'Morning — เปิดไฟ!'));}
+function doMeeting(){
+  const mr=rMap['meet'];
+  AGENTS.filter(a=>a.status!=='offline').slice(0,5).forEach((a,i)=>{
+    a.tx=mr.x+25+i*26;a.ty=mr.y+70;a.routed=true;a.state='walk';
+    setTimeout(()=>{a.routed=false;},10000);
+  });
+  addLog('[System] เรียกประชุมด่วน! ทุกคนไป War Room');
+  spawnFloat(rMap['meet'].x+rMap['meet'].w/2,rMap['meet'].y-12,'★ WAR ROOM','#3858c0');
+}
+function doAllWork(){
+  AGENTS.forEach(a=>{if(a.status!=='offline'){a.status='active';a.state='sit';a.stateTimer=0;a.stateDur=150;a.bubbleTxt=a.currentTask;a.bubbleTimer=80;}});
+  addLog('[Boss] ทุกคนโฟกัส! ลุยงานกันเลย!');
+  AGENTS.forEach(a=>spawnP(a.x,a.y,a.color,3));
+}
+
+// ── LOG ───────────────────────────────────────────────────────────
+function addLog(m){chatLines.push(m);if(chatLines.length>3)chatLines.shift();
+  chatLines.forEach((l,i)=>{const e=document.getElementById('cl'+i);if(e){e.textContent=l;e.className=i===chatLines.length-1?'hi':'';}});}
+
+// ── DEMO ──────────────────────────────────────────────────────────
+const DEMO=[
+  ['secretary','news','ข่าว AI วันนี้'],
+  ['secretary','code','ช่วยเขียน code'],
+  ['secretary','ener','วิเคราะห์พระ'],
+  ['secretary','gmail','เช็ค email'],
+  ['news','digest','ส่งข่าวให้สรุป'],
+  ['code','monitor','เช็คหลัง deploy'],
+  ['ener','content','ออกแบบ content Ener'],
+  ['ener','tarot','ไพ่วันนี้'],
+  ['gmail','tasks','สร้าง task จาก email'],
+  ['secretary','think','brainstorm กลยุทธ์'],
+  ['think','briefing','สรุปให้ boss'],
+  ['briefing','session','บันทึก session'],
+  ['secretary','memory','จำข้อมูลนี้ไว้'],
+  ['memory','chat','context ล่าสุด'],
+  ['monitor','logs','บันทึก error'],
+  ['github','code','code review'],
+  ['tasks','session','update progress'],
+  ['content','tarot','โพสต์ดวงประจำวัน'],
+];
+let demoI=0;
+setInterval(()=>{const[a,b,m]=DEMO[demoI%DEMO.length];demoI++;window.triggerRoute(a,b,m);},3500);
+
+// Show tasks on startup after short delay
+setTimeout(()=>{AGENTS.forEach(a=>{a.bubbleTxt=a.currentTask;a.bubbleTimer=120;});},1500);
+
+// ── BACKGROUND ────────────────────────────────────────────────────
+function drawBg(){
+  // Office building exterior / hallway
+  ctx.fillStyle=night?'#0e1018':'#c0ccd8';
+  ctx.fillRect(0,0,W,H);
+  // Hallway between rows
+  ctx.fillStyle=night?'#0c0e16':'#b0bcc8';
+  ctx.fillRect(0,156,W,144);
+  // Hallway center stripe
+  ctx.strokeStyle=night?'#181a28':'#a0acb8';
+  ctx.lineWidth=1;ctx.setLineDash([16,12]);
+  ctx.beginPath();ctx.moveTo(0,228);ctx.lineTo(W,228);ctx.stroke();
+  ctx.setLineDash([]);
+  // Small carpet squares in hallway
+  ctx.fillStyle=night?'#0f1120':'#b8c4d4';
+  for(let x=20;x<W;x+=120)ctx.fillRect(x,175,80,60);
+}
+
+// ── MAIN LOOP ──────────────────────────────────────────────────────
+function loop(){
+  tick++;fC++;
+  const now=performance.now();
+  if(now-fT>=1000){fps=fC;fC=0;fT=now;document.getElementById('sFps').textContent='FPS: '+fps;}
+  document.getElementById('sCnt').textContent='Staff: '+AGENTS.filter(a=>a.status!=='offline').length;
+
+  drawBg();
+  ROOMS.forEach(drawRoom);
+  furnishRooms();
+  drawRoutes();
+
+  // Draw agents sorted by Y for depth
+  [...AGENTS].sort((a,b)=>a.y-b.y).forEach(a=>{updateAgent(a);drawAgent(a);});
+  drawParticles();
+
+  // Live status pill
+  ctx.fillStyle='rgba(0,0,0,0.65)';ctx.beginPath();ctx.roundRect(W-145,6,138,17,3);ctx.fill();
+  ctx.fillStyle='#44dd66';ctx.font='bold 9px Courier New';ctx.textAlign='right';
+  ctx.fillText('● LIVE  staff: '+AGENTS.length,W-8,19);ctx.textAlign='left';
+
+  // Advance routes
+  for(let i=routes.length-1;i>=0;i--){routes[i].phase++;if(routes[i].phase>=routes[i].dur){routes[i].onDone&&routes[i].onDone();routes.splice(i,1);}}
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
