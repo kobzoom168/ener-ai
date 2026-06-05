@@ -12,12 +12,12 @@
   </div>
 
   {% set floor_data = [
-    {"key":"hq",    "sprite":"sprite-hq.png",    "top":"8%",  "agents":["SecretaryAgent","MainChatAgent","MemoryAgent"]},
-    {"key":"ener",  "sprite":"sprite-ener.png",  "top":"25%", "agents":["EnerAgent","ContentAgent","TarotAgent"]},
-    {"key":"tech",  "sprite":"sprite-tech.png",  "top":"41%", "agents":["CodeAgent","MonitorAgent","GithubAgent"]},
-    {"key":"intel", "sprite":"sprite-intel.png", "top":"57%", "agents":["NewsAgent","DigestAgent","ThinkTeam"]},
-    {"key":"ops",   "sprite":"sprite-ops.png",   "top":"73%", "agents":["GmailAgent","TaskAgent","LogKeeper"]},
-    {"key":"exec",  "sprite":"sprite-exec.png",  "top":"88%", "agents":["SessionAgent","BriefingAgent"]},
+    {"key":"hq",    "sprite":"sprite-hq.png",    "agents":["SecretaryAgent","MainChatAgent","MemoryAgent"]},
+    {"key":"ener",  "sprite":"sprite-ener.png",  "agents":["EnerAgent","ContentAgent","TarotAgent"]},
+    {"key":"tech",  "sprite":"sprite-tech.png",  "agents":["CodeAgent","MonitorAgent","GithubAgent"]},
+    {"key":"intel", "sprite":"sprite-intel.png", "agents":["NewsAgent","DigestAgent","ThinkTeam"]},
+    {"key":"ops",   "sprite":"sprite-ops.png",   "agents":["GmailAgent","TaskAgent","LogKeeper"]},
+    {"key":"exec",  "sprite":"sprite-exec.png",  "agents":["SessionAgent","BriefingAgent"]},
   ] %}
 
   {% for floor in floor_data %}
@@ -25,7 +25,7 @@
   {% set floor_runs = office.agents | selectattr("name","in", floor.agents) | map(attribute="runs_today") | sum %}
   {% set is_active = office.agents | selectattr("name","in", floor.agents) | selectattr("status","equalto","active") | list | length > 0 %}
 
-  <div class="floor-sprite-slot floor-sprite-slot--{{ floor.key }}" style="top: {{ floor.top }};">
+  <div class="floor-sprite-slot floor-sprite-slot--{{ floor.key }}">
     <img src="/static/workspace/sprites/{{ floor.sprite }}"
          class="floor-sprite{% if is_active %} floor-sprite--active{% elif head_ag and head_ag.status == 'offline' %} floor-sprite--offline{% else %} floor-sprite--idle{% endif %}"
          alt="{{ floor.key }}"
@@ -37,7 +37,7 @@
     {% endif %}
   </div>
 
-  <div class="floor-agents-list" style="top: {{ floor.top }};">
+  <div class="floor-agents-list floor-agents-list--{{ floor.key }}">
     {% for ag_name in floor.agents %}
     {% set ag = office.agents | selectattr("name","equalto", ag_name) | first | default(none) %}
     {% if ag %}
