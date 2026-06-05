@@ -7032,7 +7032,12 @@ async def workspace_code_agent(request: Request):
         f"- path MUST start with project name: '{project or 'project-name'}/filename'\n"
         f"- You CAN create multiple files in one response\n"
         f"- After WRITE_FILE tags, briefly explain in Thai what you did\n"
-        f"- NEVER output just a code block without WRITE_FILE when the user asks to create/write something"
+        f"- NEVER output just a code block without WRITE_FILE when the user asks to create/write something\n"
+        f"- AFTER creating files, ALWAYS add a short Thai section:\n"
+        f"  **ขั้นต่อไป:**\n"
+        f"  - วิธีรันหรือติดตั้ง (เช่น `pip install fastapi uvicorn` แล้ว `uvicorn main:app --reload`)\n"
+        f"  - วิธีทดสอบ (เช่น เปิด http://localhost:8000/hello)\n"
+        f"  - ไฟล์อื่นที่ต้องสร้างเพิ่ม (เช่น requirements.txt, Dockerfile)"
     )
 
     raw_answer = await ai_chat(

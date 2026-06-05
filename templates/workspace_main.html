@@ -644,6 +644,23 @@
         }
       }
 
+      function saveChatHistory(project) {
+        if (!project) return;
+        const msgs = document.getElementById('code-chat-messages');
+        if (!msgs) return;
+        try { localStorage.setItem(`ener-chat-${project}`, msgs.innerHTML); } catch(e) {}
+      }
+
+      function loadChatHistory(project) {
+        const msgs = document.getElementById('code-chat-messages');
+        if (!msgs) return;
+        try {
+          const saved = localStorage.getItem(`ener-chat-${project}`);
+          msgs.innerHTML = saved || '<div class="code-chat-empty-placeholder" style="color:#666;font-size:12px;text-align:center;margin-top:40px">เลือกไฟล์แล้วถามได้เลย</div>';
+          msgs.scrollTop = msgs.scrollHeight;
+        } catch(e) {}
+      }
+
       async function toggleProject(name) {
         const item = document.querySelector(`.code-project-item[data-name="${name}"]`);
         const filesDiv = document.querySelector(`.code-project-files[data-project="${name}"]`);
@@ -653,14 +670,16 @@
           filesDiv.style.display = 'none';
           item.querySelector('.code-project-arrow').textContent = '▶';
           item.classList.remove('active');
-          if (currentProject === name) currentProject = '';
+          if (currentProject === name) { saveChatHistory(name); currentProject = ''; }
         } else {
           filesDiv.style.display = 'block';
           item.querySelector('.code-project-arrow').textContent = '▼';
           item.classList.add('active');
+          if (currentProject && currentProject !== name) saveChatHistory(currentProject);
           currentProject = name;
           const sel = document.getElementById('code-project-select');
           if (sel) sel.value = name;
+          loadChatHistory(name);
           if (!filesDiv.dataset.loaded) await loadFilesInto(name, filesDiv);
         }
       }
@@ -996,6 +1015,7 @@
             <div class="code-chat-ai-body">${formatAIResponse(answer)}</div>`;
           msgs.appendChild(aiDiv);
           msgs.scrollTop = msgs.scrollHeight;
+          saveChatHistory(currentProject);
 
           // Refresh file trees for affected projects
           for (const proj of writtenProjects) {
