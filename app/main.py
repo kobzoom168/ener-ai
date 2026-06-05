@@ -7259,6 +7259,21 @@ async def workspace_code_project_create(request: Request):
     return JSONResponse({"ok": True, "project": name, "path": project_dir})
 
 
+@app.delete("/workspace/code/project/{name}")
+async def workspace_code_project_delete(name: str, request: Request):
+    await _require_admin(request)
+    import os
+    import shutil
+
+    if not _ENER_CODE_PROJECT_RE.match(name):
+        raise HTTPException(400, "invalid project name")
+    project_dir = os.path.join(BASE_ENER_CODE, name)
+    if not os.path.isdir(project_dir):
+        raise HTTPException(404, "project not found")
+    shutil.rmtree(project_dir)
+    return JSONResponse({"ok": True, "deleted": name})
+
+
 @app.post("/workspace/code/git")
 async def workspace_code_git(request: Request):
     await _require_admin(request)
