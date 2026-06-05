@@ -7006,28 +7006,33 @@ async def workspace_code_agent(request: Request):
         file_ctx = f"\n\n=== Current File: {file_path} ({len(lines)} lines) ===\n```\n{preview}\n```\n"
 
     system = (
-        f"คุณเป็น Ener-AI Code Agent — coding agent บน Ener-AI Web IDE\n\n"
-        f"=== Context ===\n"
-        f"Project: {project or 'ยังไม่ได้เลือก'}\n"
-        f"File: {file_path or 'ยังไม่ได้เลือก'}\n"
-        f"Stack: Python 3.11 / FastAPI / aiosqlite / Docker / Server my-ener.uk\n"
+        f"You are Ener-AI Code Agent. You write files directly using WRITE_FILE tags.\n\n"
+        f"CURRENT PROJECT: {project or '(none)'}\n"
+        f"CURRENT FILE: {file_path or '(none)'}\n"
+        f"STACK: Python 3.11 / FastAPI / aiosqlite / Docker\n"
         f"{file_ctx}\n"
-        f"=== Tools ===\n"
-        f"คุณสร้าง/แก้ไขไฟล์ได้โดยใช้ XML tag ต่อไปนี้:\n"
-        f'<WRITE_FILE path="project/filename.py">\n'
-        f"...file content...\n"
+        f"####### CRITICAL RULE — YOU MUST FOLLOW THIS #######\n"
+        f"When asked to CREATE, WRITE, or MODIFY code:\n"
+        f"YOU MUST USE <WRITE_FILE> TAG — DO NOT just show a code block.\n"
+        f"The system will automatically save the file when you use this tag.\n\n"
+        f"SYNTAX:\n"
+        f'<WRITE_FILE path="{project or "my-project"}/filename.py">\n'
+        f"...complete file content here...\n"
         f"</WRITE_FILE>\n\n"
-        f"ตัวอย่าง — ถ้า project = my-app ให้ใช้:\n"
-        f'<WRITE_FILE path="my-app/main.py">\n'
+        f"EXAMPLE — project=test-project2, create main.py:\n"
+        f'<WRITE_FILE path="test-project2/main.py">\n'
         f"from fastapi import FastAPI\n"
-        f"app = FastAPI()\n"
+        f"app = FastAPI()\n\n"
+        f"@app.get('/')\n"
+        f"async def root():\n"
+        f"    return {{\"message\": \"Hello\"}}\n"
         f"</WRITE_FILE>\n\n"
-        f"=== กฎ ===\n"
-        f"- ถ้าถามให้เขียน/สร้าง/แก้ไข code → ใช้ WRITE_FILE ทันที อย่าแค่แสดง code block\n"
-        f"- ใช้ path แบบ project/filename เสมอ (project = '{project or 'ชื่อ-project'}')\n"
-        f"- สร้างหลายไฟล์พร้อมกันได้ถ้าจำเป็น\n"
-        f"- อธิบายสั้นๆ หลัง WRITE_FILE ว่าทำอะไรไปแล้ว\n"
-        f"- ใช้ภาษาไทยผสม technical terms"
+        f"RULES:\n"
+        f"- ALWAYS use WRITE_FILE when writing/creating/modifying code\n"
+        f"- path MUST start with project name: '{project or 'project-name'}/filename'\n"
+        f"- You CAN create multiple files in one response\n"
+        f"- After WRITE_FILE tags, briefly explain in Thai what you did\n"
+        f"- NEVER output just a code block without WRITE_FILE when the user asks to create/write something"
     )
 
     raw_answer = await ai_chat(
