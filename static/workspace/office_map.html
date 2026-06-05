@@ -66,46 +66,20 @@ const rMap={};ROOMS.forEach(r=>{rMap[r.id]=r;});
 
 // ── AGENTS ───────────────────────────────────────────────────────
 // deskCol = desk column inside room (0,1,2...)  deskRow = 0 top, 1 bottom
+// Dept Heads only — 1 per room, cleaner map
 const AGENTS=[
-  {id:'secretary',name:'เลขา',    title:'Secretary',     room:'hq',    color:'#00ff88', skin:'#f0c8a0', hair:'#080808', suitH:'#0a2818', suitL:'#143828',
-   deskCol:0, deskRow:0, skills:['Route','Guard','Delegate'], tasks:['Routing request','Checking dept','Coordinating agents','Briefing summary','Prioritizing']},
-  {id:'chat',     name:'Chat',    title:'Chat Agent',    room:'hq',    color:'#88ffcc', skin:'#e8c090', hair:'#100808', suitH:'#102018', suitL:'#1a3028',
-   deskCol:1, deskRow:0, skills:['Chat','Context','Recall'], tasks:['Chatting','Answering question','Reading history','Context check','Summarizing']},
-  {id:'memory',   name:'Memory',  title:'Memory Agent',  room:'hq',    color:'#44ffaa', skin:'#d8b890', hair:'#050510', suitH:'#0a1a18', suitL:'#142820',
-   deskCol:2, deskRow:0, skills:['Store','Search','Recall'], tasks:['Saving memory','Searching context','Pruning old data','Cross-referencing','Updating facts']},
-
-  {id:'ener',     name:'Ener',    title:'Ener Agent',    room:'ener',  color:'#cc66ff', skin:'#f0c0a0', hair:'#180818', suitH:'#200838', suitL:'#380858',
-   deskCol:0, deskRow:0, skills:['Scan','Analyze','Report'], tasks:['Scanning amulet','Energy analysis','Writing report','Thai context check','Calibrating model']},
-  {id:'content',  name:'Content', title:'Content Agent', room:'ener',  color:'#ee88ff', skin:'#f8d0b0', hair:'#100010', suitH:'#280820', suitL:'#401838',
-   deskCol:1, deskRow:0, skills:['Write','TikTok','FB'], tasks:['Writing post','TikTok script','FB caption','Content calendar','Hashtag research']},
-  {id:'tarot',    name:'Tarot',   title:'Tarot Agent',   room:'ener',  color:'#ff44cc', skin:'#e8b8a0', hair:'#0a0018', suitH:'#200818', suitL:'#381030',
-   deskCol:2, deskRow:0, skills:['Tarot','Spiritual','Guide'], tasks:['Drawing card','Reading spread','Energy check','Daily guidance','Writing insight']},
-
-  {id:'code',     name:'Code',    title:'Code Agent',    room:'tech',  color:'#00ddff', skin:'#e0c090', hair:'#080808', suitH:'#082028', suitL:'#103040',
-   deskCol:0, deskRow:0, skills:['Code','Debug','Deploy'], tasks:['Writing code','Debugging','Code review','Cursor prompt','Refactoring']},
-  {id:'monitor',  name:'Monitor', title:'Monitor Agent', room:'tech',  color:'#44eeff', skin:'#e8c888', hair:'#0a0808', suitH:'#101828', suitL:'#182838',
-   deskCol:1, deskRow:0, skills:['Watch','Alert','Metrics'], tasks:['Server check','Error scan','CPU watch','Memory check','Uptime report']},
-  {id:'github',   name:'GitHub',  title:'GitHub Agent',  room:'tech',  color:'#88ccff', skin:'#d8c080', hair:'#050808', suitH:'#0c1420', suitL:'#182030',
-   deskCol:2, deskRow:0, skills:['Git','PR','Review'], tasks:['Checking commits','PR review','Branch status','Deploy check','Repo scan']},
-
-  {id:'news',     name:'News',    title:'News Agent',    room:'intel', color:'#ffee00', skin:'#f0b880', hair:'#080800', suitH:'#281800', suitL:'#402800',
-   deskCol:0, deskRow:0, skills:['Fetch','Filter','Tag'], tasks:['Fetching news','Filtering sources','Tagging topics','Breaking news','Source check']},
-  {id:'digest',   name:'Digest',  title:'Digest Agent',  room:'intel', color:'#ffe044', skin:'#e8c078', hair:'#100800', suitH:'#201000', suitL:'#382000',
-   deskCol:1, deskRow:0, skills:['Summarize','Daily','Weekly'], tasks:['Daily digest','Weekly review','Trend analysis','Top 5 stories','Curating news']},
-  {id:'think',    name:'Think',   title:'Think Team',    room:'intel', color:'#ffcc22', skin:'#f0c888', hair:'#0a0800', suitH:'#241400', suitL:'#3a2400',
-   deskCol:2, deskRow:0, skills:['Analyze','Reason','Plan'], tasks:['Brainstorming','Analysis','Strategy planning','Problem solving','Reasoning']},
-
-  {id:'gmail',    name:'Gmail',   title:'Gmail Agent',   room:'ops',   color:'#ff8800', skin:'#e8b878', hair:'#180800', suitH:'#281008', suitL:'#402018',
-   deskCol:0, deskRow:0, skills:['Email','Summarize','Flag'], tasks:['Reading email','Summarizing inbox','Flagging urgent','Draft reply','Archive old']},
-  {id:'tasks',    name:'Tasks',   title:'Task Agent',    room:'ops',   color:'#ffaa44', skin:'#f0c888', hair:'#100800', suitH:'#281808', suitL:'#402818',
-   deskCol:1, deskRow:0, skills:['Todo','Track','Done'], tasks:['Creating task','Updating status','Checking due','Prioritizing','Task report']},
-  {id:'logs',     name:'Logs',    title:'Log Keeper',    room:'ops',   color:'#ffcc88', skin:'#e0c070', hair:'#080800', suitH:'#201008', suitL:'#382018',
-   deskCol:2, deskRow:0, skills:['Log','Health','Track'], tasks:['Logging event','Health check','Error log','Activity track','Log cleanup']},
-
-  {id:'session',  name:'Session', title:'Session Agent', room:'exec',  color:'#ffcc44', skin:'#f0c898', hair:'#100808', suitH:'#281808', suitL:'#403018',
-   deskCol:0, deskRow:0, skills:['Session','Log','Context'], tasks:['Session log','Context save','Daily wrap','Week summary','Log export']},
-  {id:'briefing', name:'Briefing',title:'Briefing Agent',room:'exec',  color:'#ffddaa', skin:'#e8c888', hair:'#080808', suitH:'#201808', suitL:'#382808',
-   deskCol:1, deskRow:0, skills:['Brief','Report','KPI'], tasks:['Morning brief','KPI report','Status update','Risk flag','Executive summary']},
+  {id:'secretary',name:'เลขา',   title:'Secretary',    room:'hq',    color:'#00ff88',skin:'#f0c8a0',hair:'#080808',suitH:'#0a2818',suitL:'#143828',
+   deskCol:1,lv:25,hp:100,mp:90, skills:['Route','Guard','Delegate'], tasks:['Routing request','Checking dept','Coordinating','Briefing','Prioritizing']},
+  {id:'ener',     name:'Ener',   title:'Ener Agent',   room:'ener',  color:'#cc66ff',skin:'#f0c0a0',hair:'#180818',suitH:'#200838',suitL:'#380858',
+   deskCol:1,lv:18,hp:88,mp:110, skills:['Scan','Analyze','Report'],  tasks:['Scanning amulet','Energy analysis','Writing report','Thai context','Calibrating']},
+  {id:'code',     name:'Code',   title:'Code Agent',   room:'tech',  color:'#00ddff',skin:'#e0c090',hair:'#080808',suitH:'#082028',suitL:'#103040',
+   deskCol:1,lv:20,hp:90,mp:80,  skills:['Code','Debug','Deploy'],    tasks:['Writing code','Debugging','Code review','Cursor prompt','Refactoring']},
+  {id:'news',     name:'News',   title:'News Agent',   room:'intel', color:'#ffee00',skin:'#f0b880',hair:'#080800',suitH:'#281800',suitL:'#402800',
+   deskCol:1,lv:16,hp:85,mp:75,  skills:['Fetch','Filter','Tag'],     tasks:['Fetching news','Filtering sources','Tagging topics','Breaking news','Source check']},
+  {id:'gmail',    name:'Gmail',  title:'Gmail Agent',  room:'ops',   color:'#ff8800',skin:'#e8b878',hair:'#180800',suitH:'#281008',suitL:'#402018',
+   deskCol:1,lv:14,hp:82,mp:65,  skills:['Email','Summarize','Flag'], tasks:['Reading email','Summarizing inbox','Flagging urgent','Draft reply','Archive']},
+  {id:'session',  name:'Session',title:'Session Agent',room:'exec',  color:'#ffcc44',skin:'#f0c898',hair:'#100808',suitH:'#281808',suitL:'#403018',
+   deskCol:0,lv:12,hp:80,mp:70,  skills:['Session','Log','Context'],  tasks:['Session log','Context save','Daily wrap','Week summary','Log export']},
 ];
 
 const aMap={};

@@ -844,7 +844,13 @@ document.addEventListener('DOMContentLoaded', function() {
     if (!evt || !evt.from || !evt.to) return;
     const fromId = _agentNameToMapId(evt.from);
     const toId = _agentNameToMapId(evt.to);
-    if (fromId && toId) notifyMapRoute(fromId, toId, evt.msg || evt.message || '');
+    if (!fromId || !toId) return;
+    // Only animate routes that originate from secretary (user-triggered)
+    // Background scheduler events (monitor/metrics/health) are shown in activity feed only
+    const SCHEDULER_SOURCES = new Set(['scheduler','metrics','monitor','health','logkeeper','log_keeper','backup','session_scheduler']);
+    const fromLower = (evt.from || '').toLowerCase();
+    if (SCHEDULER_SOURCES.has(fromLower)) return;
+    notifyMapRoute(fromId, toId, evt.msg || evt.message || '');
   }
 
   function _handleSecSSEEvent(evt) {
