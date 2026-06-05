@@ -465,6 +465,7 @@
       let currentFilePath = '';
       let savedContent = '';
       let currentProject = '';
+      let serverContext = {};
       let sessionTokens = 0;
       const TOKEN_COST_PER_1K = 0.02;
 
@@ -955,7 +956,12 @@
       function updateChatContext() {
         const bar = document.getElementById('code-chat-context');
         if (!bar) return;
-        bar.textContent = currentFilePath ? `📄 ${currentFilePath}` : '— ยังไม่ได้เลือกไฟล์ —';
+        const file = currentFilePath ? `📄 ${currentFilePath}` : '—';
+        const srv = serverContext.server || {};
+        const stats = srv.cpu_load
+          ? ` · CPU ${srv.cpu_load} · RAM ${srv.ram} · Disk ${srv.disk}`
+          : '';
+        bar.textContent = file + stats;
       }
 
       function collectChatHistory() {
@@ -1004,6 +1010,7 @@
               project: currentProject,
               model: selectedModel,
               messages: history,
+              server_context: serverContext,
             }),
           });
           const d = await res.json();
@@ -1124,8 +1131,19 @@
         });
       }
 
+      async function loadServerContext() {
+        try {
+          const res = await fetch('/workspace/code/server-context');
+          if (res.ok) {
+            serverContext = await res.json();
+            updateChatContext();
+          }
+        } catch(e) {}
+      }
+
       window.initCodeAssistantPanel = function() {
         loadProjects();
+        loadServerContext();
       };
       window.loadExplorer = loadExplorer;
       window.selectProject = selectProject;

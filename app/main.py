@@ -6975,6 +6975,53 @@ async def workspace_code_chat(request: Request):
     return JSONResponse({"answer": str(answer)})
 
 
+@app.get("/workspace/code/server-context")
+async def workspace_code_server_context(request: Request):
+    """Return server info for Code Agent context."""
+    await _require_admin(request)
+    import subprocess as _sp
+
+    def _run(cmd: str) -> str:
+        try:
+            r = _sp.run(cmd, shell=True, capture_output=True, text=True, timeout=5)
+            return (r.stdout or "").strip()
+        except Exception:
+            return ""
+
+    disk   = _run("df -h / | tail -1 | awk '{print $3\"/\"$2\" used (\"$5\")\"}'")
+    ram    = _run("free -h | awk '/^Mem:/{print $3\"/\"$2\" used\"}'")
+    cpu    = _run("cat /proc/loadavg | awk '{print $1\" (1m avg)\"}'")
+    uptime = _run("uptime -p")
+    containers = _run(
+        "docker ps --format '{{.Names}}\\t{{.Status}}\\t{{.Ports}}' 2>/dev/null"
+    )
+    git_log = _run("git -C /root/ener-ai log --oneline -5 2>/dev/null")
+    projects = _run("ls /root/ener-code 2>/dev/null")
+
+    # Collect existing FastAPI routes (method + path)
+    routes_list = []
+    for route in app.routes:
+        methods = getattr(route, "methods", None)
+        path = getattr(route, "path", "")
+        if methods and path and not path.startswith("/docs") and not path.startswith("/openapi"):
+            for m in sorted(methods):
+                routes_list.append(f"{m} {path}")
+    routes_list.sort()
+
+    return JSONResponse({
+        "server": {
+            "cpu_load": cpu,
+            "ram": ram,
+            "disk": disk,
+            "uptime": uptime,
+        },
+        "containers": containers,
+        "git_log": git_log,
+        "ener_code_projects": projects,
+        "ener_ai_routes": routes_list[:60],
+    })
+
+
 _WRITE_FILE_RE = __import__("re").compile(
     r'<WRITE_FILE\s+path="([^"]+)">([\s\S]*?)</WRITE_FILE>', __import__("re").MULTILINE
 )
@@ -6993,6 +7040,7 @@ async def workspace_code_agent(request: Request):
     project = body.get("project", "") or (file_path.split("/")[0] if file_path else "")
     model = body.get("model", "featherless-coder")
     history = body.get("messages") or []
+    server_ctx = body.get("server_context") or {}
     if not question:
         raise HTTPException(400, "question required")
 
@@ -7012,11 +7060,34 @@ async def workspace_code_agent(request: Request):
         preview = "\n".join(lines[:200])
         file_ctx = f"\n\n=== Current File: {file_path} ({len(lines)} lines) ===\n```\n{preview}\n```\n"
 
+    # Build server context block
+    srv = server_ctx.get("server") or {}
+    containers_txt = server_ctx.get("containers") or ""
+    routes_txt = "\n".join((server_ctx.get("ener_ai_routes") or [])[:40])
+    projects_txt = server_ctx.get("ener_code_projects") or ""
+    git_txt = server_ctx.get("git_log") or ""
+    server_block = ""
+    if srv or containers_txt or routes_txt:
+        server_block = (
+            f"\n=== SERVER STATE ===\n"
+            f"CPU load: {srv.get('cpu_load','?')} | RAM: {srv.get('ram','?')} | Disk: {srv.get('disk','?')}\n"
+            f"Uptime: {srv.get('uptime','?')}\n"
+        )
+        if containers_txt:
+            server_block += f"\nRunning containers:\n{containers_txt}\n"
+        if projects_txt:
+            server_block += f"\n/root/ener-code projects: {projects_txt}\n"
+        if git_txt:
+            server_block += f"\nEner-AI recent commits:\n{git_txt}\n"
+        if routes_txt:
+            server_block += f"\nExisting Ener-AI API endpoints (don't duplicate):\n{routes_txt}\n"
+
     system = (
         f"You are Ener-AI Code Agent. You write files directly using WRITE_FILE tags.\n\n"
         f"CURRENT PROJECT: {project or '(none)'}\n"
         f"CURRENT FILE: {file_path or '(none)'}\n"
-        f"STACK: Python 3.11 / FastAPI / aiosqlite / Docker\n"
+        f"STACK: Python 3.11 / FastAPI / aiosqlite / Docker / Hetzner CPX22 / my-ener.uk\n"
+        f"{server_block}"
         f"{file_ctx}\n"
         f"####### CRITICAL RULE — YOU MUST FOLLOW THIS #######\n"
         f"When asked to CREATE, WRITE, or MODIFY code:\n"
