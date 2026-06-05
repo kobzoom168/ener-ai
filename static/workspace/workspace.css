@@ -1217,9 +1217,11 @@
     .floor-sprite-slot {
       position: absolute;
       left: 50%;
-      transform: translateX(-50%);
+      top: var(--floor-center, 50%);
+      transform: translate(-50%, -50%);
       width: 20%;
-      max-height: 10%;
+      height: 11%;
+      max-height: 11%;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -1231,13 +1233,13 @@
       pointer-events: auto;
     }
 
-    /* กึ่งกลางแต่ละชั้น (ตรงป้าย HQ / ENER / …) */
-    .floor-sprite-slot--hq { top: 11%; height: 10%; }
-    .floor-sprite-slot--ener { top: 24%; height: 10%; }
-    .floor-sprite-slot--tech { top: 37%; height: 10%; }
-    .floor-sprite-slot--intel { top: 50%; height: 10%; }
-    .floor-sprite-slot--ops { top: 63%; height: 10%; }
-    .floor-sprite-slot--exec { top: 76%; height: 10%; }
+    /* จุดกลางแต่ละชั้น (ตรงห้อง ไม่ทับเส้นแบ่งชั้น) */
+    .floor-sprite-slot--hq { --floor-center: 13.5%; }
+    .floor-sprite-slot--ener { --floor-center: 27.5%; }
+    .floor-sprite-slot--tech { --floor-center: 41.5%; }
+    .floor-sprite-slot--intel { --floor-center: 55.5%; }
+    .floor-sprite-slot--ops { --floor-center: 69.5%; }
+    .floor-sprite-slot--exec { --floor-center: 83.5%; }
 
     .floor-sprite {
       width: auto;
@@ -1321,22 +1323,24 @@
     .floor-agents-list {
       position: absolute;
       left: 72%;
+      top: var(--floor-center, 50%);
+      transform: translateY(-50%);
       width: 26%;
       display: flex;
       flex-direction: column;
       gap: 1px;
       z-index: 3;
       pointer-events: none;
-      max-height: 9%;
+      max-height: 10%;
       overflow: hidden;
     }
 
-    .floor-agents-list--hq { top: 11%; }
-    .floor-agents-list--ener { top: 24%; }
-    .floor-agents-list--tech { top: 37%; }
-    .floor-agents-list--intel { top: 50%; }
-    .floor-agents-list--ops { top: 63%; }
-    .floor-agents-list--exec { top: 76%; }
+    .floor-agents-list--hq { --floor-center: 13.5%; }
+    .floor-agents-list--ener { --floor-center: 27.5%; }
+    .floor-agents-list--tech { --floor-center: 41.5%; }
+    .floor-agents-list--intel { --floor-center: 55.5%; }
+    .floor-agents-list--ops { --floor-center: 69.5%; }
+    .floor-agents-list--exec { --floor-center: 83.5%; }
 
     .floor-agent-row {
       font-size: 4px;
