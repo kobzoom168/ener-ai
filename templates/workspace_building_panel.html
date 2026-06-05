@@ -11,27 +11,49 @@
     <span id="building-clock" class="building-topbar-clock">00:00:00</span>
   </div>
 
+  {% set dept_colors = {
+    "hq":"#0f6", "ener":"#a0f", "tech":"#0cf",
+    "intel":"#ff0", "ops":"#f80", "exec":"#fa6"
+  } %}
   {% set floor_data = [
-    {"key":"hq",    "sprite":"sprite-hq.png",    "agents":["SecretaryAgent","MainChatAgent","MemoryAgent"]},
-    {"key":"ener",  "sprite":"sprite-ener.png",  "agents":["EnerAgent","ContentAgent","TarotAgent"]},
-    {"key":"tech",  "sprite":"sprite-tech.png",  "agents":["CodeAgent","MonitorAgent","GithubAgent"]},
-    {"key":"intel", "sprite":"sprite-intel.png", "agents":["NewsAgent","DigestAgent","ThinkTeam"]},
-    {"key":"ops",   "sprite":"sprite-ops.png",   "agents":["GmailAgent","TaskAgent","LogKeeper"]},
-    {"key":"exec",  "sprite":"sprite-exec.png",  "agents":["SessionAgent","BriefingAgent"]},
+    {"key":"hq",    "agents":["SecretaryAgent","MainChatAgent","MemoryAgent"]},
+    {"key":"ener",  "agents":["EnerAgent","ContentAgent","TarotAgent"]},
+    {"key":"tech",  "agents":["CodeAgent","MonitorAgent","GithubAgent"]},
+    {"key":"intel", "agents":["NewsAgent","DigestAgent","ThinkTeam"]},
+    {"key":"ops",   "agents":["GmailAgent","TaskAgent","LogKeeper"]},
+    {"key":"exec",  "agents":["SessionAgent","BriefingAgent"]},
   ] %}
 
   {% for floor in floor_data %}
   {% set head_ag = office.agents | selectattr("name","equalto", floor.agents[0]) | first | default(none) %}
   {% set floor_runs = office.agents | selectattr("name","in", floor.agents) | map(attribute="runs_today") | sum %}
   {% set is_active = office.agents | selectattr("name","in", floor.agents) | selectattr("status","equalto","active") | list | length > 0 %}
+  {% if is_active %}
+    {% set char_status = 'active' %}
+  {% elif head_ag and head_ag.status == 'offline' %}
+    {% set char_status = 'offline' %}
+  {% else %}
+    {% set char_status = 'idle' %}
+  {% endif %}
 
-  <div class="floor-sprite-slot floor-sprite-slot--{{ floor.key }}">
-    <img src="/static/workspace/sprites/{{ floor.sprite }}"
-         class="floor-sprite{% if is_active %} floor-sprite--active{% elif head_ag and head_ag.status == 'offline' %} floor-sprite--offline{% else %} floor-sprite--idle{% endif %}"
-         alt="{{ floor.key }}"
-         data-floor="{{ floor.key }}"
-         onclick="openBuildingFloor('{{ floor.key }}')"
-         title="Click to chat with {{ floor.key | upper }} dept">
+  <div class="floor-char-slot floor-char-slot--{{ floor.key }}" style="--dept-color: {{ dept_colors[floor.key] }};">
+    <button type="button"
+            class="floor-char floor-char--{{ floor.key }} floor-char--{{ char_status }}"
+            data-floor="{{ floor.key }}"
+            onclick="openBuildingFloor('{{ floor.key }}')"
+            title="คลิกคุยกับแผนก {{ floor.key | upper }}">
+      <span class="floor-char-figure" aria-hidden="true">
+        <span class="floor-char-head"></span>
+        <span class="floor-char-torso"></span>
+        <span class="floor-char-leg floor-char-leg--l"></span>
+        <span class="floor-char-leg floor-char-leg--r"></span>
+        {% if floor.key == 'tech' %}<span class="floor-char-extra floor-char-extra--hood"></span>{% endif %}
+        {% if floor.key == 'intel' %}<span class="floor-char-extra floor-char-extra--hat"></span>{% endif %}
+        {% if floor.key == 'ops' %}<span class="floor-char-extra floor-char-extra--mail"></span>{% endif %}
+        {% if floor.key == 'exec' %}<span class="floor-char-extra floor-char-extra--crown"></span>{% endif %}
+      </span>
+      <span class="floor-char-emoji">{{ head_ag.emoji if head_ag else '●' }}</span>
+    </button>
     {% if floor_runs > 0 %}
     <div class="floor-run-badge{% if is_active %} floor-run-badge--active{% endif %}">{{ floor_runs }}x</div>
     {% endif %}

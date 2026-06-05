@@ -1214,92 +1214,188 @@
       color: #4af;
     }
 
-    .floor-sprite-slot {
+    /* ตัวละคร CSS (ไม่ใช้ PNG) — ขนาดพอดีแต่ละชั้น */
+    .floor-char-slot {
       position: absolute;
       left: 50%;
       top: var(--floor-center, 50%);
       transform: translate(-50%, -50%);
-      width: 20%;
-      height: 11%;
-      max-height: 11%;
+      width: 52px;
+      height: 38px;
       display: flex;
-      align-items: center;
+      align-items: flex-end;
       justify-content: center;
       z-index: 3;
       pointer-events: none;
+      --dept-color: #4af;
     }
 
-    .floor-sprite-slot .floor-sprite {
+    .floor-char-slot--hq { --floor-center: 13.5%; }
+    .floor-char-slot--ener { --floor-center: 27.5%; }
+    .floor-char-slot--tech { --floor-center: 41.5%; }
+    .floor-char-slot--intel { --floor-center: 55.5%; }
+    .floor-char-slot--ops { --floor-center: 69.5%; }
+    .floor-char-slot--exec { --floor-center: 83.5%; }
+
+    .floor-char {
+      position: relative;
+      width: 28px;
+      height: 34px;
+      padding: 0;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      image-rendering: pixelated;
+      transition: filter 0.25s ease, transform 0.25s ease;
       pointer-events: auto;
     }
 
-    /* จุดกลางแต่ละชั้น (ตรงห้อง ไม่ทับเส้นแบ่งชั้น) */
-    .floor-sprite-slot--hq { --floor-center: 13.5%; }
-    .floor-sprite-slot--ener { --floor-center: 27.5%; }
-    .floor-sprite-slot--tech { --floor-center: 41.5%; }
-    .floor-sprite-slot--intel { --floor-center: 55.5%; }
-    .floor-sprite-slot--ops { --floor-center: 69.5%; }
-    .floor-sprite-slot--exec { --floor-center: 83.5%; }
-
-    .floor-sprite {
-      width: auto;
-      max-width: 100%;
-      height: 100%;
-      max-height: 100%;
-      object-fit: contain;
-      object-position: center bottom;
-      image-rendering: pixelated;
-      mix-blend-mode: lighten;
-      cursor: pointer;
-      display: block;
-      transition: filter 0.3s ease, transform 0.3s ease;
+    .floor-char-figure {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
     }
 
-    .floor-sprite--active {
-      animation: floor-bounce 0.9s ease-in-out infinite;
+    .floor-char-head {
+      position: absolute;
+      top: 2px;
+      left: 8px;
+      width: 12px;
+      height: 10px;
+      background: var(--dept-color);
+      border-radius: 1px;
+      opacity: 0.92;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
     }
 
-    .floor-sprite--idle {
-      filter: brightness(0.55) saturate(0.5);
+    .floor-char-torso {
+      position: absolute;
+      top: 13px;
+      left: 6px;
+      width: 16px;
+      height: 11px;
+      background: var(--dept-color);
+      border-radius: 1px;
+      opacity: 0.78;
     }
 
-    .floor-sprite--offline {
-      filter: grayscale(1) brightness(0.25);
+    .floor-char-leg {
+      position: absolute;
+      top: 24px;
+      width: 6px;
+      height: 9px;
+      background: var(--dept-color);
+      border-radius: 1px;
+      opacity: 0.55;
     }
 
-    .floor-sprite:hover {
-      filter: brightness(1.25) !important;
-      transform: scale(1.05);
+    .floor-char-leg--l { left: 7px; }
+    .floor-char-leg--r { left: 15px; }
+
+    .floor-char-emoji {
+      position: absolute;
+      top: 0;
+      left: 7px;
+      font-size: 11px;
+      line-height: 1;
+      pointer-events: none;
+      z-index: 2;
+      filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.8));
+    }
+
+    /* รูปทรงเฉพาะแผนก */
+    .floor-char--ener .floor-char-torso {
+      width: 18px;
+      left: 5px;
+      border-radius: 2px 2px 0 0;
+    }
+
+    .floor-char--hq .floor-char-torso::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 5px;
+      width: 6px;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.35);
+      border-radius: 0;
+    }
+
+    .floor-char-extra--hood {
+      position: absolute;
+      top: 0;
+      left: 5px;
+      width: 18px;
+      height: 12px;
+      border: 2px solid var(--dept-color);
+      border-bottom: none;
+      border-radius: 3px 3px 0 0;
+      opacity: 0.7;
+    }
+
+    .floor-char-extra--hat {
+      position: absolute;
+      top: 0;
+      left: 4px;
+      width: 20px;
+      height: 3px;
+      background: var(--dept-color);
+      opacity: 0.85;
+    }
+
+    .floor-char-extra--mail {
+      position: absolute;
+      top: 14px;
+      right: -2px;
+      width: 7px;
+      height: 5px;
+      background: #f80;
+      border-radius: 0;
+      box-shadow: 0 0 4px #f80;
+    }
+
+    .floor-char-extra--crown {
+      position: absolute;
+      top: 0;
+      left: 7px;
+      width: 14px;
+      height: 4px;
+      background: linear-gradient(90deg, #a80, #fa6, #a80);
+      clip-path: polygon(0 100%, 25% 0, 50% 100%, 75% 0, 100% 100%);
+    }
+
+    .floor-char--active {
+      animation: floor-char-bounce 0.9s ease-in-out infinite;
+      filter: drop-shadow(0 0 5px var(--dept-color));
+    }
+
+    .floor-char--active .floor-char-head,
+    .floor-char--active .floor-char-torso {
+      opacity: 1;
+    }
+
+    .floor-char--idle {
+      filter: brightness(0.55) saturate(0.45);
+    }
+
+    .floor-char--offline {
+      filter: grayscale(1) brightness(0.35);
+    }
+
+    .floor-char:hover {
+      filter: brightness(1.2) drop-shadow(0 0 6px var(--dept-color)) !important;
+      transform: scale(1.08);
       animation: none !important;
     }
 
-    @keyframes floor-bounce {
+    @keyframes floor-char-bounce {
       0%, 100% { transform: translateY(0); }
       50% { transform: translateY(-2px); }
     }
 
-    .floor-sprite-slot--hq .floor-sprite--active {
-      filter: brightness(1.1) drop-shadow(0 0 4px #0f6);
-    }
-
-    .floor-sprite-slot--ener .floor-sprite--active {
-      filter: brightness(1.1) drop-shadow(0 0 4px #a0f);
-    }
-
-    .floor-sprite-slot--tech .floor-sprite--active {
-      filter: brightness(1.1) drop-shadow(0 0 4px #0cf);
-    }
-
-    .floor-sprite-slot--intel .floor-sprite--active {
-      filter: brightness(1.1) drop-shadow(0 0 4px #ff0);
-    }
-
-    .floor-sprite-slot--ops .floor-sprite--active {
-      filter: brightness(1.1) drop-shadow(0 0 4px #f80);
-    }
-
-    .floor-sprite-slot--exec .floor-sprite--active {
-      filter: brightness(1.1) drop-shadow(0 0 4px #fa6);
+    .floor-char-slot .floor-run-badge {
+      top: -2px;
+      right: 2px;
     }
 
     .floor-run-badge {
