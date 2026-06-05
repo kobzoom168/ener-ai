@@ -292,6 +292,7 @@
       }
       #panel-code .code-project-item:hover { background: #1e1e2e; }
       #panel-code .code-project-item.active { background: #2a1a3e; color: #c084fc; }
+      #panel-code .code-project-arrow { font-size: 9px; color: #555; width: 10px; flex-shrink: 0; }
       #panel-code .code-project-icon { font-size: 13px; flex-shrink: 0; }
       #panel-code .code-project-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       #panel-code .code-project-delete {
@@ -307,25 +308,9 @@
       }
       #panel-code .code-project-item:hover .code-project-delete { display: block; }
       #panel-code .code-project-delete:hover { color: #f87171; }
-      /* Files section */
-      #panel-code .code-files-section {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        min-height: 0;
-        overflow: hidden;
-      }
-      #panel-code .code-files-header {
-        display: flex;
-        align-items: center;
-        padding: 6px 8px 6px 12px;
-        font-size: 11px;
-        color: #888;
-        border-bottom: 1px solid #2a2a2a;
-        flex-shrink: 0;
-        gap: 4px;
-      }
-      #panel-code .code-files-header span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      /* Inline file tree under each project */
+      #panel-code .code-project-files { padding: 2px 0; }
+      #panel-code .code-project-files .code-tree-item { margin-left: 8px; }
     </style>
       <div id="code-toolbar" class="code-toolbar">
         <div class="code-toolbar-left">
@@ -372,22 +357,12 @@
 
       <div class="code-ide-body">
         <div id="code-explorer" class="code-explorer">
-          <!-- Projects list -->
-          <div class="code-projects-section">
-            <div class="code-projects-header">
-              <span class="code-projects-label">Projects</span>
-              <button type="button" id="btn-new-project" class="code-btn-add" title="New project">+</button>
-            </div>
-            <div id="code-projects-list" class="code-projects-list">
-              <div class="code-explorer-empty">Loading...</div>
-            </div>
+          <div class="code-projects-header">
+            <span class="code-projects-label">Projects</span>
+            <button type="button" id="btn-new-project" class="code-btn-add" title="New project">+</button>
           </div>
-          <!-- File tree (shown when project selected) -->
-          <div id="code-files-section" class="code-files-section" style="display:none">
-            <div class="code-files-header">
-              <span id="code-explorer-project-name">project</span>
-            </div>
-            <div id="code-explorer-tree" class="code-explorer-tree"></div>
+          <div id="code-projects-list" class="code-projects-list">
+            <div class="code-explorer-empty">Loading...</div>
           </div>
         </div>
 
@@ -583,50 +558,110 @@
           const res = await fetch('/workspace/code/projects');
           const d = await res.json();
           const projects = d.projects || [];
-          // Update hidden select (for backward compat)
           const sel = document.getElementById('code-project-select');
           if (sel) {
             sel.innerHTML = '<option value="">-- Select project --</option>' +
               projects.map(p => `<option value="${p.name}">${p.name}</option>`).join('');
             if (currentProject) sel.value = currentProject;
           }
-          // Render folder list
           const list = document.getElementById('code-projects-list');
           if (!list) return;
           if (!projects.length) {
             list.innerHTML = '<div class="code-explorer-empty" style="padding:12px 16px">No projects yet</div>';
             return;
           }
+          // Keep expanded state across reload
+          const wasOpen = currentProject;
           list.innerHTML = projects.map(p => `
-            <div class="code-project-item${currentProject === p.name ? ' active' : ''}" data-name="${p.name}">
+            <div class="code-project-item${wasOpen === p.name ? ' active' : ''}" data-name="${p.name}">
+              <span class="code-project-arrow">${wasOpen === p.name ? '▼' : '▶'}</span>
               <span class="code-project-icon">${p.has_git ? '📦' : '📁'}</span>
               <span class="code-project-name">${p.name}</span>
               <button type="button" class="code-project-delete" title="Delete project">×</button>
-            </div>`).join('');
+            </div>
+            <div class="code-project-files" data-project="${p.name}" style="display:${wasOpen === p.name ? 'block' : 'none'}"></div>`).join('');
           list.querySelectorAll('.code-project-item').forEach(item => {
-            item.addEventListener('click', () => selectProject(item.dataset.name));
+            item.addEventListener('click', () => toggleProject(item.dataset.name));
             item.querySelector('.code-project-delete').addEventListener('click', (e) => {
               e.stopPropagation();
               deleteProject(item.dataset.name);
             });
           });
+          // Re-render files for open project
+          if (wasOpen) {
+            const filesDiv = list.querySelector(`.code-project-files[data-project="${wasOpen}"]`);
+            if (filesDiv && !filesDiv.dataset.loaded) await loadFilesInto(wasOpen, filesDiv);
+          }
         } catch (e) {
           codeToast('❌ ' + (e.message || 'Failed to load projects'));
         }
       }
 
-      async function selectProject(name) {
-        currentProject = name;
-        const sel = document.getElementById('code-project-select');
-        if (sel) sel.value = name;
-        document.querySelectorAll('.code-project-item').forEach(el => {
-          el.classList.toggle('active', el.dataset.name === name);
+      async function toggleProject(name) {
+        const item = document.querySelector(`.code-project-item[data-name="${name}"]`);
+        const filesDiv = document.querySelector(`.code-project-files[data-project="${name}"]`);
+        if (!item || !filesDiv) return;
+        const isOpen = filesDiv.style.display !== 'none';
+        if (isOpen) {
+          filesDiv.style.display = 'none';
+          item.querySelector('.code-project-arrow').textContent = '▶';
+          item.classList.remove('active');
+          if (currentProject === name) currentProject = '';
+        } else {
+          // Collapse any other open project
+          document.querySelectorAll('.code-project-files').forEach(d => { d.style.display = 'none'; });
+          document.querySelectorAll('.code-project-item').forEach(i => {
+            i.classList.remove('active');
+            i.querySelector('.code-project-arrow').textContent = '▶';
+          });
+          filesDiv.style.display = 'block';
+          item.querySelector('.code-project-arrow').textContent = '▼';
+          item.classList.add('active');
+          currentProject = name;
+          const sel = document.getElementById('code-project-select');
+          if (sel) sel.value = name;
+          if (!filesDiv.dataset.loaded) await loadFilesInto(name, filesDiv);
+        }
+      }
+
+      async function loadFilesInto(project, container) {
+        container.innerHTML = '<div class="code-explorer-empty">Loading...</div>';
+        try {
+          const res = await fetch('/workspace/code/tree?project=' + encodeURIComponent(project));
+          if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || res.statusText); }
+          const d = await res.json();
+          container.dataset.loaded = '1';
+          renderTreeInto(d.tree || [], container);
+        } catch (e) {
+          container.innerHTML = '<div class="code-explorer-empty">Error loading</div>';
+        }
+      }
+
+      function renderTreeInto(items, container) {
+        if (!container) return;
+        if (!items || !items.length) {
+          container.innerHTML = '<div class="code-explorer-empty" style="padding:4px 14px">Empty project</div>';
+          return;
+        }
+        const sorted = [...items].sort((a, b) => {
+          if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
+          return a.path.localeCompare(b.path);
         });
-        const filesSection = document.getElementById('code-files-section');
-        if (filesSection) filesSection.style.display = 'flex';
-        const projName = document.getElementById('code-explorer-project-name');
-        if (projName) projName.textContent = name;
-        await loadExplorer(name);
+        let html = '';
+        sorted.forEach(item => {
+          const indent = 14 + Math.max(0, (item.depth - 1) * 14);
+          const icon = item.type === 'dir' ? '📁' : fileIcon(item.ext);
+          const cls = item.type === 'dir' ? 'code-tree-dir' : 'code-tree-file';
+          const pathEsc = item.path.replace(/'/g, "\\'");
+          const click = item.type === 'dir' ? `toggleFolder(this)` : `loadEnerFile('${pathEsc}')`;
+          const display = item.depth > 1 ? ' style="display:none"' : '';
+          html += `<div class="code-tree-item ${cls}" data-path="${item.path}" data-depth="${item.depth}" style="padding-left:${indent}px"${display} onclick="${click}">${icon} ${item.name}</div>`;
+        });
+        container.innerHTML = html;
+      }
+
+      async function selectProject(name) {
+        await toggleProject(name);
       }
 
       async function deleteProject(name) {
@@ -656,19 +691,10 @@
       async function loadExplorer(project) {
         if (!project) return;
         currentProject = project;
-        const tree = document.getElementById('code-explorer-tree');
-        if (tree) tree.innerHTML = '<div class="code-explorer-empty">Loading...</div>';
-        try {
-          const res = await fetch('/workspace/code/tree?project=' + encodeURIComponent(project));
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.detail || res.statusText);
-          }
-          const d = await res.json();
-          renderTree(d.tree || []);
-        } catch (e) {
-          if (tree) tree.innerHTML = '<div class="code-explorer-empty">Error loading tree</div>';
-          codeToast('❌ ' + (e.message || 'Failed to load explorer'));
+        const filesDiv = document.querySelector(`.code-project-files[data-project="${project}"]`);
+        if (filesDiv) {
+          filesDiv.dataset.loaded = '';
+          await loadFilesInto(project, filesDiv);
         }
       }
 
@@ -748,7 +774,7 @@
           }
           document.getElementById('modal-new-project').style.display = 'none';
           await loadProjects();
-          await selectProject(projectName);
+          await toggleProject(projectName);
           codeToast('✅ Project created: ' + projectName);
         } catch (e) {
           codeToast('❌ ' + (e.message || 'Create project failed'));
