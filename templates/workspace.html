@@ -28,7 +28,7 @@
       },
     };
   </script>
-  <link rel="stylesheet" href="/static/workspace/workspace.css?v=office-map2">
+  <link rel="stylesheet" href="/static/workspace/workspace.css?v=office-dark1">
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" crossorigin="anonymous">
   <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
@@ -600,19 +600,21 @@
     }
     @media (max-width: 768px) { #workspace-sidebar { display: none; } }
 
-    .office-body { display:flex; gap:0; overflow:hidden; flex:1; min-height:0; }
-    .office-map-left { flex-shrink:0; overflow-y:auto; padding:8px; }
-    .office-right { flex:1; min-width:280px; max-width:340px; }
+    #panel-office { background:#060608; }
+    #panel-office .panel-header { background:#08080c; border-color:#1a1a22; }
+    .office-body { display:flex; gap:0; overflow:hidden; flex:1; min-height:0; background:#060608; }
+    .office-map-left { flex-shrink:0; overflow-y:auto; padding:8px; background:#060608; }
+    .office-right { flex:1; min-width:280px; max-width:340px; background:#08080c; }
 
     .agent-pill {
       font-size:9px; padding:2px 7px; border-radius:10px; cursor:pointer;
       font-family:'Courier New',monospace; border:1px solid;
-      transition: opacity 0.2s;
+      transition: opacity 0.2s; background:#0c0c10;
     }
-    .agent-pill--active  { background:#0a2a18; border-color:#00ff88; color:#00ff88; }
-    .agent-pill--idle    { background:#1a1a08; border-color:#ffaa00; color:#ffaa00; }
-    .agent-pill--offline { background:#111; border-color:#333; color:#444; }
-    .agent-pill:hover { opacity:0.7; }
+    .agent-pill--active  { background:#081810; border-color:#00cc66; color:#00cc66; }
+    .agent-pill--idle    { background:#101008; border-color:#886600; color:#aa8800; }
+    .agent-pill--offline { background:#080808; border-color:#222; color:#333; }
+    .agent-pill:hover { opacity:0.75; }
   </style>
 </head>
 <body>
@@ -876,7 +878,7 @@
 </script>
 <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 <script src="/static/workspace/workspace-markdown.js?v=openrouter10"></script>
-<script src="/static/workspace/workspace.js?v=office-map2"></script>
+<script src="/static/workspace/workspace.js?v=office-dark1"></script>
 <script>
   document.addEventListener('DOMContentLoaded', function() {
     if (window.lucide) lucide.createIcons();

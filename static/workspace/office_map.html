@@ -5,9 +5,9 @@
 <title>Ener-AI HQ</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#1a1c2e;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:'Courier New',monospace}
-#wrap{border:2px solid #2a3040;border-radius:6px;overflow:hidden;box-shadow:0 8px 40px rgba(0,0,0,0.5)}
-#topbar{background:#12141e;border-bottom:1px solid #1e2230;padding:6px 14px;display:flex;justify-content:space-between;align-items:center}
+body{background:#060608;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:'Courier New',monospace}
+#wrap{border:2px solid #1a1a22;border-radius:6px;overflow:hidden;box-shadow:0 8px 40px rgba(0,0,0,0.8);background:#08080c}
+#topbar{background:#0a0a0e;border-bottom:1px solid #181820;padding:6px 14px;display:flex;justify-content:space-between;align-items:center}
 .title{color:#4af;font-weight:bold;font-size:13px;letter-spacing:2px;text-shadow:0 0 8px rgba(68,170,255,0.6)}
 .stats{color:#7888a0;display:flex;gap:16px;font-size:11px}
 #gc{display:block;cursor:default}
@@ -47,20 +47,20 @@ body{background:#1a1c2e;display:flex;flex-direction:column;align-items:center;ju
 <script>
 const C=document.getElementById('gc'),ctx=C.getContext('2d');
 const W=760,H=500;
-let tick=0,night=false,sel=null;
+let tick=0,night=true,sel=null;
 let fC=0,fps=60,fT=performance.now(),evts=0;
 let routes=[],parts=[],floats=[];
 let chatLines=['[System] ENER-AI HQ ออนไลน์!','[เลขา] พร้อมกระจายงานค่ะ','[Boss] ลุยกันเต็มที่นะ!'];
 
 // ── ROOMS ────────────────────────────────────────────────────────
 const ROOMS=[
-  {id:'hq',    name:'HQ Dept',     x:8,   y:8,   w:178,h:148, clr:'#00ff88', bgL:'#d2f5e2', bgD:'#06160e', wallL:'#80d8a8', wallD:'#0a3a22'},
-  {id:'ener',  name:'Ener Scan',   x:194, y:8,   w:192,h:148, clr:'#aa44ff', bgL:'#ecd8f8', bgD:'#140822', wallL:'#c088e0', wallD:'#2a0a48'},
-  {id:'tech',  name:'Tech Dept',   x:394, y:8,   w:178,h:148, clr:'#00ccff', bgL:'#d2eef8', bgD:'#06141e', wallL:'#80c8e0', wallD:'#0a3048'},
-  {id:'intel', name:'Intelligence',x:580, y:8,   w:172,h:148, clr:'#ffee00', bgL:'#f8f4d0', bgD:'#161400', wallL:'#d8d070', wallD:'#3a3600'},
-  {id:'ops',   name:'Operations',  x:8,   y:300, w:178,h:148, clr:'#ff8800', bgL:'#f8e8d0', bgD:'#1a0f00', wallL:'#d8a868', wallD:'#3a2400'},
-  {id:'exec',  name:'Executive',   x:194, y:300, w:192,h:148, clr:'#ffaa44', bgL:'#f8ecd8', bgD:'#1a1206', wallL:'#d8b878', wallD:'#3a2a10'},
-  {id:'meet',  name:'War Room',    x:394, y:300, w:178,h:148, clr:'#3858c0', bgL:'#d8ddf5', bgD:'#0a0e1e', wallL:'#7888d0', wallD:'#141d50'},
+  {id:'hq',    name:'HQ Dept',     x:8,   y:8,   w:178,h:148, clr:'#00ff88', bgL:'#08120c', bgD:'#040a06', wallL:'#0a3a22', wallD:'#061810'},
+  {id:'ener',  name:'Ener Scan',   x:194, y:8,   w:192,h:148, clr:'#aa44ff', bgL:'#120818', bgD:'#0a040e', wallL:'#2a0a48', wallD:'#180828'},
+  {id:'tech',  name:'Tech Dept',   x:394, y:8,   w:178,h:148, clr:'#00ccff', bgL:'#081018', bgD:'#040810', wallL:'#0a3048', wallD:'#061420'},
+  {id:'intel', name:'Intelligence',x:580, y:8,   w:172,h:148, clr:'#ffee00', bgL:'#141008', bgD:'#0a0800', wallL:'#3a3600', wallD:'#201800'},
+  {id:'ops',   name:'Operations',  x:8,   y:300, w:178,h:148, clr:'#ff8800', bgL:'#140c04', bgD:'#0a0600', wallL:'#3a2400', wallD:'#241400'},
+  {id:'exec',  name:'Executive',   x:194, y:300, w:192,h:148, clr:'#ffaa44', bgL:'#120c06', bgD:'#0a0804', wallL:'#3a2a10', wallD:'#241808'},
+  {id:'meet',  name:'War Room',    x:394, y:300, w:178,h:148, clr:'#3858c0', bgL:'#0a0c18', bgD:'#060810', wallL:'#141d50', wallD:'#0a1028'},
 ];
 const rMap={};ROOMS.forEach(r=>{rMap[r.id]=r;});
 
@@ -713,19 +713,15 @@ setTimeout(()=>{AGENTS.forEach(a=>{a.bubbleTxt=a.currentTask;a.bubbleTimer=120;}
 
 // ── BACKGROUND ────────────────────────────────────────────────────
 function drawBg(){
-  // Office building exterior / hallway
-  ctx.fillStyle=night?'#0e1018':'#c0ccd8';
+  ctx.fillStyle='#08080c';
   ctx.fillRect(0,0,W,H);
-  // Hallway between rows
-  ctx.fillStyle=night?'#0c0e16':'#b0bcc8';
+  ctx.fillStyle='#060608';
   ctx.fillRect(0,156,W,144);
-  // Hallway center stripe
-  ctx.strokeStyle=night?'#181a28':'#a0acb8';
+  ctx.strokeStyle='#141418';
   ctx.lineWidth=1;ctx.setLineDash([16,12]);
   ctx.beginPath();ctx.moveTo(0,228);ctx.lineTo(W,228);ctx.stroke();
   ctx.setLineDash([]);
-  // Small carpet squares in hallway
-  ctx.fillStyle=night?'#0f1120':'#b8c4d4';
+  ctx.fillStyle='#0a0a0e';
   for(let x=20;x<W;x+=120)ctx.fillRect(x,175,80,60);
 }
 

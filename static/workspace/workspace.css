@@ -272,6 +272,16 @@
       flex: none;
       flex-shrink: 0;
       padding: 8px;
+      background: #060608;
+    }
+
+    #panel-office .office-map-left iframe {
+      background: #08080c;
+      box-shadow: 0 0 0 1px #1a1a22, 0 4px 24px rgba(0, 0, 0, 0.6);
+    }
+
+    #panel-office #office-agent-pills {
+      background: #060608;
     }
 
     #panel-office .office-left .office-agents-inner {
