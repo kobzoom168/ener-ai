@@ -7032,6 +7032,279 @@ async def workspace_code_git_log(request: Request):
         return JSONResponse({"commits": [], "error": str(exc)})
 
 
+BASE_ENER_CODE = "/root/ener-code"
+_ENER_CODE_SKIP_DIRS = {
+    ".git", "__pycache__", "node_modules", ".venv", "dist", "build", ".next",
+}
+_ENER_CODE_ALLOWED_SUFFIXES = (
+    ".py", ".js", ".ts", ".jsx", ".tsx", ".json", ".yaml", ".yml",
+    ".md", ".txt", ".sh", ".env.example", ".html", ".css",
+)
+_ENER_CODE_MAX_FILE_BYTES = 500 * 1024
+_ENER_CODE_PROJECT_RE = re.compile(r"^[a-z0-9-]{1,40}$")
+
+
+def _ener_code_allowed_file(name: str) -> bool:
+    return any(name.endswith(suffix) for suffix in _ENER_CODE_ALLOWED_SUFFIXES)
+
+
+def _ener_code_resolve(rel: str) -> str:
+    import os
+
+    full = os.path.normpath(os.path.join(BASE_ENER_CODE, rel))
+    if not full.startswith(BASE_ENER_CODE):
+        raise HTTPException(400, "invalid path")
+    return full
+
+
+def _ener_code_project_dir(project: str) -> str:
+    import os
+
+    if not _ENER_CODE_PROJECT_RE.match(project or ""):
+        raise HTTPException(400, "invalid project name")
+    full = os.path.normpath(os.path.join(BASE_ENER_CODE, project))
+    if not full.startswith(BASE_ENER_CODE):
+        raise HTTPException(400, "invalid project name")
+    if not os.path.isdir(full):
+        raise HTTPException(404, "project not found")
+    return full
+
+
+@app.get("/workspace/code/projects")
+async def workspace_code_projects(request: Request):
+    await _require_admin(request)
+    import os
+
+    os.makedirs(BASE_ENER_CODE, exist_ok=True)
+    projects = []
+    for name in sorted(os.listdir(BASE_ENER_CODE)):
+        if name.startswith(".") or name in {"__pycache__"}:
+            continue
+        full = os.path.join(BASE_ENER_CODE, name)
+        if not os.path.isdir(full):
+            continue
+        projects.append({
+            "name": name,
+            "path": name,
+            "has_git": os.path.exists(os.path.join(full, ".git")),
+        })
+    return JSONResponse({"projects": projects})
+
+
+@app.get("/workspace/code/tree")
+async def workspace_code_tree(request: Request, project: str = ""):
+    await _require_admin(request)
+    import os
+
+    project_root = _ener_code_project_dir(project)
+    tree = []
+    file_count = 0
+    max_files = 500
+    max_depth = 5
+
+    for root, dirs, files in os.walk(project_root):
+        rel_root = os.path.relpath(root, project_root)
+        depth = 0 if rel_root == "." else rel_root.count(os.sep) + 1
+        if depth >= max_depth:
+            dirs.clear()
+            continue
+        dirs[:] = sorted(
+            d for d in dirs
+            if d not in _ENER_CODE_SKIP_DIRS and not d.startswith(".")
+        )
+        for d in dirs:
+            rel_path = (
+                f"{project}/{d}" if rel_root == "."
+                else f"{project}/{rel_root}/{d}".replace("\\", "/")
+            )
+            tree.append({
+                "type": "dir",
+                "name": d,
+                "path": rel_path,
+                "depth": depth + 1,
+            })
+        for f in sorted(files):
+            if not _ener_code_allowed_file(f):
+                continue
+            if file_count >= max_files:
+                break
+            rel_path = (
+                f"{project}/{f}" if rel_root == "."
+                else f"{project}/{rel_root}/{f}".replace("\\", "/")
+            )
+            ext = f.rsplit(".", 1)[-1] if "." in f else ""
+            if f.endswith(".env.example"):
+                ext = "env.example"
+            tree.append({
+                "type": "file",
+                "name": f,
+                "path": rel_path,
+                "depth": depth + 1,
+                "ext": ext,
+            })
+            file_count += 1
+        if file_count >= max_files:
+            break
+
+    return JSONResponse({"project": project, "tree": tree})
+
+
+@app.get("/workspace/code/enerfile")
+async def workspace_code_enerfile(request: Request, path: str = ""):
+    await _require_admin(request)
+    import os
+
+    if not path:
+        raise HTTPException(400, "path required")
+    full = _ener_code_resolve(path)
+    if not os.path.isfile(full):
+        raise HTTPException(404, "file not found")
+    size = os.path.getsize(full)
+    if size > _ENER_CODE_MAX_FILE_BYTES:
+        raise HTTPException(400, "file too large")
+    try:
+        with open(full, "r", encoding="utf-8") as fh:
+            content = fh.read()
+    except UnicodeDecodeError:
+        raise HTTPException(400, "file is not valid utf-8 text")
+    lines = content.splitlines()
+    ext = os.path.basename(full).rsplit(".", 1)[-1] if "." in os.path.basename(full) else ""
+    if os.path.basename(full).endswith(".env.example"):
+        ext = "env.example"
+    return JSONResponse({
+        "path": path.replace("\\", "/"),
+        "content": content,
+        "lines": len(lines),
+        "size": len(content),
+        "ext": ext,
+    })
+
+
+@app.post("/workspace/code/enerwrite")
+async def workspace_code_enerwrite(request: Request):
+    await _require_admin(request)
+    import os
+
+    body = await request.json()
+    rel = (body.get("path") or "").strip()
+    content = body.get("content", "")
+    if not rel:
+        raise HTTPException(400, "path required")
+    full = _ener_code_resolve(rel)
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    with open(full, "w", encoding="utf-8") as fh:
+        fh.write(content)
+    lines = content.splitlines()
+    return JSONResponse({"ok": True, "path": rel.replace("\\", "/"), "lines": len(lines)})
+
+
+@app.post("/workspace/code/project/create")
+async def workspace_code_project_create(request: Request):
+    await _require_admin(request)
+    import os
+
+    body = await request.json()
+    name = (body.get("name") or "").strip().lower()
+    git_init = bool(body.get("git_init", False))
+    template = (body.get("template") or "empty").strip().lower()
+    if not _ENER_CODE_PROJECT_RE.match(name):
+        raise HTTPException(400, "invalid project name (a-z0-9- only, max 40 chars)")
+    if template not in {"python", "node", "empty"}:
+        raise HTTPException(400, "invalid template")
+    os.makedirs(BASE_ENER_CODE, exist_ok=True)
+    project_dir = os.path.join(BASE_ENER_CODE, name)
+    if os.path.exists(project_dir):
+        raise HTTPException(409, "project already exists")
+
+    os.makedirs(project_dir)
+
+    python_gitignore = "__pycache__/\n*.pyc\n.venv/\n.env\n"
+    node_gitignore = "node_modules/\n.env\ndist/\nbuild/\n"
+
+    if template == "python":
+        with open(os.path.join(project_dir, "main.py"), "w", encoding="utf-8") as fh:
+            fh.write('"""Entry point."""\n\n\ndef main():\n    print("Hello from Ener-AI project")\n\n\nif __name__ == "__main__":\n    main()\n')
+        with open(os.path.join(project_dir, "requirements.txt"), "w", encoding="utf-8") as fh:
+            fh.write("# Add dependencies here\n")
+        if git_init:
+            with open(os.path.join(project_dir, ".gitignore"), "w", encoding="utf-8") as fh:
+                fh.write(python_gitignore)
+    elif template == "node":
+        with open(os.path.join(project_dir, "index.js"), "w", encoding="utf-8") as fh:
+            fh.write('console.log("Hello from Ener-AI project");\n')
+        with open(os.path.join(project_dir, "package.json"), "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({
+                "name": name,
+                "version": "1.0.0",
+                "private": True,
+                "main": "index.js",
+                "scripts": {"start": "node index.js"},
+            }, indent=2) + "\n")
+        if git_init:
+            with open(os.path.join(project_dir, ".gitignore"), "w", encoding="utf-8") as fh:
+                fh.write(node_gitignore)
+    elif git_init:
+        with open(os.path.join(project_dir, ".gitignore"), "w", encoding="utf-8") as fh:
+            fh.write(python_gitignore)
+
+    if git_init:
+        subprocess.run(
+            ["git", "init"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    return JSONResponse({"ok": True, "project": name, "path": project_dir})
+
+
+@app.post("/workspace/code/git")
+async def workspace_code_git(request: Request):
+    await _require_admin(request)
+    import os
+
+    body = await request.json()
+    project = (body.get("project") or "").strip()
+    cmd = (body.get("cmd") or "").strip().lower()
+    message = (body.get("message") or "").strip()
+    cwd = _ener_code_project_dir(project)
+
+    if cmd == "status":
+        args = ["git", "status", "--short"]
+    elif cmd == "log":
+        args = ["git", "log", "--oneline", "-10"]
+    elif cmd == "diff":
+        args = ["git", "diff", "--stat"]
+    elif cmd == "add":
+        args = ["git", "add", "-A"]
+    elif cmd == "commit":
+        if not message:
+            raise HTTPException(400, "commit message required")
+        args = ["git", "commit", "-m", message]
+    elif cmd == "push":
+        remote = subprocess.run(
+            ["git", "remote"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if not remote.stdout.strip():
+            raise HTTPException(400, "no git remote configured — cannot push")
+        args = ["git", "push"]
+    elif cmd == "pull":
+        args = ["git", "pull"]
+    else:
+        raise HTTPException(400, "invalid git command")
+
+    result = subprocess.run(args, cwd=cwd, capture_output=True, text=True, check=False)
+    output = (result.stdout or "") + (result.stderr or "")
+    if result.returncode != 0:
+        raise HTTPException(400, output.strip() or f"git {cmd} failed")
+    return JSONResponse({"ok": True, "output": output.strip(), "cmd": cmd})
+
+
 @app.get("/workspace/code/folder")
 async def workspace_code_folder(request: Request, path: str = "app"):
     await _require_admin(request)

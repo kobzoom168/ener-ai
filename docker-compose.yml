@@ -11,6 +11,7 @@ services:
       - ./backups:/app/backups
       - /root/.codex:/root/.codex
       - /root/ener-ai:/root/ener-ai
+      - /root/ener-code:/root/ener-code
       - /root/ener-scan:/root/ener-scan:ro
       - /root/ener-scan-pro:/root/ener-scan-pro:ro
       - /var/run/docker.sock:/var/run/docker.sock
