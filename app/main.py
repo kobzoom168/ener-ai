@@ -7399,6 +7399,7 @@ async def workspace_code_agent_stream(request: Request):
     ][-12:]
 
     async def generate():
+        import os
         MAX_REPAIR = 3
         repair_iter = 0
         conv_messages = clean_history[:]
