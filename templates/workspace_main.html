@@ -220,18 +220,29 @@
         height: auto;
         overflow: hidden;
       }
+      #panel-code .chat-resize-handle {
+        width: 5px;
+        background: #1e1e1e;
+        cursor: col-resize;
+        flex-shrink: 0;
+        transition: background 0.15s;
+        position: relative;
+        z-index: 2;
+      }
+      #panel-code .chat-resize-handle:hover,
+      #panel-code .chat-resize-handle.dragging { background: #7c3aed; }
       #panel-code .code-chat-column {
         display: flex;
         flex-direction: column;
-        width: 360px;
-        min-width: 360px;
-        max-width: 360px;
+        width: 400px;
+        min-width: 280px;
+        max-width: 650px;
         flex-shrink: 0;
         min-height: 0;
         height: 100%;
         overflow: hidden;
         background: #111114;
-        border-left: 1px solid #2a2a2a;
+        border-left: none;
       }
       #panel-code #code-chat-messages.code-chat-messages {
         flex: 1 1 0;
@@ -354,6 +365,58 @@
       #panel-code .code-exec-cmd { font-size:11px; padding:4px 8px; background:#111; color:#aaa; }
       #panel-code .code-exec-cmd code { color:#7dd3fc; }
       #panel-code .code-exec-output { font-size:10px; margin:0; padding:4px 8px; background:#0a0a0a; color:#ccc; white-space:pre-wrap; word-break:break-all; max-height:120px; overflow-y:auto; border-top:1px solid #1a1a1a; }
+      /* Claude Code–style chat input */
+      #panel-code .code-chat-input-area { padding:8px 10px 10px; flex-shrink:0; }
+      #panel-code .code-chat-input-box {
+        background: #1a1a20;
+        border: 1.5px solid #333;
+        border-radius: 12px;
+        padding: 10px 12px 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        transition: border-color 0.15s;
+      }
+      #panel-code .code-chat-input-box:focus-within { border-color: #7c3aed; }
+      #panel-code #code-question-input {
+        background: none;
+        border: none;
+        outline: none;
+        color: #e2e8f0;
+        font-size: 13px;
+        resize: none;
+        min-height: 48px;
+        max-height: 200px;
+        overflow-y: auto;
+        line-height: 1.55;
+        font-family: inherit;
+        width: 100%;
+        scrollbar-width: thin;
+      }
+      #panel-code #code-question-input::placeholder { color: #444; }
+      #panel-code .code-chat-input-bottom {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      #panel-code .code-chat-input-hint { font-size:10px; color:#3a3a4a; }
+      #panel-code .code-chat-send {
+        background: #7c3aed;
+        border: none;
+        color: #fff;
+        width: 30px;
+        height: 30px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        transition: background 0.15s;
+      }
+      #panel-code .code-chat-send:hover { background: #6d28d9; }
+      #panel-code .code-chat-send:disabled { background: #2a2a2a; color: #444; cursor: not-allowed; }
     </style>
       <div id="code-toolbar" class="code-toolbar">
         <div class="code-toolbar-left">
@@ -413,6 +476,7 @@
           <div id="monaco-container" class="code-monaco-wrap"></div>
         </div>
 
+        <div id="chat-resize-handle" class="chat-resize-handle" title="ลากเพื่อปรับขนาด"></div>
         <div id="code-chat-column" class="code-chat-column">
           <div style="padding:6px 12px 4px;font-size:12px;color:#999;border-bottom:1px solid #333;flex-shrink:0;display:flex;align-items:center;gap:8px">
             <div style="flex:1;display:flex;flex-direction:column;gap:2px;min-width:0">
@@ -431,9 +495,12 @@
             <button type="button" class="code-preset-btn" data-preset="ทดสอบ project นี้บน server ใช้ EXEC_CMD เพื่อ: 1) เช็ค syntax ทุก .py ด้วย python -m py_compile 2) เช็ค imports ด้วย python -c 3) แสดงไฟล์ทั้งหมด แล้วสรุปว่า project พร้อม deploy ไหม">🔬 Test</button>
           </div>
           <div class="code-chat-input-area">
-            <div class="code-chat-input-row">
-              <input id="code-question-input" type="text" placeholder="ถามเกี่ยวกับ code..." class="code-chat-input">
-              <button type="button" id="btn-code-send" class="code-chat-send">↑</button>
+            <div class="code-chat-input-box">
+              <textarea id="code-question-input" rows="2" placeholder="ถามเกี่ยวกับ code... (Enter ส่ง, Shift+Enter ขึ้นบรรทัดใหม่)"></textarea>
+              <div class="code-chat-input-bottom">
+                <span class="code-chat-input-hint">Enter ส่ง · Shift+Enter บรรทัดใหม่</span>
+                <button type="button" id="btn-code-send" class="code-chat-send">↑</button>
+              </div>
             </div>
           </div>
           <div id="code-token-counter" class="code-token-counter">
@@ -1007,7 +1074,7 @@
         const input = document.getElementById('code-question-input');
         const question = preset || (input ? input.value.trim() : '');
         if (!question) return;
-        if (input && !preset) input.value = '';
+        if (input && !preset) { input.value = ''; input.style.height = 'auto'; }
         const modelSelect = document.getElementById('code-model-select');
         const selectedModel = modelSelect ? modelSelect.value : 'featherless-coder';
         const msgs = document.getElementById('code-chat-messages');
@@ -1161,9 +1228,45 @@
           btn.addEventListener('click', () => askCodeAI(btn.getAttribute('data-preset')));
         });
         document.getElementById('btn-code-send')?.addEventListener('click', () => askCodeAI());
-        document.getElementById('code-question-input')?.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') askCodeAI();
-        });
+        const _qi = document.getElementById('code-question-input');
+        if (_qi) {
+          _qi.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); askCodeAI(); }
+          });
+          _qi.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+          });
+        }
+        // Drag-to-resize chat column
+        (function() {
+          const handle = document.getElementById('chat-resize-handle');
+          const chatCol = document.getElementById('code-chat-column');
+          if (!handle || !chatCol) return;
+          let dragging = false, startX = 0, startW = 0;
+          try {
+            const saved = parseInt(localStorage.getItem('ener-chat-width'));
+            if (saved >= 280 && saved <= 650) { chatCol.style.width = saved + 'px'; chatCol.style.minWidth = saved + 'px'; chatCol.style.maxWidth = saved + 'px'; }
+          } catch(e) {}
+          handle.addEventListener('mousedown', (e) => {
+            dragging = true; startX = e.clientX; startW = chatCol.offsetWidth;
+            handle.classList.add('dragging');
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+            e.preventDefault();
+          });
+          document.addEventListener('mousemove', (e) => {
+            if (!dragging) return;
+            const w = Math.max(280, Math.min(650, startW - (e.clientX - startX)));
+            chatCol.style.width = w + 'px'; chatCol.style.minWidth = w + 'px'; chatCol.style.maxWidth = w + 'px';
+          });
+          document.addEventListener('mouseup', () => {
+            if (!dragging) return;
+            dragging = false; handle.classList.remove('dragging');
+            document.body.style.cursor = ''; document.body.style.userSelect = '';
+            try { localStorage.setItem('ener-chat-width', chatCol.offsetWidth); } catch(e) {}
+          });
+        })();
         document.addEventListener('click', (e) => {
           if (!e.target.closest('#git-dropdown')) {
             const menu = document.getElementById('git-dropdown-menu');
