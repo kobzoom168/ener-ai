@@ -418,6 +418,49 @@
       #panel-code .code-chat-send:hover { background: #6d28d9; }
       #panel-code .code-chat-send:disabled { background: #2a2a2a; color: #444; cursor: not-allowed; }
 
+      /* ── Claude Code style AI response ─────────────────────────────── */
+      .cc-style { padding: 8px 10px; }
+      .cc-think-row { display:flex;align-items:center;gap:6px;padding:4px 0;font-size:12px;color:#888;cursor:default; }
+      .cc-think-row.done .cc-dot-thinking { background:#4a9eff;animation:none; }
+      .cc-think-word { font-style:italic; }
+      .cc-think-tokens { color:#555;font-size:10px; }
+
+      .cc-dot { width:8px;height:8px;border-radius:50%;flex-shrink:0; }
+      .cc-dot-thinking { background:#555;animation:cc-pulse 1.2s ease-in-out infinite; }
+      .cc-dot-running  { background:#f0a500;animation:cc-pulse 0.8s ease-in-out infinite; }
+      .cc-dot-ok  { background:#2ecc71; }
+      .cc-dot-err { background:#e74c3c; }
+      @keyframes cc-pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+      .cc-tool-row { display:flex;align-items:flex-start;gap:6px;padding:3px 0;font-size:12px;flex-wrap:wrap;cursor:pointer; }
+      .cc-tool-label { color:#4a9eff;font-weight:600;white-space:nowrap; }
+      .cc-tool-desc { color:#888;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px; }
+      .cc-tool-toggle { color:#555;font-size:14px;line-height:1;transition:transform 0.15s;margin-left:auto;flex-shrink:0; }
+      .cc-tool-row.open .cc-tool-toggle { transform:rotate(90deg); }
+      .cc-tool-detail { display:none;width:100%;margin:2px 0 4px 14px;font-size:11px;color:#aaa; }
+      .cc-tool-row.open .cc-tool-detail { display:block; }
+      .cc-exec-out { margin:2px 0;font-family:monospace;font-size:10px;color:#888;white-space:pre-wrap;word-break:break-all;max-height:120px;overflow:auto;background:#0a0a12;border-radius:3px;padding:4px 6px; }
+
+      .cc-repair-notice { color:#f0a500;font-size:11px;padding:3px 0 3px 14px;font-style:italic; }
+
+      .cc-response { margin-top:6px;padding-top:6px;border-top:1px solid #1a1a28; }
+      .cc-streaming-text { font-size:12px;color:#ccc;line-height:1.5;white-space:pre-wrap; }
+      .cc-final-text { font-size:12px;color:#ccc;line-height:1.6; }
+
+      /* Diff view */
+      .cc-diff-wrap { font-family:monospace;font-size:10px;border-radius:4px;overflow:hidden;margin:3px 0;border:1px solid #222; }
+      .cc-diff-header { background:#1a1a2e;padding:3px 8px;color:#888;font-size:10px;display:flex;gap:8px; }
+      .cc-diff-table { display:grid;grid-template-columns:1fr 1fr;width:100%; }
+      .cc-diff-col { overflow:auto;max-height:200px; }
+      .cc-diff-col-old { border-right:1px solid #222;background:#130a0a; }
+      .cc-diff-col-new { background:#0a130a; }
+      .cc-diff-col-label { padding:2px 6px;font-size:9px;color:#666;border-bottom:1px solid #1a1a1a; }
+      .cc-diff-line { padding:0 6px;line-height:1.5;white-space:pre;overflow:hidden;text-overflow:ellipsis; }
+      .cc-diff-line.removed { background:#2a0a0a;color:#f66; }
+      .cc-diff-line.added   { background:#0a2a0a;color:#5f5; }
+      .cc-diff-line.same    { color:#555; }
+      .cc-diff-line.new-file { color:#aaa; }
+
       /* Agent Loop */
       .agent-run-wrap { background:#0f0f14;border:1px solid #2a2a3a;border-radius:8px;margin:8px 10px;overflow:hidden;font-size:12px; }
       .agent-run-header { display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:#1a1a24;border-bottom:1px solid #2a2a3a;font-size:13px;font-weight:600;color:#ccc; }
@@ -1114,6 +1157,26 @@
         return history.slice(-12); // last 6 exchanges to limit tokens
       }
 
+      // ── Claude Code-style thinking words ────────────────────────────────────
+      const _THINK_WORDS = [
+        'Thinking','Analyzing','Processing','Schlepping','Pondering',
+        'Working','Reasoning','Coding','Crafting','Computing',
+        'Mustering','Deliberating','Figuring','Considering','Brewing',
+        'Scheming','Calculating','Ruminating','Concocting','Devising',
+      ];
+      let _thinkWordTimer = null;
+      function _startThinkWords(labelEl) {
+        let i = Math.floor(Math.random() * _THINK_WORDS.length);
+        const update = () => {
+          if (!labelEl.isConnected) return;
+          labelEl.textContent = _THINK_WORDS[i % _THINK_WORDS.length] + '...';
+          i++;
+        };
+        update();
+        _thinkWordTimer = setInterval(update, 1800);
+      }
+      function _stopThinkWords() { clearInterval(_thinkWordTimer); _thinkWordTimer = null; }
+
       async function askCodeAI(preset) {
         const input = document.getElementById('code-question-input');
         const question = preset || (input ? input.value.trim() : '');
@@ -1125,7 +1188,7 @@
         if (!msgs) return;
         const fileContent = monacoEditor ? monacoEditor.getValue().substring(0, 8000) : '';
         const history = collectChatHistory();
-        // Collect project file list for AI context
+
         let projectFiles = '';
         if (currentProject) {
           try {
@@ -1136,93 +1199,186 @@
             }
           } catch(e) {}
         }
+
+        // Add user bubble
         msgs.innerHTML += `<div class="code-chat-user">${question.replace(/</g,'&lt;')}</div>`;
-        const thinkId = 'think-' + Date.now();
-        msgs.innerHTML += `<div id="${thinkId}" class="code-chat-thinking">💭 กำลังวิเคราะห์...</div>`;
+
+        // Build AI response container (Claude Code style)
+        const rid = 'ai-' + Date.now();
+        const aiDiv = document.createElement('div');
+        aiDiv.className = 'code-chat-ai cc-style';
+        aiDiv.id = rid;
+        aiDiv.innerHTML = `
+          <div class="cc-think-row" id="${rid}-think">
+            <span class="cc-dot cc-dot-thinking"></span>
+            <span class="cc-think-word" id="${rid}-word">Thinking...</span>
+            <span class="cc-think-tokens" id="${rid}-tokens"></span>
+          </div>
+          <div class="cc-tools" id="${rid}-tools"></div>
+          <div class="cc-response" id="${rid}-response" style="display:none"></div>
+        `;
+        msgs.appendChild(aiDiv);
         msgs.scrollTop = msgs.scrollHeight;
+
+        const wordEl   = document.getElementById(`${rid}-word`);
+        const tokensEl = document.getElementById(`${rid}-tokens`);
+        const toolsEl  = document.getElementById(`${rid}-tools`);
+        const respEl   = document.getElementById(`${rid}-response`);
+        const thinkRow = document.getElementById(`${rid}-think`);
+
+        _startThinkWords(wordEl);
+
+        const writtenProjects = new Set();
+        let lastWrittenPath = null;
+        let streamText = '';
+        let finalText = '';
+        let currentToolEl = null;
+
+        function addToolRow(icon, label, desc, id) {
+          const row = document.createElement('div');
+          row.className = 'cc-tool-row';
+          row.id = id;
+          row.innerHTML = `<span class="cc-dot ${icon === 'ok' ? 'cc-dot-ok' : icon === 'err' ? 'cc-dot-err' : 'cc-dot-running'}"></span>
+            <span class="cc-tool-label">${escHtml(label)}</span>
+            <span class="cc-tool-desc">${escHtml(desc)}</span>
+            <span class="cc-tool-toggle" onclick="this.closest('.cc-tool-row').classList.toggle('open')">›</span>
+            <div class="cc-tool-detail"></div>`;
+          toolsEl.appendChild(row);
+          return row;
+        }
+
         try {
-          const res = await fetch('/workspace/code/agent', {
+          const res = await fetch('/workspace/code/agent-stream', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {'Content-Type':'application/json'},
             body: JSON.stringify({
-              question,
-              file_path: currentFilePath,
-              file_content: fileContent,
-              project: currentProject,
-              model: selectedModel,
-              messages: history,
-              server_context: serverContext,
-              project_files: projectFiles,
+              question, file_path: currentFilePath, file_content: fileContent,
+              project: currentProject, model: selectedModel,
+              messages: history, server_context: serverContext, project_files: projectFiles,
             }),
           });
-          const d = await res.json();
-          if (!res.ok) throw new Error(d.detail || res.statusText);
-          const el = document.getElementById(thinkId);
-          if (el) el.remove();
-          const answer = d.answer || '';
-          const actions = d.actions || [];
-          updateTokenCounter(question, answer);
 
-          // Build action summary HTML
-          let actionsHtml = '';
-          const writtenProjects = new Set();
-          let lastWrittenPath = null;
-          for (const a of actions) {
-            if (a.type === 'write_file') {
-              if (a.ok) {
-                actionsHtml += `<div class="code-agent-action ok">✅ สร้าง/แก้ไข: <strong>${a.path}</strong> (${a.lines} lines)</div>`;
-                writtenProjects.add(a.path.split('/')[0]);
-                lastWrittenPath = a.path;
-              } else {
-                actionsHtml += `<div class="code-agent-action err">❌ ไม่สำเร็จ: ${a.path} — ${a.error}</div>`;
+          const reader = res.body.getReader();
+          const dec = new TextDecoder();
+          let buf = '';
+
+          while (true) {
+            const {done, value} = await reader.read();
+            if (done) break;
+            buf += dec.decode(value, {stream: true});
+            const lines = buf.split('\n');
+            buf = lines.pop();
+
+            for (const line of lines) {
+              if (!line.startsWith('data: ')) continue;
+              let evt;
+              try { evt = JSON.parse(line.slice(6)); } catch { continue; }
+
+              if (evt.type === 'thinking_start') {
+                wordEl.textContent = (evt.msg || 'Thinking') + '...';
+                if (evt.msg && evt.msg.includes('repair')) {
+                  const rep = document.createElement('div');
+                  rep.className = 'cc-repair-notice';
+                  rep.textContent = `🔧 ${evt.msg}`;
+                  toolsEl.appendChild(rep);
+                  streamText = '';
+                }
+              }
+
+              if (evt.type === 'token') {
+                streamText += evt.text;
+                tokensEl.textContent = `· ${evt.tokens || 0} tokens`;
+                // Show streaming text live
+                const clean = streamText
+                  .replace(/<WRITE_FILE[^>]*>[\s\S]*?<\/WRITE_FILE>/g, '')
+                  .replace(/<EXEC_CMD[^/]*\/>/g, '')
+                  .replace(/<UPDATE_MEMORY[^/]*\/>/g, '')
+                  .trim();
+                if (clean) {
+                  respEl.style.display = '';
+                  respEl.innerHTML = `<div class="cc-streaming-text">${escHtml(clean).replace(/\n/g,'<br>')}</div>`;
+                }
+                msgs.scrollTop = msgs.scrollHeight;
+              }
+
+              if (evt.type === 'thinking_done') {
+                _stopThinkWords();
+                wordEl.textContent = selectedModel;
+                thinkRow.classList.add('done');
+              }
+
+              if (evt.type === 'tool_start') {
+                const toolId = rid + '-tool-' + Date.now();
+                const desc = evt.tool === 'WriteFile' ? evt.desc : evt.desc;
+                currentToolEl = addToolRow('running', evt.tool, desc, toolId);
+                msgs.scrollTop = msgs.scrollHeight;
+              }
+
+              if (evt.type === 'tool_done') {
+                if (currentToolEl) {
+                  const dot = currentToolEl.querySelector('.cc-dot');
+                  dot.className = `cc-dot ${evt.ok ? 'cc-dot-ok' : 'cc-dot-err'}`;
+                  const detailEl = currentToolEl.querySelector('.cc-tool-detail');
+                  if (evt.tool === 'WriteFile' && evt.ok) {
+                    const badge = evt.is_new
+                      ? `<span style="color:#4a9eff">new file</span>`
+                      : `<span style="color:#5f5">+${evt.added||0}</span> <span style="color:#f66">-${evt.removed||0}</span>`;
+                    const descEl = currentToolEl.querySelector('.cc-tool-desc');
+                    if (descEl) descEl.innerHTML = `${escHtml(evt.path||'')} &nbsp;${badge}&nbsp; <span style="color:#555">${evt.lines} lines</span>`;
+                    // Render diff
+                    if (evt.diff && evt.diff.length) {
+                      detailEl.innerHTML = _renderDiff(evt.diff, evt.path, evt.is_new);
+                    }
+                    writtenProjects.add((evt.path||'').split('/')[0]);
+                    lastWrittenPath = evt.path;
+                  } else if (evt.tool === 'WriteFile' && !evt.ok) {
+                    detailEl.textContent = `✗ ${evt.error||''}`;
+                  }
+                  if (evt.tool === 'Exec') {
+                    if (evt.out) detailEl.innerHTML = `<pre class="cc-exec-out">${escHtml(evt.out.slice(0,400))}</pre>`;
+                  }
+                }
+                msgs.scrollTop = msgs.scrollHeight;
+              }
+
+              if (evt.type === 'final_text') {
+                finalText = evt.text || '';
+                respEl.style.display = '';
+                respEl.innerHTML = `<div class="cc-final-text markdown-body" data-raw="${escHtml(JSON.stringify(finalText))}"></div>`;
+                respEl.querySelectorAll('.cc-final-text[data-raw]').forEach(el => {
+                  try { el.innerHTML = marked.parse(JSON.parse(el.dataset.raw)); } catch {}
+                });
+                // Save to chat history
+                saveChatHistory(currentProject);
+                updateTokenCounter(question, finalText);
+                msgs.scrollTop = msgs.scrollHeight;
+              }
+
+              if (evt.type === 'repair_start') {
+                streamText = '';
+                tokensEl.textContent = '';
+                _startThinkWords(wordEl);
+              }
+
+              if (evt.type === 'done') {
+                _stopThinkWords();
+                // Refresh file trees
+                for (const proj of writtenProjects) {
+                  const filesDiv = document.querySelector(`.code-project-files[data-project="${proj}"]`);
+                  if (!filesDiv) {
+                    await loadProjects();
+                  } else if (filesDiv.style.display !== 'none') {
+                    filesDiv.dataset.loaded = '';
+                    await loadFilesInto(proj, filesDiv);
+                  }
+                }
+                if (lastWrittenPath) await loadEnerFile(lastWrittenPath);
               }
             }
           }
-          // Show EXEC_CMD results
-          const execResults = d.exec_results || [];
-          if (execResults.length) {
-            actionsHtml += `<div class="code-exec-block">`;
-            for (const er of execResults) {
-              const icon = er.ok ? '✅' : '❌';
-              const out = ((er.stdout||'') + (er.stderr||'') + (er.error||'')).trim();
-              actionsHtml += `<div class="code-exec-cmd">${icon} <code>$ ${er.cmd.replace(/</g,'&lt;')}</code></div>`;
-              if (out) actionsHtml += `<pre class="code-exec-output">${out.replace(/</g,'&lt;').substring(0,600)}</pre>`;
-            }
-            actionsHtml += `</div>`;
-          }
-
-          const aiDiv = document.createElement('div');
-          aiDiv.className = 'code-chat-ai';
-          aiDiv.innerHTML = `<div class="code-chat-ai-label">🤖 ${selectedModel}</div>
-            ${actionsHtml}
-            <div class="code-chat-ai-body">${formatAIResponse(answer)}</div>`;
-          msgs.appendChild(aiDiv);
-          msgs.scrollTop = msgs.scrollHeight;
-          saveChatHistory(currentProject);
-
-          // Refresh file trees for affected projects
-          const newProjects = [];
-          for (const proj of writtenProjects) {
-            const filesDiv = document.querySelector(`.code-project-files[data-project="${proj}"]`);
-            if (!filesDiv) {
-              newProjects.push(proj); // New project not in DOM yet
-            } else if (filesDiv.style.display !== 'none') {
-              filesDiv.dataset.loaded = '';
-              await loadFilesInto(proj, filesDiv);
-            } else {
-              await toggleProject(proj);
-            }
-          }
-          if (newProjects.length) {
-            if (!currentProject) currentProject = newProjects[0];
-            await loadProjects(); // Re-render project list with new projects
-          }
-          // Auto-open last written file
-          if (lastWrittenPath) await loadEnerFile(lastWrittenPath);
-
-        } catch (e) {
-          const el = document.getElementById(thinkId);
-          if (el) el.outerHTML = `<div class="code-chat-error">Error: ${e.message}</div>`;
+        } catch(e) {
+          _stopThinkWords();
+          aiDiv.innerHTML += `<div class="code-chat-error">❌ ${escHtml(e.message)}</div>`;
           codeToast('❌ ' + (e.message || 'AI request failed'));
         }
       }
@@ -1420,6 +1576,53 @@
       function escHtml(s) {
         return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
       }
+      // ── Diff renderer ────────────────────────────────────────────────────────
+      function _renderDiff(diff, path, isNew) {
+        const removed = diff.filter(d => d.t === '-');
+        const added   = diff.filter(d => d.t === '+');
+        const same    = diff.filter(d => d.t === '=');
+        const fname   = (path||'').split('/').pop();
+
+        if (isNew) {
+          const rows = added.slice(0, 40).map(d =>
+            `<div class="cc-diff-line new-file">${escHtml(d.l)}</div>`
+          ).join('');
+          return `<div class="cc-diff-wrap">
+            <div class="cc-diff-header"><span>${escHtml(fname)}</span><span style="color:#4a9eff">new file · ${added.length} lines</span></div>
+            <div style="max-height:140px;overflow:auto;background:#0a130a;padding:2px 0">${rows}</div>
+          </div>`;
+        }
+
+        // Side-by-side for edits
+        let leftHtml = '', rightHtml = '';
+        for (const d of diff) {
+          if (d.t === '=') {
+            leftHtml  += `<div class="cc-diff-line same">${escHtml(d.l)||'&nbsp;'}</div>`;
+            rightHtml += `<div class="cc-diff-line same">${escHtml(d.l)||'&nbsp;'}</div>`;
+          } else if (d.t === '-') {
+            leftHtml  += `<div class="cc-diff-line removed">${escHtml(d.l)||'&nbsp;'}</div>`;
+          } else if (d.t === '+') {
+            rightHtml += `<div class="cc-diff-line added">${escHtml(d.l)||'&nbsp;'}</div>`;
+          }
+        }
+        return `<div class="cc-diff-wrap">
+          <div class="cc-diff-header">
+            <span>${escHtml(fname)}</span>
+            <span style="color:#f66">-${removed.length}</span>
+            <span style="color:#5f5">+${added.length}</span>
+          </div>
+          <div class="cc-diff-table">
+            <div class="cc-diff-col cc-diff-col-old">
+              <div class="cc-diff-col-label">before</div>${leftHtml}
+            </div>
+            <div class="cc-diff-col cc-diff-col-new">
+              <div class="cc-diff-col-label">after</div>${rightHtml}
+            </div>
+          </div>
+        </div>`;
+      }
+      // ─────────────────────────────────────────────────────────────────────────
+
       window.showProjectMemory = showProjectMemory;
       window.closeMemoryModal = closeMemoryModal;
       window.addMemoryEntry = addMemoryEntry;

@@ -7033,6 +7033,28 @@ _UPDATE_MEMORY_RE = __import__("re").compile(
 )
 
 
+async def _agent_run_cmd(cmd: str, cwd: str) -> dict:
+    """Run a shell command asynchronously, return result dict."""
+    import asyncio as _aio
+    try:
+        proc = await _aio.create_subprocess_shell(
+            cmd, stdout=_aio.subprocess.PIPE, stderr=_aio.subprocess.PIPE, cwd=cwd,
+        )
+        try:
+            out, err = await _aio.wait_for(proc.communicate(), timeout=30)
+            return {
+                "cmd": cmd, "ok": proc.returncode == 0,
+                "stdout": out.decode("utf-8", errors="replace")[:800],
+                "stderr": err.decode("utf-8", errors="replace")[:400],
+                "returncode": proc.returncode,
+            }
+        except _aio.TimeoutError:
+            proc.kill(); await proc.wait()
+            return {"cmd": cmd, "ok": False, "error": "timeout (30s)", "returncode": -1}
+    except Exception as exc:
+        return {"cmd": cmd, "ok": False, "error": str(exc)[:200], "returncode": -1}
+
+
 async def _load_project_memory(project: str) -> dict:
     """Load all memory entries for a project."""
     async with get_db() as db:
@@ -7304,6 +7326,208 @@ async def workspace_code_agent(request: Request):
         display = display + "\n\n" + summary_answer
 
     return JSONResponse({"answer": display, "actions": actions, "exec_results": exec_results})
+
+
+# ── Streaming Code Agent ──────────────────────────────────────────────────────
+import json as _json
+
+@app.post("/workspace/code/agent-stream")
+async def workspace_code_agent_stream(request: Request):
+    """Streaming code agent: real-time token stream + auto-repair loop."""
+    await _require_admin(request)
+    body = await request.json()
+    question   = body.get("question", "").strip()
+    file_path  = body.get("file_path", "")
+    file_content = body.get("file_content", "")
+    project    = body.get("project", "").strip()
+    model      = body.get("model", "")
+    messages   = body.get("messages", [])
+    server_ctx = body.get("server_context", {})
+    project_files = body.get("project_files", "")
+    if not question:
+        raise HTTPException(400, "question required")
+
+    from app.core.ai import stream_chat_response
+
+    # Build system prompt (same as workspace_code_agent)
+    project_memory = await _load_project_memory(project) if project else {}
+    memory_block = ""
+    if project_memory:
+        mem_block_lines = "\n".join(f"- {k}: {v}" for k, v in project_memory.items())
+        memory_block = f"\n=== PROJECT MEMORY ===\n{mem_block_lines}\n"
+
+    file_ctx = ""
+    if project_files:
+        file_ctx += f"\n=== Files in project '{project}' ===\n{project_files}\n"
+    if file_path and file_content:
+        preview = "\n".join(file_content.splitlines()[:200])
+        file_ctx += f"\n=== Current File: {file_path} ===\n```\n{preview}\n```\n"
+
+    srv = (server_ctx.get("server") or {})
+    containers_txt = "\n".join((server_ctx.get("running_containers") or [])[:8])
+    server_block = ""
+    if srv:
+        server_block = (
+            f"\n=== SERVER STATE ===\n"
+            f"CPU: {srv.get('cpu_load','?')} | RAM: {srv.get('ram','?')} | Disk: {srv.get('disk','?')}\n"
+        )
+        if containers_txt:
+            server_block += f"Running containers:\n{containers_txt}\n"
+
+    system = (
+        f"You are Ener-AI Code Agent. You write files directly using WRITE_FILE tags.\n\n"
+        f"STACK: Python 3.11 / FastAPI / aiosqlite / Docker / Hetzner CPX22\n"
+        f"PUBLIC DOMAIN: https://my-ener.uk\n"
+        f"PROJECT PATH: /root/ener-code/{project or 'project-name'}/ on the server\n"
+        f"########## NEVER USE localhost ##########\n"
+        f"FORBIDDEN: localhost:8000, localhost:any_port, 127.0.0.1\n"
+        f"ALWAYS use: https://my-ener.uk or http://my-ener.uk:<port>\n"
+        f"##########################################\n"
+        f"{memory_block}"
+        f"{server_block}"
+        f"{file_ctx}\n"
+        f"Use <WRITE_FILE path=\"{project or 'my-project'}/filename\">content</WRITE_FILE> to write files.\n"
+        f"Use <EXEC_CMD cmd=\"command\"/> to run shell commands (CWD is /root/ener-code/{project or 'project'}/).\n"
+        f"CORRECT: 'ls -la'   WRONG: 'ls -la {project or 'project'}'\n"
+        f"Use <UPDATE_MEMORY key=\"k\" value=\"v\"/> to save project facts.\n"
+        f"After WRITE_FILE, write a short Thai summary of what was done.\n"
+    )
+
+    clean_history = [
+        m for m in messages
+        if m.get("role") in ("user", "assistant") and m.get("content")
+    ][-12:]
+
+    async def generate():
+        MAX_REPAIR = 3
+        repair_iter = 0
+        conv_messages = clean_history[:]
+        current_q = question
+        project_dir = f"{BASE_ENER_CODE}/{project}" if project else None
+        if project_dir:
+            os.makedirs(project_dir, exist_ok=True)
+
+        while repair_iter <= MAX_REPAIR:
+            # ── Stream AI tokens ──────────────────────────────────────
+            full_response = ""
+            token_count = 0
+            status_msg = "🤔 Thinking" if repair_iter == 0 else f"🔧 Auto-repair #{repair_iter}"
+            yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': status_msg})}\n\n"
+
+            async for token in stream_chat_response(
+                current_q, conv_messages, system, model=model, agent="CodeAgent"
+            ):
+                full_response += token
+                token_count += len(token.split())
+                yield f"data: {_json.dumps({'type': 'token', 'text': token, 'tokens': token_count})}\n\n"
+
+            yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': token_count})}\n\n"
+
+            # ── Execute WRITE_FILE tags ───────────────────────────────
+            import difflib as _difflib
+            actions: list[dict] = []
+            for m in _WRITE_FILE_RE.finditer(full_response):
+                rel_path = m.group(1).strip()
+                content  = m.group(2).lstrip("\n").rstrip("\n")
+                yield f"data: {_json.dumps({'type': 'tool_start', 'tool': 'WriteFile', 'desc': rel_path})}\n\n"
+                try:
+                    full_p = _ener_code_resolve(rel_path)
+                    # Compute diff vs existing file
+                    old_lines: list[str] = []
+                    is_new = True
+                    try:
+                        if os.path.exists(full_p):
+                            with open(full_p, "r", encoding="utf-8", errors="replace") as _f:
+                                old_lines = _f.read().splitlines()
+                            is_new = False
+                    except Exception:
+                        pass
+                    new_lines = content.splitlines()
+                    # Build compact diff (max 60 lines)
+                    diff_data: list[dict] = []
+                    if is_new:
+                        for ln in new_lines[:60]:
+                            diff_data.append({"t": "+", "l": ln})
+                    else:
+                        matcher = _difflib.SequenceMatcher(None, old_lines, new_lines)
+                        count = 0
+                        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+                            if count >= 60:
+                                break
+                            if tag == "equal":
+                                for ln in old_lines[i1:min(i2, i1+2)]:
+                                    diff_data.append({"t": "=", "l": ln}); count += 1
+                            elif tag in ("replace", "delete"):
+                                for ln in old_lines[i1:i2]:
+                                    diff_data.append({"t": "-", "l": ln}); count += 1
+                            if tag in ("replace", "insert"):
+                                for ln in new_lines[j1:j2]:
+                                    diff_data.append({"t": "+", "l": ln}); count += 1
+                    os.makedirs(os.path.dirname(full_p), exist_ok=True)
+                    with open(full_p, "w", encoding="utf-8") as fh:
+                        fh.write(content)
+                    lines = len(new_lines)
+                    added = sum(1 for d in diff_data if d["t"] == "+")
+                    removed = sum(1 for d in diff_data if d["t"] == "-")
+                    actions.append({"type": "write_file", "path": rel_path, "ok": True, "lines": lines})
+                    yield f"data: {_json.dumps({'type': 'tool_done', 'tool': 'WriteFile', 'path': rel_path, 'ok': True, 'lines': lines, 'is_new': is_new, 'added': added, 'removed': removed, 'diff': diff_data})}\n\n"
+                except Exception as exc:
+                    actions.append({"type": "write_file", "path": rel_path, "ok": False, "error": str(exc)})
+                    yield f"data: {_json.dumps({'type': 'tool_done', 'tool': 'WriteFile', 'path': rel_path, 'ok': False, 'error': str(exc)[:100]})}\n\n"
+
+            # Save UPDATE_MEMORY
+            if project:
+                for m in _UPDATE_MEMORY_RE.finditer(full_response):
+                    try:
+                        await _save_memory_entry(project, m.group(1).strip(), m.group(2).strip())
+                    except Exception:
+                        pass
+
+            # ── Execute EXEC_CMD tags ─────────────────────────────────
+            exec_results: list[dict] = []
+            exec_cmds = _EXEC_CMD_RE.findall(full_response)
+            if exec_cmds and project_dir:
+                for cmd in exec_cmds[:6]:
+                    yield f"data: {_json.dumps({'type': 'tool_start', 'tool': 'Exec', 'desc': cmd})}\n\n"
+                    result = await _agent_run_cmd(cmd, project_dir)
+                    exec_results.append(result)
+                    out = (result.get("stdout","") + result.get("stderr","") + result.get("error","")).strip()
+                    yield f"data: {_json.dumps({'type': 'tool_done', 'tool': 'Exec', 'cmd': cmd, 'ok': result['ok'], 'out': out[:500]})}\n\n"
+
+            # ── Clean display text ────────────────────────────────────
+            display = _WRITE_FILE_RE.sub("", full_response)
+            display = _EXEC_CMD_RE.sub("", display)
+            display = _UPDATE_MEMORY_RE.sub("", display).strip()
+
+            yield f"data: {_json.dumps({'type': 'final_text', 'text': display, 'actions': actions, 'exec_results': exec_results, 'repair_iter': repair_iter})}\n\n"
+
+            # ── Auto-repair if exec failed ────────────────────────────
+            failed = [e for e in exec_results if not e.get("ok")]
+            if not failed or repair_iter >= MAX_REPAIR:
+                break
+
+            repair_iter += 1
+            error_lines = "\n".join(
+                f"❌ {e['cmd']}: {(e.get('stdout','') + e.get('stderr','') + e.get('error','')).strip()[:300]}"
+                for e in failed
+            )
+            current_q = (
+                f"คำสั่งเหล่านี้ล้มเหลว:\n{error_lines}\n\n"
+                f"แก้ไข code ให้ถูกต้องโดยใช้ WRITE_FILE แล้ว re-run ด้วย EXEC_CMD เพื่อยืนยัน"
+            )
+            conv_messages = conv_messages + [
+                {"role": "user", "content": question[:400]},
+                {"role": "assistant", "content": full_response[:1200]},
+            ]
+            yield f"data: {_json.dumps({'type': 'repair_start', 'iter': repair_iter, 'errors': len(failed)})}\n\n"
+
+        yield f"data: {_json.dumps({'type': 'done'})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 # ── Agent Loop ────────────────────────────────────────────────────────────────
