@@ -7123,12 +7123,14 @@ async def workspace_code_agent(request: Request):
         f"- NEVER output just a code block without WRITE_FILE when the user asks to create/write something\n\n"
         f"EXEC_CMD — RUN COMMANDS ON SERVER:\n"
         f'<EXEC_CMD cmd="command"/>\n'
-        f"- Commands run inside /root/ener-code/{project or 'project'}/ on the server\n"
-        f"- Output is captured and fed back to you automatically for analysis\n"
-        f"- Use for: syntax check, pip install, import test, curl test, etc.\n"
+        f"- CWD is ALREADY /root/ener-code/{project or 'project'}/ — DO NOT repeat project name in commands\n"
+        f"- CORRECT: 'ls -la'  WRONG: 'ls -la {project or 'project'}'\n"
+        f"- CORRECT: 'python -m py_compile main.py'  WRONG: 'python -m py_compile {project or 'project'}/main.py'\n"
+        f"- Output is captured and fed back to you automatically\n"
         f"- EXAMPLES:\n"
+        f'  <EXEC_CMD cmd="ls -la"/>\n'
         f'  <EXEC_CMD cmd="python -m py_compile main.py"/>\n'
-        f'  <EXEC_CMD cmd="pip install -r requirements.txt -q 2>&1 | tail -3"/>\n'
+        f'  <EXEC_CMD cmd="pip install -r requirements.txt -q 2>&1 | tail -5"/>\n'
         f'  <EXEC_CMD cmd="python -c \'import fastapi; print(fastapi.__version__)\'"/>\n'
         f"- You can use multiple EXEC_CMD tags in one response\n"
         f"- After seeing results, summarize what passed and what failed\n\n"
