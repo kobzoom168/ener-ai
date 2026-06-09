@@ -941,6 +941,18 @@ async def init_db():
                 ON project_artifacts(artifact_type, created_at);
             CREATE INDEX IF NOT EXISTS idx_project_artifacts_event_id
                 ON project_artifacts(event_id);
+
+            CREATE TABLE IF NOT EXISTS code_project_memory (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project TEXT NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(project, key)
+            );
+            CREATE INDEX IF NOT EXISTS idx_code_project_memory_project
+                ON code_project_memory(project);
         """)
         try:
             await db.execute(

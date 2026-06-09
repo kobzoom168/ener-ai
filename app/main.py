@@ -7028,6 +7028,59 @@ _WRITE_FILE_RE = __import__("re").compile(
 _EXEC_CMD_RE = __import__("re").compile(
     r'<EXEC_CMD\s+cmd="([^"]+)"\s*/?>', __import__("re").MULTILINE
 )
+_UPDATE_MEMORY_RE = __import__("re").compile(
+    r'<UPDATE_MEMORY\s+key="([^"]+)"\s+value="([^"]+)"\s*/?>', __import__("re").MULTILINE
+)
+
+
+async def _load_project_memory(project: str) -> dict:
+    """Load all memory entries for a project."""
+    async with get_db() as db:
+        cur = await db.execute(
+            "SELECT key, value FROM code_project_memory WHERE project=? ORDER BY updated_at DESC",
+            (project,)
+        )
+        rows = await cur.fetchall()
+    return {r[0]: r[1] for r in rows}
+
+
+async def _save_memory_entry(project: str, key: str, value: str):
+    """Upsert one memory entry."""
+    async with get_db() as db:
+        await db.execute(
+            """INSERT INTO code_project_memory (project, key, value, updated_at)
+               VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+               ON CONFLICT(project, key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP""",
+            (project, key, value)
+        )
+        await db.commit()
+
+
+@app.get("/workspace/code/memory")
+async def workspace_code_memory_get(request: Request, project: str):
+    """Get all memory entries for a project."""
+    await _require_admin(request)
+    mem = await _load_project_memory(project)
+    return JSONResponse({"project": project, "memory": mem})
+
+
+@app.post("/workspace/code/memory")
+async def workspace_code_memory_save(request: Request):
+    """Save/update a memory entry for a project."""
+    await _require_admin(request)
+    body = await request.json()
+    project = body.get("project", "").strip()
+    key = body.get("key", "").strip()
+    value = body.get("value", "").strip()
+    if not project or not key:
+        raise HTTPException(400, "project and key required")
+    if value and value != "__DELETE__":
+        await _save_memory_entry(project, key, value)
+    else:
+        async with get_db() as db:
+            await db.execute("DELETE FROM code_project_memory WHERE project=? AND key=?", (project, key))
+            await db.commit()
+    return JSONResponse({"ok": True})
 
 
 @app.post("/workspace/code/agent")
@@ -7045,6 +7098,7 @@ async def workspace_code_agent(request: Request):
     history = body.get("messages") or []
     server_ctx = body.get("server_context") or {}
     project_files = body.get("project_files", "")
+    project_memory = await _load_project_memory(project) if project else {}
     if not question:
         raise HTTPException(400, "question required")
 
@@ -7088,6 +7142,11 @@ async def workspace_code_agent(request: Request):
         if routes_txt:
             server_block += f"\nExisting Ener-AI API endpoints (don't duplicate):\n{routes_txt}\n"
 
+    memory_block = ""
+    if project_memory:
+        mem_lines = "\n".join(f"- {k}: {v}" for k, v in project_memory.items())
+        memory_block = f"\n=== PROJECT MEMORY (remember these always) ===\n{mem_lines}\n"
+
     system = (
         f"You are Ener-AI Code Agent. You write files directly using WRITE_FILE tags.\n\n"
         f"CURRENT PROJECT: {project or '(none)'}\n"
@@ -7101,6 +7160,7 @@ async def workspace_code_agent(request: Request):
         f"User projects run on a DIFFERENT port or via docker\n"
         f"ALWAYS use: https://my-ener.uk or http://my-ener.uk:<port>\n"
         f"##########################################\n"
+        f"{memory_block}"
         f"{server_block}"
         f"{file_ctx}\n"
         f"####### CRITICAL RULE — YOU MUST FOLLOW THIS #######\n"
@@ -7138,6 +7198,12 @@ async def workspace_code_agent(request: Request):
         f'  <EXEC_CMD cmd="python -c \'import fastapi; print(fastapi.__version__)\'"/>\n'
         f"- You can use multiple EXEC_CMD tags in one response\n"
         f"- After seeing results, summarize what passed and what failed\n\n"
+        f"UPDATE_MEMORY — SAVE PROJECT KNOWLEDGE (persists across sessions):\n"
+        f'<UPDATE_MEMORY key="architecture" value="Uses FastAPI + aiosqlite"/>\n'
+        f"- Use to remember decisions, conventions, tech choices, secrets layout, etc.\n"
+        f"- key: short label (e.g. 'stack', 'port', 'db_schema', 'main_file')\n"
+        f"- value: concise fact to remember\n"
+        f"- Use it when you learn something important about the project structure\n\n"
         f"COMPLETE PROJECT RULE:\n"
         f"When asked to create a project or app, think about ALL files needed and create them ALL at once:\n"
         f"  - main.py (or index.js etc.) — main application code\n"
@@ -7222,9 +7288,18 @@ async def workspace_code_agent(request: Request):
             preferred_model=model, strict_model=False,
         )
 
-    # Strip WRITE_FILE and EXEC_CMD tags from display text
+    # Save UPDATE_MEMORY entries to DB
+    if project:
+        for m in _UPDATE_MEMORY_RE.finditer(raw_answer):
+            try:
+                await _save_memory_entry(project, m.group(1).strip(), m.group(2).strip())
+            except Exception:
+                pass
+
+    # Strip WRITE_FILE, EXEC_CMD, UPDATE_MEMORY tags from display text
     display = _WRITE_FILE_RE.sub("", raw_answer)
-    display = _EXEC_CMD_RE.sub("", display).strip()
+    display = _EXEC_CMD_RE.sub("", display)
+    display = _UPDATE_MEMORY_RE.sub("", display).strip()
     if summary_answer:
         display = display + "\n\n" + summary_answer
 
