@@ -350,6 +350,10 @@
       #panel-code .code-agent-action { font-size:11px; padding:3px 6px; border-radius:4px; margin:2px 0; }
       #panel-code .code-agent-action.ok { background:#0f2a1a; color:#4ade80; border-left:2px solid #16a34a; }
       #panel-code .code-agent-action.err { background:#2a0f0f; color:#f87171; border-left:2px solid #dc2626; }
+      #panel-code .code-exec-block { margin:4px 0; border:1px solid #2a2a2a; border-radius:6px; overflow:hidden; }
+      #panel-code .code-exec-cmd { font-size:11px; padding:4px 8px; background:#111; color:#aaa; }
+      #panel-code .code-exec-cmd code { color:#7dd3fc; }
+      #panel-code .code-exec-output { font-size:10px; margin:0; padding:4px 8px; background:#0a0a0a; color:#ccc; white-space:pre-wrap; word-break:break-all; max-height:120px; overflow-y:auto; border-top:1px solid #1a1a1a; }
     </style>
       <div id="code-toolbar" class="code-toolbar">
         <div class="code-toolbar-left">
@@ -424,6 +428,7 @@
             <button type="button" class="code-preset-btn" data-preset="อธิบาย file นี้">📖 อธิบาย</button>
             <button type="button" class="code-preset-btn" data-preset="หา bug และ fix ใน code นี้ ใช้ WRITE_FILE เพื่อ save fix">🐛 หา Bug</button>
             <button type="button" class="code-preset-btn" data-preset="สร้าง complete project ที่ครบ flow: main file + requirements + README พร้อม run ได้ทันที ใน project นี้">🚀 Complete</button>
+            <button type="button" class="code-preset-btn" data-preset="ทดสอบ project นี้บน server ใช้ EXEC_CMD เพื่อ: 1) เช็ค syntax ทุก .py ด้วย python -m py_compile 2) เช็ค imports ด้วย python -c 3) แสดงไฟล์ทั้งหมด แล้วสรุปว่า project พร้อม deploy ไหม">🔬 Test</button>
           </div>
           <div class="code-chat-input-area">
             <div class="code-chat-input-row">
@@ -1061,6 +1066,18 @@
                 actionsHtml += `<div class="code-agent-action err">❌ ไม่สำเร็จ: ${a.path} — ${a.error}</div>`;
               }
             }
+          }
+          // Show EXEC_CMD results
+          const execResults = d.exec_results || [];
+          if (execResults.length) {
+            actionsHtml += `<div class="code-exec-block">`;
+            for (const er of execResults) {
+              const icon = er.ok ? '✅' : '❌';
+              const out = ((er.stdout||'') + (er.stderr||'') + (er.error||'')).trim();
+              actionsHtml += `<div class="code-exec-cmd">${icon} <code>$ ${er.cmd.replace(/</g,'&lt;')}</code></div>`;
+              if (out) actionsHtml += `<pre class="code-exec-output">${out.replace(/</g,'&lt;').substring(0,600)}</pre>`;
+            }
+            actionsHtml += `</div>`;
           }
 
           const aiDiv = document.createElement('div');

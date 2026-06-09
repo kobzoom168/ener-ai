@@ -7025,6 +7025,9 @@ async def workspace_code_server_context(request: Request):
 _WRITE_FILE_RE = __import__("re").compile(
     r'<WRITE_FILE\s+path="([^"]+)">([\s\S]*?)</WRITE_FILE>', __import__("re").MULTILINE
 )
+_EXEC_CMD_RE = __import__("re").compile(
+    r'<EXEC_CMD\s+cmd="([^"]+)"\s*/?>', __import__("re").MULTILINE
+)
 
 
 @app.post("/workspace/code/agent")
@@ -7118,6 +7121,17 @@ async def workspace_code_agent(request: Request):
         f"- You CAN create multiple files in one response\n"
         f"- After WRITE_FILE tags, briefly explain in Thai what you did\n"
         f"- NEVER output just a code block without WRITE_FILE when the user asks to create/write something\n\n"
+        f"EXEC_CMD — RUN COMMANDS ON SERVER:\n"
+        f'<EXEC_CMD cmd="command"/>\n'
+        f"- Commands run inside /root/ener-code/{project or 'project'}/ on the server\n"
+        f"- Output is captured and fed back to you automatically for analysis\n"
+        f"- Use for: syntax check, pip install, import test, curl test, etc.\n"
+        f"- EXAMPLES:\n"
+        f'  <EXEC_CMD cmd="python -m py_compile main.py"/>\n'
+        f'  <EXEC_CMD cmd="pip install -r requirements.txt -q 2>&1 | tail -3"/>\n'
+        f'  <EXEC_CMD cmd="python -c \'import fastapi; print(fastapi.__version__)\'"/>\n'
+        f"- You can use multiple EXEC_CMD tags in one response\n"
+        f"- After seeing results, summarize what passed and what failed\n\n"
         f"COMPLETE PROJECT RULE:\n"
         f"When asked to create a project or app, think about ALL files needed and create them ALL at once:\n"
         f"  - main.py (or index.js etc.) — main application code\n"
@@ -7153,10 +7167,54 @@ async def workspace_code_agent(request: Request):
         except Exception as exc:
             actions.append({"type": "write_file", "path": rel_path, "ok": False, "error": str(exc)})
 
-    # Strip WRITE_FILE tags from display text
-    display = _WRITE_FILE_RE.sub("", raw_answer).strip()
+    # Execute EXEC_CMD actions
+    exec_results: list[dict] = []
+    exec_cmds = _EXEC_CMD_RE.findall(raw_answer)
+    if exec_cmds and project:
+        import subprocess as _sp
+        project_dir = f"{BASE_ENER_CODE}/{project}"
+        os.makedirs(project_dir, exist_ok=True)
+        for cmd in exec_cmds[:6]:  # limit to 6 commands per response
+            try:
+                r = _sp.run(
+                    cmd, shell=True, capture_output=True, text=True,
+                    timeout=15, cwd=project_dir,
+                )
+                exec_results.append({
+                    "cmd": cmd, "ok": r.returncode == 0,
+                    "stdout": (r.stdout or "")[:800],
+                    "stderr": (r.stderr or "")[:400],
+                    "returncode": r.returncode,
+                })
+            except Exception as exc:
+                exec_results.append({"cmd": cmd, "ok": False, "error": str(exc)[:200], "returncode": -1})
 
-    return JSONResponse({"answer": display, "actions": actions})
+    # If commands ran, feed results back to AI for summary
+    summary_answer = ""
+    if exec_results:
+        exec_lines = []
+        for er in exec_results:
+            icon = "✅" if er.get("ok") else "❌"
+            out = (er.get("stdout", "") + er.get("stderr", "") + er.get("error", "")).strip()
+            exec_lines.append(f"{icon} $ {er['cmd']}\n{out or '(no output)'}")
+        exec_report = "\n\n".join(exec_lines)
+        summary_q = (
+            f"ผลการรัน commands บน server:\n\n{exec_report}\n\n"
+            f"สรุปสั้นๆ เป็นภาษาไทย: อะไรผ่าน ✅ อะไรไม่ผ่าน ❌ มี error อะไร และแนะนำวิธี fix"
+        )
+        summary_answer = await ai_chat(
+            summary_q, system=system, agent="CodeAgent",
+            messages=clean_history + [{"role": "assistant", "content": raw_answer[:2000]}],
+            preferred_model=model, strict_model=False,
+        )
+
+    # Strip WRITE_FILE and EXEC_CMD tags from display text
+    display = _WRITE_FILE_RE.sub("", raw_answer)
+    display = _EXEC_CMD_RE.sub("", display).strip()
+    if summary_answer:
+        display = display + "\n\n" + summary_answer
+
+    return JSONResponse({"answer": display, "actions": actions, "exec_results": exec_results})
 
 
 @app.post("/workspace/code/remember")
