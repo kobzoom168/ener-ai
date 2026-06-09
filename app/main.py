@@ -7041,6 +7041,7 @@ async def workspace_code_agent(request: Request):
     model = body.get("model", "featherless-coder")
     history = body.get("messages") or []
     server_ctx = body.get("server_context") or {}
+    project_files = body.get("project_files", "")
     if not question:
         raise HTTPException(400, "question required")
 
@@ -7055,10 +7056,12 @@ async def workspace_code_agent(request: Request):
     ][-12:]
 
     file_ctx = ""
+    if project_files:
+        file_ctx += f"\n=== Files in project '{project}' ===\n{project_files}\n"
     if file_path and file_content:
         lines = file_content.splitlines()
         preview = "\n".join(lines[:200])
-        file_ctx = f"\n\n=== Current File: {file_path} ({len(lines)} lines) ===\n```\n{preview}\n```\n"
+        file_ctx += f"\n=== Current File: {file_path} ({len(lines)} lines) ===\n```\n{preview}\n```\n"
 
     # Build server context block
     srv = server_ctx.get("server") or {}
@@ -7086,7 +7089,11 @@ async def workspace_code_agent(request: Request):
         f"You are Ener-AI Code Agent. You write files directly using WRITE_FILE tags.\n\n"
         f"CURRENT PROJECT: {project or '(none)'}\n"
         f"CURRENT FILE: {file_path or '(none)'}\n"
-        f"STACK: Python 3.11 / FastAPI / aiosqlite / Docker / Hetzner CPX22 / my-ener.uk\n"
+        f"STACK: Python 3.11 / FastAPI / aiosqlite / Docker / Hetzner CPX22\n"
+        f"PUBLIC DOMAIN: https://my-ener.uk (this is where the server is accessible)\n"
+        f"PROJECT PATH: /root/ener-code/{project or 'project-name'}/ on the server\n"
+        f"IMPORTANT: NEVER say localhost:8000 — that port is ener-ai itself, NOT user projects.\n"
+        f"When giving run/test instructions, use the actual domain or 'docker compose up --build'.\n"
         f"{server_block}"
         f"{file_ctx}\n"
         f"####### CRITICAL RULE — YOU MUST FOLLOW THIS #######\n"

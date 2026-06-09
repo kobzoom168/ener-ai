@@ -410,9 +410,12 @@
         </div>
 
         <div id="code-chat-column" class="code-chat-column">
-          <div style="padding:6px 12px 4px;font-size:12px;color:#999;border-bottom:1px solid #333;flex-shrink:0;display:flex;flex-direction:column;gap:2px">
-            <span>💬 AI Chat</span>
-            <span id="code-chat-context" style="font-size:10px;color:#555;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">— ยังไม่ได้เลือกไฟล์ —</span>
+          <div style="padding:6px 12px 4px;font-size:12px;color:#999;border-bottom:1px solid #333;flex-shrink:0;display:flex;align-items:center;gap:8px">
+            <div style="flex:1;display:flex;flex-direction:column;gap:2px;min-width:0">
+              <span>💬 AI Chat <span id="code-chat-project-label" style="color:#4a9eff;font-weight:600"></span></span>
+              <span id="code-chat-context" style="font-size:10px;color:#555;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">— ยังไม่ได้เลือกไฟล์ —</span>
+            </div>
+            <button onclick="clearProjectChat()" title="เริ่ม chat ใหม่" style="background:none;border:1px solid #444;color:#888;padding:2px 8px;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap;flex-shrink:0">+ New Chat</button>
           </div>
           <div id="code-chat-messages" class="code-chat-messages" role="log" aria-live="polite">
             <div class="code-chat-empty-placeholder" style="color:#666;font-size:12px;text-align:center;margin-top:40px">เลือกไฟล์แล้วถามได้เลย</div>
@@ -660,6 +663,16 @@
           msgs.innerHTML = saved || '<div class="code-chat-empty-placeholder" style="color:#666;font-size:12px;text-align:center;margin-top:40px">เลือกไฟล์แล้วถามได้เลย</div>';
           msgs.scrollTop = msgs.scrollHeight;
         } catch(e) {}
+        const label = document.getElementById('code-chat-project-label');
+        if (label) label.textContent = project ? `— ${project}` : '';
+      }
+
+      function clearProjectChat() {
+        if (!currentProject) { codeToast('เลือก project ก่อน'); return; }
+        localStorage.removeItem(`ener-chat-${currentProject}`);
+        const msgs = document.getElementById('code-chat-messages');
+        if (msgs) msgs.innerHTML = '<div class="code-chat-empty-placeholder" style="color:#666;font-size:12px;text-align:center;margin-top:40px">เลือกไฟล์แล้วถามได้เลย</div>';
+        codeToast('🗑️ เริ่ม chat ใหม่แล้ว');
       }
 
       async function toggleProject(name) {
@@ -678,6 +691,7 @@
           item.classList.add('active');
           if (currentProject && currentProject !== name) saveChatHistory(currentProject);
           currentProject = name;
+          try { localStorage.setItem('ener-last-project', name); } catch(e) {}
           const sel = document.getElementById('code-project-select');
           if (sel) sel.value = name;
           loadChatHistory(name);
@@ -995,6 +1009,17 @@
         if (!msgs) return;
         const fileContent = monacoEditor ? monacoEditor.getValue().substring(0, 8000) : '';
         const history = collectChatHistory();
+        // Collect project file list for AI context
+        let projectFiles = '';
+        if (currentProject) {
+          try {
+            const treeRes = await fetch('/workspace/code/tree?project=' + encodeURIComponent(currentProject));
+            if (treeRes.ok) {
+              const td = await treeRes.json();
+              projectFiles = (td.tree || []).filter(t => t.type === 'file').map(t => t.path).join('\n');
+            }
+          } catch(e) {}
+        }
         msgs.innerHTML += `<div class="code-chat-user">${question.replace(/</g,'&lt;')}</div>`;
         const thinkId = 'think-' + Date.now();
         msgs.innerHTML += `<div id="${thinkId}" class="code-chat-thinking">💭 กำลังวิเคราะห์...</div>`;
@@ -1011,6 +1036,7 @@
               model: selectedModel,
               messages: history,
               server_context: serverContext,
+              project_files: projectFiles,
             }),
           });
           const d = await res.json();
@@ -1047,15 +1073,21 @@
           saveChatHistory(currentProject);
 
           // Refresh file trees for affected projects
+          const newProjects = [];
           for (const proj of writtenProjects) {
             const filesDiv = document.querySelector(`.code-project-files[data-project="${proj}"]`);
-            if (filesDiv && filesDiv.style.display !== 'none') {
+            if (!filesDiv) {
+              newProjects.push(proj); // New project not in DOM yet
+            } else if (filesDiv.style.display !== 'none') {
               filesDiv.dataset.loaded = '';
               await loadFilesInto(proj, filesDiv);
-            } else if (filesDiv) {
-              // Project is collapsed — expand it
+            } else {
               await toggleProject(proj);
             }
+          }
+          if (newProjects.length) {
+            if (!currentProject) currentProject = newProjects[0];
+            await loadProjects(); // Re-render project list with new projects
           }
           // Auto-open last written file
           if (lastWrittenPath) await loadEnerFile(lastWrittenPath);
@@ -1141,8 +1173,10 @@
         } catch(e) {}
       }
 
-      window.initCodeAssistantPanel = function() {
-        loadProjects();
+      window.initCodeAssistantPanel = async function() {
+        try { const lp = localStorage.getItem('ener-last-project'); if (lp) currentProject = lp; } catch(e) {}
+        await loadProjects();
+        if (currentProject) loadChatHistory(currentProject);
         loadServerContext();
       };
       window.loadExplorer = loadExplorer;
