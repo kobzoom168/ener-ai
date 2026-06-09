@@ -7173,25 +7173,33 @@ async def workspace_code_agent(request: Request):
         except Exception as exc:
             actions.append({"type": "write_file", "path": rel_path, "ok": False, "error": str(exc)})
 
-    # Execute EXEC_CMD actions
+    # Execute EXEC_CMD actions (async subprocess — non-blocking)
     exec_results: list[dict] = []
     exec_cmds = _EXEC_CMD_RE.findall(raw_answer)
     if exec_cmds and project:
-        import subprocess as _sp
+        import asyncio as _aio
         project_dir = f"{BASE_ENER_CODE}/{project}"
         os.makedirs(project_dir, exist_ok=True)
-        for cmd in exec_cmds[:6]:  # limit to 6 commands per response
+        for cmd in exec_cmds[:6]:
             try:
-                r = _sp.run(
-                    cmd, shell=True, capture_output=True, text=True,
-                    timeout=15, cwd=project_dir,
+                proc = await _aio.create_subprocess_shell(
+                    cmd,
+                    stdout=_aio.subprocess.PIPE,
+                    stderr=_aio.subprocess.PIPE,
+                    cwd=project_dir,
                 )
-                exec_results.append({
-                    "cmd": cmd, "ok": r.returncode == 0,
-                    "stdout": (r.stdout or "")[:800],
-                    "stderr": (r.stderr or "")[:400],
-                    "returncode": r.returncode,
-                })
+                try:
+                    stdout, stderr = await _aio.wait_for(proc.communicate(), timeout=15)
+                    exec_results.append({
+                        "cmd": cmd, "ok": proc.returncode == 0,
+                        "stdout": stdout.decode("utf-8", errors="replace")[:800],
+                        "stderr": stderr.decode("utf-8", errors="replace")[:400],
+                        "returncode": proc.returncode,
+                    })
+                except _aio.TimeoutError:
+                    proc.kill()
+                    await proc.wait()
+                    exec_results.append({"cmd": cmd, "ok": False, "error": "timeout (15s)", "returncode": -1})
             except Exception as exc:
                 exec_results.append({"cmd": cmd, "ok": False, "error": str(exc)[:200], "returncode": -1})
 
