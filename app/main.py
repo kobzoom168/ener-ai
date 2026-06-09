@@ -7328,7 +7328,7 @@ async def workspace_code_agent_loop(request: Request):
                 cmd, stdout=_aio.subprocess.PIPE, stderr=_aio.subprocess.PIPE, cwd=project_dir,
             )
             try:
-                out, err = await _aio.wait_for(proc.communicate(), timeout=20)
+                out, err = await _aio.wait_for(proc.communicate(), timeout=30)
                 return {
                     "cmd": cmd, "ok": proc.returncode == 0,
                     "stdout": out.decode("utf-8", errors="replace")[:700],
@@ -7342,7 +7342,7 @@ async def workspace_code_agent_loop(request: Request):
             return {"cmd": cmd, "ok": False, "error": str(exc)[:200], "returncode": -1}
 
     async def generate():
-        MAX_ITER = 6
+        MAX_ITER = 8
         project_dir = f"{BASE_ENER_CODE}/{project}"
         os.makedirs(project_dir, exist_ok=True)
 
@@ -7377,23 +7377,49 @@ async def workspace_code_agent_loop(request: Request):
                 prompt = (
                     f"TASK: {task}\n\n"
                     f"Phase: BUILD — Create ALL files needed for this task now using WRITE_FILE tags.\n"
-                    f"After writing files, run EXEC_CMD to check syntax/imports on each main file.\n"
-                    f"Think step by step: what files are needed, write them all, then verify.\n"
-                    f"End with a short Thai summary of what was created."
+                    f"Think step by step: what files are needed, then write them ALL at once.\n"
+                    f"After writing, run these EXEC_CMD checks:\n"
+                    f"1. <EXEC_CMD cmd=\"find . -name '*.py' | head -20\"/> — list py files\n"
+                    f"2. <EXEC_CMD cmd=\"python -m py_compile main.py 2>&1\"/> — syntax check main file\n"
+                    f"3. <EXEC_CMD cmd=\"pip install -r requirements.txt -q 2>&1 | tail -5\"/> — install deps\n"
+                    f"4. <EXEC_CMD cmd=\"python -c 'import sys; sys.path.insert(0,\".\"); import importlib; m=importlib.import_module(\"main\"); print(\"OK\")'  2>&1\"/> — test import\n"
+                    f"End with a short Thai summary."
                 )
             elif phase == "VERIFY":
                 written = ", ".join(a["path"] for a in all_actions if a.get("ok"))
+                # Detect project type from files
+                has_py = any(a["path"].endswith(".py") for a in all_actions if a.get("ok"))
+                has_req = any("requirements" in a["path"] for a in all_actions if a.get("ok"))
+                has_test = any("test" in a["path"] for a in all_actions if a.get("ok"))
+                verify_cmds = (
+                    f"<EXEC_CMD cmd=\"find . -name '*.py' -exec python -m py_compile {{}} \\; 2>&1 | head -20\"/>"
+                    f" — compile all .py\n"
+                )
+                if has_req:
+                    verify_cmds += f"<EXEC_CMD cmd=\"pip install -r requirements.txt -q 2>&1 | tail -5\"/> — install deps\n"
+                if has_py:
+                    verify_cmds += (
+                        f"<EXEC_CMD cmd=\"python -c 'import importlib,sys; sys.path.insert(0,\".\"); importlib.import_module(\"main\"); print(\"IMPORT OK\")' 2>&1\"/> — import check\n"
+                        f"<EXEC_CMD cmd=\"timeout 6 python -m uvicorn main:app --host 0.0.0.0 --port 18099 2>&1 | head -15\"/> — try start server\n"
+                    )
+                if has_test:
+                    verify_cmds += f"<EXEC_CMD cmd=\"python -m pytest -x -q 2>&1 | tail -20\"/> — run tests\n"
                 prompt = (
                     f"Files written: {written}\n\n"
-                    f"Phase: VERIFY — Run EXEC_CMD checks on every key file.\n"
-                    f"Check syntax, imports, and basic structure. Report pass/fail clearly."
+                    f"Phase: VERIFY — Run ALL these checks, report each pass ✅ or fail ❌:\n"
+                    f"{verify_cmds}\n"
+                    f"If server starts successfully (shows 'Application startup complete'), that means it WORKS.\n"
+                    f"Report clearly what passed and what failed."
                 )
             elif phase == "REPAIR":
-                last_exec = _json.dumps([e for e in loop_msgs[-1:]], ensure_ascii=False)[:800] if loop_msgs else ""
+                # Get last exec results from history for context
+                last_content = loop_msgs[-1]["content"] if loop_msgs else ""
+                exec_errors = last_content[-1200:] if len(last_content) > 1200 else last_content
                 prompt = (
-                    f"Phase: REPAIR — Fix errors from last verification.\n"
-                    f"Context:\n{last_exec}\n\n"
-                    f"Rewrite the failing files using WRITE_FILE, then re-check with EXEC_CMD."
+                    f"Phase: REPAIR — The following errors were found:\n{exec_errors}\n\n"
+                    f"Fix ALL failing files using WRITE_FILE. Be precise — fix the exact errors shown.\n"
+                    f"After fixing, re-run the same checks with EXEC_CMD to confirm fixed.\n"
+                    f"If import error: fix the import. If syntax error: fix the syntax. If missing package: add to requirements.txt."
                 )
             else:
                 break
@@ -7448,13 +7474,24 @@ async def workspace_code_agent_loop(request: Request):
             yield f"data: {_json.dumps({'type': 'step_done', 'phase': phase, 'iter': iteration, 'content': display, 'actions': step_actions, 'exec_results': step_exec})}\n\n"
 
             # Decide next phase
+            def _exec_passed(results):
+                """True if all cmds passed OR server output contains startup success."""
+                for e in results:
+                    out = (e.get("stdout", "") + e.get("stderr", "")).lower()
+                    # uvicorn startup success counts as pass even if returncode != 0 (timeout kill)
+                    if "application startup complete" in out or "started server process" in out:
+                        continue
+                    if not e.get("ok"):
+                        return False
+                return True
+
             if phase == "BUILD":
                 if step_exec:
-                    phase = "DONE" if all(e["ok"] for e in step_exec) else "REPAIR"
+                    phase = "DONE" if _exec_passed(step_exec) else "REPAIR"
                 else:
                     phase = "VERIFY"
             elif phase == "VERIFY":
-                phase = "DONE" if (not step_exec or all(e["ok"] for e in step_exec)) else "REPAIR"
+                phase = "DONE" if (not step_exec or _exec_passed(step_exec)) else "REPAIR"
             elif phase == "REPAIR":
                 phase = "VERIFY"
 

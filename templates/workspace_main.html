@@ -1071,7 +1071,6 @@
             html += `<div class="ai-code-block">
               <div class="ai-code-header">
                 <span class="ai-code-lang">${lang}</span>
-                <button type="button" class="ai-apply-btn" onclick="applyToEditor(this)">▶ Apply to editor</button>
               </div>
               <pre class="ai-code-pre">${escaped}</pre>
             </div>`;
@@ -1082,14 +1081,7 @@
         return html || text.replace(/</g,'&lt;');
       }
 
-      function applyToEditor(btn) {
-        const pre = btn.closest('.ai-code-block')?.querySelector('.ai-code-pre');
-        if (!pre || !monacoEditor) return;
-        const code = pre.textContent;
-        monacoEditor.setValue(code);
-        setUnsaved(true);
-        codeToast('✅ Applied — กด Ctrl+S เพื่อ Save');
-      }
+      function applyToEditor() {}
 
       function updateChatContext() {
         const bar = document.getElementById('code-chat-context');
@@ -1573,7 +1565,7 @@
               if (stopBtn) stopBtn.remove();
               footerEl.style.display = '';
               footerEl.innerHTML = `<div class="agent-done-banner">
-                ✅ เสร็จแล้ว — ${evt.total_files} ไฟล์ ใน ${evt.iter} iterations
+                ✅ เสร็จแล้ว — ${evt.total_files} ไฟล์ · ${evt.iter} iterations · ${evt.verified ? 'ผ่านทดสอบแล้ว 🎉' : 'ตรวจสอบเสร็จ'}
               </div>`;
               agentLoopCtrl = null;
               msgs.scrollTop = msgs.scrollHeight;
