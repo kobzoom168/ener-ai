@@ -1176,7 +1176,11 @@
       window.initCodeAssistantPanel = async function() {
         try { const lp = localStorage.getItem('ener-last-project'); if (lp) currentProject = lp; } catch(e) {}
         await loadProjects();
-        if (currentProject) loadChatHistory(currentProject);
+        // After loadProjects, if currentProject is set and project is now in DOM, load its chat history
+        if (currentProject) {
+          const filesDiv = document.querySelector(`.code-project-files[data-project="${currentProject}"]`);
+          if (filesDiv) loadChatHistory(currentProject);
+        }
         loadServerContext();
       };
       window.loadExplorer = loadExplorer;
@@ -1194,6 +1198,7 @@
       window.detectLang = detectLang;
       window.updateTokenCounter = updateTokenCounter;
       window.askCodeAI = askCodeAI;
+      window.clearProjectChat = clearProjectChat;
 
       document.addEventListener('DOMContentLoaded', () => {
         initMonaco();
