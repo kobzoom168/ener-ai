@@ -417,6 +417,38 @@
       }
       #panel-code .code-chat-send:hover { background: #6d28d9; }
       #panel-code .code-chat-send:disabled { background: #2a2a2a; color: #444; cursor: not-allowed; }
+
+      /* Agent Loop */
+      .agent-run-wrap { background:#0f0f14;border:1px solid #2a2a3a;border-radius:8px;margin:8px 10px;overflow:hidden;font-size:12px; }
+      .agent-run-header { display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:#1a1a24;border-bottom:1px solid #2a2a3a;font-size:13px;font-weight:600;color:#ccc; }
+      .agent-run-task { padding:6px 12px 8px;color:#888;font-size:11px;font-style:italic;border-bottom:1px solid #1e1e2a; }
+      .agent-stop-btn { background:#c0392b;color:#fff;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px; }
+      .agent-stop-btn:hover { background:#e74c3c; }
+      .agent-run-steps { padding:6px 8px; }
+      .agent-run-footer { padding:8px 12px; }
+      .agent-done-banner { color:#2ecc71;font-weight:600;font-size:13px;padding:4px 0; }
+
+      .agent-step { background:#111118;border:1px solid #222230;border-radius:6px;margin-bottom:6px;overflow:hidden; }
+      .agent-step-header { display:flex;align-items:center;gap:6px;padding:6px 10px;background:#16161e;font-size:12px;font-weight:600;color:#bbb; }
+      .agent-step-icon { font-size:14px; }
+      .agent-step-label { flex:1; }
+      .agent-step-iter { color:#555;font-size:10px; }
+      .agent-step-spinner { color:#888;animation:spin 1s linear infinite;display:inline-block; }
+      @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+      .agent-step-status { font-size:13px; }
+      .agent-step-body { padding:6px 10px 8px; }
+
+      .agent-step-files { display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px; }
+      .agent-file-chip { font-size:10px;padding:2px 7px;border-radius:10px;background:#1e1e2c;color:#aaa; }
+      .agent-file-chip.ok { color:#4a9eff;background:#0d1a2e; }
+      .agent-file-chip.err { color:#f66;background:#1f0a0a; }
+
+      .agent-exec-result { margin:3px 0;border-radius:4px;padding:4px 8px;background:#0a0a12; }
+      .agent-exec-result.ok { border-left:2px solid #2ecc71; }
+      .agent-exec-result.err { border-left:2px solid #e74c3c; }
+      .agent-exec-cmd { font-family:monospace;font-size:11px;color:#9b9bff; }
+      .agent-exec-out { font-family:monospace;font-size:10px;color:#888;margin:3px 0 0;white-space:pre-wrap;word-break:break-all;max-height:120px;overflow:auto; }
+      .agent-step-text { margin-top:6px;color:#ccc;font-size:12px;line-height:1.5; }
     </style>
       <div id="code-toolbar" class="code-toolbar">
         <div class="code-toolbar-left">
@@ -494,6 +526,7 @@
             <button type="button" class="code-preset-btn" data-preset="หา bug และ fix ใน code นี้ ใช้ WRITE_FILE เพื่อ save fix">🐛 หา Bug</button>
             <button type="button" class="code-preset-btn" data-preset="สร้าง complete project ที่ครบ flow: main file + requirements + README พร้อม run ได้ทันที ใน project นี้">🚀 Complete</button>
             <button type="button" class="code-preset-btn" data-preset="ทดสอบ project นี้บน server ใช้ EXEC_CMD เพื่อ: 1) เช็ค syntax ทุก .py ด้วย python -m py_compile 2) เช็ค imports ด้วย python -c 3) แสดงไฟล์ทั้งหมด แล้วสรุปว่า project พร้อม deploy ไหม">🔬 Test</button>
+            <button type="button" id="btn-agent-loop" onclick="startAgentLoop()" style="background:linear-gradient(135deg,#7c3aed,#4a9eff);color:#fff;border:none;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap">🤖 Agent</button>
           </div>
           <div class="code-chat-input-area">
             <div class="code-chat-input-box">
@@ -1404,6 +1437,167 @@
           if (e.target === document.getElementById('modal-project-memory')) closeMemoryModal();
         });
       });
+      // ─────────────────────────────────────────────────────────────────────
+
+      // ── Agent Loop ────────────────────────────────────────────────────────
+      let agentLoopCtrl = null;
+
+      function startAgentLoop() {
+        if (!currentProject) { codeToast('เลือก project ก่อน'); return; }
+        const inp = document.getElementById('code-question-input');
+        const task = inp ? inp.value.trim() : '';
+        if (!task) { codeToast('พิมพ์ task ก่อนแล้วกด 🤖 Agent'); inp && inp.focus(); return; }
+        inp.value = '';
+        _runAgentLoop(task);
+      }
+
+      async function _runAgentLoop(task) {
+        const msgs = document.getElementById('code-chat-messages');
+        const modelSel = document.getElementById('code-model-select');
+        const model = modelSel ? modelSel.value : '';
+
+        // Agent run container in chat
+        const runId = 'agent-run-' + Date.now();
+        const wrap = document.createElement('div');
+        wrap.id = runId;
+        wrap.className = 'agent-run-wrap';
+        wrap.innerHTML = `
+          <div class="agent-run-header">
+            <span>🤖 Agent Loop — <strong>${escHtml(currentProject)}</strong></span>
+            <button onclick="stopAgentLoop()" id="btn-stop-agent" class="agent-stop-btn">⏹ Stop</button>
+          </div>
+          <div class="agent-run-task">${escHtml(task)}</div>
+          <div class="agent-run-steps" id="${runId}-steps"></div>
+          <div class="agent-run-footer" id="${runId}-footer" style="display:none"></div>
+        `;
+        msgs.appendChild(wrap);
+        msgs.scrollTop = msgs.scrollHeight;
+
+        const stepsEl = document.getElementById(`${runId}-steps`);
+        const footerEl = document.getElementById(`${runId}-footer`);
+
+        abortAgentLoop();
+        agentLoopCtrl = new AbortController();
+
+        let res;
+        try {
+          res = await fetch('/workspace/code/agent-loop', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({project: currentProject, task, model}),
+            signal: agentLoopCtrl.signal,
+          });
+        } catch(e) {
+          stepsEl.innerHTML += `<div style="color:#f66;font-size:12px;padding:6px 0">❌ ${e.message}</div>`;
+          return;
+        }
+
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '';
+        let currentStepEl = null;
+
+        const phaseIcon = {BUILD:'🔨', VERIFY:'🔍', REPAIR:'🔧'};
+        const phaseLabel = {BUILD:'Build', VERIFY:'Verify', REPAIR:'Repair'};
+
+        while (true) {
+          let done, value;
+          try { ({done, value} = await reader.read()); } catch(e) { break; }
+          if (done) break;
+          buf += dec.decode(value, {stream: true});
+          const lines = buf.split('\n');
+          buf = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            let evt;
+            try { evt = JSON.parse(line.slice(6)); } catch { continue; }
+
+            if (evt.type === 'step_start') {
+              const icon = phaseIcon[evt.phase] || '⚙️';
+              const lbl = phaseLabel[evt.phase] || evt.phase;
+              currentStepEl = document.createElement('div');
+              currentStepEl.className = 'agent-step';
+              currentStepEl.innerHTML = `
+                <div class="agent-step-header">
+                  <span class="agent-step-icon">${icon}</span>
+                  <span class="agent-step-label">${lbl}</span>
+                  <span class="agent-step-iter">iter ${evt.iter}</span>
+                  <span class="agent-step-spinner">⏳</span>
+                </div>
+                <div class="agent-step-body"></div>
+              `;
+              stepsEl.appendChild(currentStepEl);
+              msgs.scrollTop = msgs.scrollHeight;
+            }
+
+            if (evt.type === 'step_done' && currentStepEl) {
+              const spinner = currentStepEl.querySelector('.agent-step-spinner');
+              if (spinner) spinner.remove();
+              const body = currentStepEl.querySelector('.agent-step-body');
+              const allOk = (evt.exec_results || []).every(e => e.ok);
+              const hasExec = evt.exec_results && evt.exec_results.length > 0;
+              const statusIcon = hasExec ? (allOk ? '✅' : '❌') : '📝';
+              currentStepEl.querySelector('.agent-step-header').innerHTML +=
+                ` <span class="agent-step-status">${statusIcon}</span>`;
+
+              let html = '';
+              if (evt.actions && evt.actions.length) {
+                html += `<div class="agent-step-files">${evt.actions.map(a =>
+                  `<span class="agent-file-chip ${a.ok?'ok':'err'}" title="${a.ok?`${a.lines} lines`:(a.error||'')}">${a.ok?'📄':'❌'} ${escHtml(a.path.split('/').pop())}</span>`
+                ).join('')}</div>`;
+              }
+              if (evt.exec_results && evt.exec_results.length) {
+                html += evt.exec_results.map(er => {
+                  const out = ((er.stdout||'')+(er.stderr||'')+(er.error||'')).trim();
+                  return `<div class="agent-exec-result ${er.ok?'ok':'err'}">
+                    <span class="agent-exec-icon">${er.ok?'✅':'❌'}</span>
+                    <code class="agent-exec-cmd">$ ${escHtml(er.cmd)}</code>
+                    ${out ? `<pre class="agent-exec-out">${escHtml(out.slice(0,400))}</pre>` : ''}
+                  </div>`;
+                }).join('');
+              }
+              if (evt.content) {
+                html += `<div class="agent-step-text markdown-body" data-raw="${escHtml(JSON.stringify(evt.content))}"></div>`;
+              }
+              body.innerHTML = html;
+              // Render markdown in step text
+              body.querySelectorAll('.agent-step-text[data-raw]').forEach(el => {
+                try { el.innerHTML = marked.parse(JSON.parse(el.dataset.raw)); } catch {}
+              });
+              msgs.scrollTop = msgs.scrollHeight;
+              if (window.loadProjects) loadProjects();
+            }
+
+            if (evt.type === 'done') {
+              const stopBtn = document.getElementById('btn-stop-agent');
+              if (stopBtn) stopBtn.remove();
+              footerEl.style.display = '';
+              footerEl.innerHTML = `<div class="agent-done-banner">
+                ✅ เสร็จแล้ว — ${evt.total_files} ไฟล์ ใน ${evt.iter} iterations
+              </div>`;
+              agentLoopCtrl = null;
+              msgs.scrollTop = msgs.scrollHeight;
+            }
+
+            if (evt.type === 'error') {
+              stepsEl.innerHTML += `<div style="color:#f66;font-size:12px;padding:6px 0">❌ ${escHtml(evt.message)}</div>`;
+              const stopBtn = document.getElementById('btn-stop-agent');
+              if (stopBtn) stopBtn.remove();
+            }
+          }
+        }
+      }
+
+      function stopAgentLoop() {
+        abortAgentLoop();
+        const stopBtn = document.getElementById('btn-stop-agent');
+        if (stopBtn) { stopBtn.textContent = '⏹ Stopped'; stopBtn.disabled = true; }
+      }
+      function abortAgentLoop() {
+        if (agentLoopCtrl) { try { agentLoopCtrl.abort(); } catch {} agentLoopCtrl = null; }
+      }
+      window.startAgentLoop = startAgentLoop;
+      window.stopAgentLoop = stopAgentLoop;
       // ─────────────────────────────────────────────────────────────────────
 
       document.addEventListener('DOMContentLoaded', () => {

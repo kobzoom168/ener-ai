@@ -7306,6 +7306,167 @@ async def workspace_code_agent(request: Request):
     return JSONResponse({"answer": display, "actions": actions, "exec_results": exec_results})
 
 
+# ── Agent Loop ────────────────────────────────────────────────────────────────
+import json as _json
+
+@app.post("/workspace/code/agent-loop")
+async def workspace_code_agent_loop(request: Request):
+    """Autonomous multi-iteration agent: PLAN → VERIFY → REPAIR loop with SSE streaming."""
+    await _require_admin(request)
+    body = await request.json()
+    project = body.get("project", "").strip()
+    task = body.get("task", "").strip()
+    model = body.get("model", "")
+    if not project or not task:
+        raise HTTPException(400, "project and task required")
+
+    import asyncio as _aio
+
+    async def _run_cmd(cmd: str, project_dir: str):
+        try:
+            proc = await _aio.create_subprocess_shell(
+                cmd, stdout=_aio.subprocess.PIPE, stderr=_aio.subprocess.PIPE, cwd=project_dir,
+            )
+            try:
+                out, err = await _aio.wait_for(proc.communicate(), timeout=20)
+                return {
+                    "cmd": cmd, "ok": proc.returncode == 0,
+                    "stdout": out.decode("utf-8", errors="replace")[:700],
+                    "stderr": err.decode("utf-8", errors="replace")[:350],
+                    "returncode": proc.returncode,
+                }
+            except _aio.TimeoutError:
+                proc.kill(); await proc.wait()
+                return {"cmd": cmd, "ok": False, "error": "timeout (20s)", "returncode": -1}
+        except Exception as exc:
+            return {"cmd": cmd, "ok": False, "error": str(exc)[:200], "returncode": -1}
+
+    async def generate():
+        MAX_ITER = 6
+        project_dir = f"{BASE_ENER_CODE}/{project}"
+        os.makedirs(project_dir, exist_ok=True)
+
+        mem = await _load_project_memory(project)
+        mem_block = ""
+        if mem:
+            mem_block = "\n=== PROJECT MEMORY ===\n" + "\n".join(f"- {k}: {v}" for k, v in mem.items()) + "\n"
+
+        base_sys = (
+            f"You are Ener-AI Code Agent in AUTONOMOUS LOOP mode.\n"
+            f"Project: {project}  Path: /root/ener-code/{project}/\n"
+            f"PUBLIC DOMAIN: https://my-ener.uk\n"
+            f"########## NEVER USE localhost ##########\n"
+            f"FORBIDDEN: localhost, 127.0.0.1 — use https://my-ener.uk\n"
+            f"##########################################\n"
+            f"{mem_block}"
+            f"Use <WRITE_FILE path=\"{project}/filename\">content</WRITE_FILE> to write files.\n"
+            f"Use <EXEC_CMD cmd=\"command\"/> to run shell commands (CWD is already /root/ener-code/{project}/).\n"
+            f"CORRECT EXEC: 'ls -la'   WRONG: 'ls -la {project}'\n"
+            f"Use <UPDATE_MEMORY key=\"k\" value=\"v\"/> to save project facts.\n"
+        )
+
+        loop_msgs: list[dict] = []
+        all_actions: list[dict] = []
+        iteration = 0
+        phase = "BUILD"  # BUILD → VERIFY → REPAIR → VERIFY → ... → DONE
+
+        while iteration < MAX_ITER:
+            iteration += 1
+
+            if phase == "BUILD":
+                prompt = (
+                    f"TASK: {task}\n\n"
+                    f"Phase: BUILD — Create ALL files needed for this task now using WRITE_FILE tags.\n"
+                    f"After writing files, run EXEC_CMD to check syntax/imports on each main file.\n"
+                    f"Think step by step: what files are needed, write them all, then verify.\n"
+                    f"End with a short Thai summary of what was created."
+                )
+            elif phase == "VERIFY":
+                written = ", ".join(a["path"] for a in all_actions if a.get("ok"))
+                prompt = (
+                    f"Files written: {written}\n\n"
+                    f"Phase: VERIFY — Run EXEC_CMD checks on every key file.\n"
+                    f"Check syntax, imports, and basic structure. Report pass/fail clearly."
+                )
+            elif phase == "REPAIR":
+                last_exec = _json.dumps([e for e in loop_msgs[-1:]], ensure_ascii=False)[:800] if loop_msgs else ""
+                prompt = (
+                    f"Phase: REPAIR — Fix errors from last verification.\n"
+                    f"Context:\n{last_exec}\n\n"
+                    f"Rewrite the failing files using WRITE_FILE, then re-check with EXEC_CMD."
+                )
+            else:
+                break
+
+            yield f"data: {_json.dumps({'type': 'step_start', 'phase': phase, 'iter': iteration})}\n\n"
+
+            try:
+                raw = await ai_chat(
+                    prompt, system=base_sys, agent="AgentLoop",
+                    messages=loop_msgs[-8:], preferred_model=model, strict_model=False,
+                )
+            except Exception as exc:
+                yield f"data: {_json.dumps({'type': 'error', 'message': str(exc)[:200]})}\n\n"
+                return
+
+            # Process WRITE_FILE
+            step_actions: list[dict] = []
+            for m in _WRITE_FILE_RE.finditer(raw):
+                rel_path = m.group(1).strip()
+                content = m.group(2).lstrip("\n").rstrip("\n")
+                try:
+                    full = _ener_code_resolve(rel_path)
+                    os.makedirs(os.path.dirname(full), exist_ok=True)
+                    with open(full, "w", encoding="utf-8") as fh:
+                        fh.write(content)
+                    step_actions.append({"path": rel_path, "ok": True, "lines": len(content.splitlines())})
+                    all_actions.append({"path": rel_path, "ok": True})
+                except Exception as exc:
+                    step_actions.append({"path": rel_path, "ok": False, "error": str(exc)})
+
+            # Save UPDATE_MEMORY
+            for m in _UPDATE_MEMORY_RE.finditer(raw):
+                try:
+                    await _save_memory_entry(project, m.group(1).strip(), m.group(2).strip())
+                except Exception:
+                    pass
+
+            # Process EXEC_CMD
+            step_exec: list[dict] = []
+            for cmd in _EXEC_CMD_RE.findall(raw)[:5]:
+                step_exec.append(await _run_cmd(cmd, project_dir))
+
+            # Clean display
+            display = _WRITE_FILE_RE.sub("", raw)
+            display = _EXEC_CMD_RE.sub("", display)
+            display = _UPDATE_MEMORY_RE.sub("", display).strip()
+
+            # Update conversation history
+            loop_msgs.append({"role": "user", "content": prompt[:400]})
+            loop_msgs.append({"role": "assistant", "content": raw[:1200]})
+
+            yield f"data: {_json.dumps({'type': 'step_done', 'phase': phase, 'iter': iteration, 'content': display, 'actions': step_actions, 'exec_results': step_exec})}\n\n"
+
+            # Decide next phase
+            if phase == "BUILD":
+                if step_exec:
+                    phase = "DONE" if all(e["ok"] for e in step_exec) else "REPAIR"
+                else:
+                    phase = "VERIFY"
+            elif phase == "VERIFY":
+                phase = "DONE" if (not step_exec or all(e["ok"] for e in step_exec)) else "REPAIR"
+            elif phase == "REPAIR":
+                phase = "VERIFY"
+
+            if phase == "DONE":
+                break
+
+        total_ok = len([a for a in all_actions if a.get("ok")])
+        yield f"data: {_json.dumps({'type': 'done', 'iter': iteration, 'total_files': total_ok})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
 @app.post("/workspace/code/remember")
 async def workspace_code_remember(request: Request):
     await _require_admin(request)
