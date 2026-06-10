@@ -7584,6 +7584,170 @@ async def workspace_code_agent_stream(request: Request):
     )
 
 
+@app.post("/workspace/code/agent-vision")
+async def workspace_code_agent_vision(request: Request):
+    """One-shot vision agent: pasted image + question -> Claude Haiku -> WRITE_FILE/EXEC_CMD."""
+    await _require_admin(request)
+    form = await request.form()
+
+    question      = str(form.get("question", "")).strip()
+    file_path     = str(form.get("file_path", ""))
+    file_content  = str(form.get("file_content", ""))
+    project       = str(form.get("project", "")).strip()
+    server_ctx    = _json.loads(form.get("server_context") or "{}")
+    project_files = str(form.get("project_files", ""))
+    messages      = _json.loads(form.get("messages") or "[]")
+
+    image_b64, image_media = await _read_workspace_image_from_form(form)
+    if not image_b64:
+        raise HTTPException(400, "image required")
+    if not question:
+        question = "ดูรูปนี้แล้วช่วยวิเคราะห์/แก้ไข code ให้ตรงกับสิ่งที่เห็นในรูป"
+
+    # ── System prompt (same as agent-stream) ──────────────────────────────
+    project_memory = await _load_project_memory(project) if project else {}
+    memory_block = ""
+    if project_memory:
+        mem_block_lines = "\n".join(f"- {k}: {v}" for k, v in project_memory.items())
+        memory_block = f"\n=== PROJECT MEMORY ===\n{mem_block_lines}\n"
+
+    file_ctx = ""
+    if project_files:
+        file_ctx += f"\n=== Files in project '{project}' ===\n{project_files}\n"
+    if file_path and file_content:
+        preview = "\n".join(file_content.splitlines()[:200])
+        file_ctx += f"\n=== Current File: {file_path} ===\n```\n{preview}\n```\n"
+
+    srv = (server_ctx.get("server") or {})
+    containers_txt = "\n".join((server_ctx.get("running_containers") or [])[:8])
+    server_block = ""
+    if srv:
+        server_block = (
+            f"\n=== SERVER STATE ===\n"
+            f"CPU: {srv.get('cpu_load','?')} | RAM: {srv.get('ram','?')} | Disk: {srv.get('disk','?')}\n"
+        )
+        if containers_txt:
+            server_block += f"Running containers:\n{containers_txt}\n"
+
+    system = (
+        f"You are Ener-AI Code Agent. You write files directly using WRITE_FILE tags.\n\n"
+        f"STACK: Python 3.11 / FastAPI / aiosqlite / Docker / Hetzner CPX22\n"
+        f"PUBLIC DOMAIN: https://my-ener.uk\n"
+        f"PROJECT PATH: /root/ener-code/{project or 'project-name'}/ on the server\n"
+        f"########## NEVER USE localhost ##########\n"
+        f"FORBIDDEN: localhost:8000, localhost:any_port, 127.0.0.1\n"
+        f"ALWAYS use: https://my-ener.uk or http://my-ener.uk:<port>\n"
+        f"##########################################\n"
+        f"{memory_block}"
+        f"{server_block}"
+        f"{file_ctx}\n"
+        f"\n=== USER ATTACHED A SCREENSHOT/IMAGE — analyze it carefully and use it as the main context ===\n"
+        f"Use <WRITE_FILE path=\"{project or 'my-project'}/filename\">content</WRITE_FILE> to write files.\n"
+        f"Use <EXEC_CMD cmd=\"command\"/> to run shell commands (CWD is /root/ener-code/{project or 'project'}/).\n"
+        f"CORRECT: 'ls -la'   WRONG: 'ls -la {project or 'project'}'\n"
+        f"Use <UPDATE_MEMORY key=\"k\" value=\"v\"/> to save project facts.\n"
+        f"After WRITE_FILE, write a short Thai summary of what was done.\n"
+    )
+
+    clean_history = [
+        m for m in messages
+        if m.get("role") in ("user", "assistant") and m.get("content")
+    ][-12:]
+
+    from app.core.ai import _anthropic_messages, _PRIMARY_MODEL
+    from app.core.vision import build_user_content
+    import anthropic as _anthropic
+
+    client = _anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+    anthropic_msgs = _anthropic_messages(question, clean_history)
+    anthropic_msgs[-1]["content"] = build_user_content(
+        question, image_base64=image_b64, image_media_type=image_media
+    )
+    try:
+        response = await client.messages.create(
+            model=_PRIMARY_MODEL,
+            max_tokens=4096,
+            system=system,
+            messages=anthropic_msgs,
+        )
+    except Exception as exc:
+        return JSONResponse({"answer": f"❌ Vision AI error: {str(exc)[:300]}", "actions": [], "diffs": {}, "exec_results": []})
+    raw_answer = "".join(getattr(b, "text", "") for b in response.content)
+
+    # ── Parse WRITE_FILE (with diff) ───────────────────────────────────────
+    import os, difflib as _difflib
+    actions: list[dict] = []
+    diffs: dict[str, dict] = {}
+    for m in _WRITE_FILE_RE.finditer(raw_answer):
+        rel_path = m.group(1).strip()
+        content  = m.group(2).lstrip("\n").rstrip("\n")
+        try:
+            full_p = _ener_code_resolve(rel_path)
+            old_lines: list[str] = []
+            is_new = True
+            if os.path.exists(full_p):
+                with open(full_p, "r", encoding="utf-8", errors="replace") as f:
+                    old_lines = f.read().splitlines()
+                is_new = False
+            new_lines = content.splitlines()
+            diff_data: list[dict] = []
+            if is_new:
+                for ln in new_lines[:60]:
+                    diff_data.append({"t": "+", "l": ln})
+            else:
+                matcher = _difflib.SequenceMatcher(None, old_lines, new_lines)
+                count = 0
+                for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+                    if count >= 60:
+                        break
+                    if tag == "equal":
+                        for ln in old_lines[i1:min(i2, i1 + 2)]:
+                            diff_data.append({"t": "=", "l": ln}); count += 1
+                    elif tag in ("replace", "delete"):
+                        for ln in old_lines[i1:i2]:
+                            diff_data.append({"t": "-", "l": ln}); count += 1
+                    if tag in ("replace", "insert"):
+                        for ln in new_lines[j1:j2]:
+                            diff_data.append({"t": "+", "l": ln}); count += 1
+            os.makedirs(os.path.dirname(full_p), exist_ok=True)
+            with open(full_p, "w", encoding="utf-8") as fh:
+                fh.write(content)
+            added = sum(1 for d in diff_data if d["t"] == "+")
+            removed = sum(1 for d in diff_data if d["t"] == "-")
+            actions.append({"type": "write_file", "path": rel_path, "ok": True, "lines": len(new_lines)})
+            diffs[rel_path] = {"diff": diff_data, "is_new": is_new, "added": added, "removed": removed}
+        except Exception as exc:
+            actions.append({"type": "write_file", "path": rel_path, "ok": False, "error": str(exc)})
+
+    # ── Parse EXEC_CMD (safety-checked via _agent_run_cmd) ─────────────────
+    exec_results: list[dict] = []
+    exec_cmds = _EXEC_CMD_RE.findall(raw_answer)
+    if exec_cmds and project:
+        project_dir = f"{BASE_ENER_CODE}/{project}"
+        os.makedirs(project_dir, exist_ok=True)
+        for cmd in exec_cmds[:6]:
+            exec_results.append(await _agent_run_cmd(cmd, project_dir))
+
+    # ── UPDATE_MEMORY ───────────────────────────────────────────────────────
+    if project:
+        for m in _UPDATE_MEMORY_RE.finditer(raw_answer):
+            try:
+                await _save_memory_entry(project, m.group(1).strip(), m.group(2).strip())
+            except Exception:
+                pass
+
+    display = _WRITE_FILE_RE.sub("", raw_answer)
+    display = _EXEC_CMD_RE.sub("", display)
+    display = _UPDATE_MEMORY_RE.sub("", display).strip()
+
+    return JSONResponse({
+        "answer": display,
+        "actions": actions,
+        "diffs": diffs,
+        "exec_results": exec_results,
+    })
+
+
 # ── Agent Loop ────────────────────────────────────────────────────────────────
 import json as _json
 

@@ -418,6 +418,14 @@
       #panel-code .code-chat-send:hover { background: #6d28d9; }
       #panel-code .code-chat-send:disabled { background: #2a2a2a; color: #444; cursor: not-allowed; }
 
+      /* ── Pasted image preview ──────────────────────────────────────── */
+      .cc-image-preview { display:flex; align-items:center; gap:8px; padding:6px 10px; background:#1a1a2e; border:1px solid #333; border-radius:6px; margin:0 0 6px; }
+      .cc-image-preview img { max-height:48px; max-width:80px; border-radius:4px; object-fit:cover; }
+      .cc-image-preview .cc-img-remove { margin-left:auto; cursor:pointer; color:#999; background:none; border:none; font-size:16px; }
+      .cc-image-preview .cc-img-remove:hover { color:#f66; }
+      .cc-msg-image { margin:0 0 6px; }
+      .cc-msg-image img { max-height:120px; max-width:220px; border-radius:6px; object-fit:cover; display:block; }
+
       /* ── Claude Code style AI response ─────────────────────────────── */
       .cc-style { padding: 8px 10px; }
       .cc-think-row { display:flex;align-items:center;gap:6px;padding:4px 0;font-size:12px;color:#888;cursor:default; }
@@ -573,7 +581,12 @@
           </div>
           <div class="code-chat-input-area">
             <div class="code-chat-input-box">
-              <textarea id="code-question-input" rows="2" placeholder="ถามเกี่ยวกับ code... (Enter ส่ง, Shift+Enter ขึ้นบรรทัดใหม่)"></textarea>
+              <div id="code-image-preview" class="cc-image-preview" style="display:none">
+                <img id="code-image-preview-img" src="" alt="pasted image">
+                <span style="font-size:11px;color:#888">รูปแนบ — AI จะดูรูปนี้ประกอบ</span>
+                <button type="button" class="cc-img-remove" onclick="clearPastedImage()">×</button>
+              </div>
+              <textarea id="code-question-input" rows="2" placeholder="ถามเกี่ยวกับ code... (Enter ส่ง, Shift+Enter ขึ้นบรรทัดใหม่, วางรูปได้)"></textarea>
               <div class="code-chat-input-bottom">
                 <span class="code-chat-input-hint">Enter ส่ง · Shift+Enter บรรทัดใหม่</span>
                 <button type="button" id="btn-code-send" class="code-chat-send">↑</button>
@@ -1177,10 +1190,47 @@
       }
       function _stopThinkWords() { clearInterval(_thinkWordTimer); _thinkWordTimer = null; }
 
+      // ── Pasted image (Ctrl+V) ──────────────────────────────────────────────
+      let _pastedImageBase64 = null;
+      let _pastedImageMime = 'image/png';
+
+      function clearPastedImage() {
+        _pastedImageBase64 = null;
+        const prev = document.getElementById('code-image-preview');
+        if (prev) prev.style.display = 'none';
+      }
+
+      function setupImagePaste() {
+        const input = document.getElementById('code-question-input');
+        if (!input) return;
+        input.addEventListener('paste', (e) => {
+          const items = e.clipboardData?.items || [];
+          for (const item of items) {
+            if (item.type.startsWith('image/')) {
+              const file = item.getAsFile();
+              if (!file) continue;
+              _pastedImageMime = file.type || 'image/png';
+              const reader = new FileReader();
+              reader.onload = (ev) => {
+                const dataUrl = ev.target.result;
+                _pastedImageBase64 = dataUrl.split(',')[1];
+                const prev = document.getElementById('code-image-preview');
+                const img = document.getElementById('code-image-preview-img');
+                if (img) img.src = dataUrl;
+                if (prev) prev.style.display = 'flex';
+              };
+              reader.readAsDataURL(file);
+              e.preventDefault();
+              break;
+            }
+          }
+        });
+      }
+
       async function askCodeAI(preset) {
         const input = document.getElementById('code-question-input');
         const question = preset || (input ? input.value.trim() : '');
-        if (!question) return;
+        if (!question && !_pastedImageBase64) return;
         if (input && !preset) { input.value = ''; input.style.height = 'auto'; }
         const modelSelect = document.getElementById('code-model-select');
         const selectedModel = modelSelect ? modelSelect.value : 'featherless-coder';
@@ -1201,7 +1251,10 @@
         }
 
         // Add user bubble
-        msgs.innerHTML += `<div class="code-chat-user">${question.replace(/</g,'&lt;')}</div>`;
+        const _imgThumb = _pastedImageBase64
+          ? `<div class="cc-msg-image"><img src="data:${_pastedImageMime};base64,${_pastedImageBase64}" alt="pasted image"></div>`
+          : '';
+        msgs.innerHTML += `<div class="code-chat-user">${_imgThumb}${escHtml(question)}</div>`;
 
         // Build AI response container (Claude Code style)
         const rid = 'ai-' + Date.now();
@@ -1245,6 +1298,96 @@
             <div class="cc-tool-detail"></div>`;
           toolsEl.appendChild(row);
           return row;
+        }
+
+        // ── Pasted image: one-shot vision request ───────────────────────────
+        if (_pastedImageBase64) {
+          const imgB64 = _pastedImageBase64;
+          const imgMime = _pastedImageMime;
+          clearPastedImage();
+          try {
+            const byteChars = atob(imgB64);
+            const byteNumbers = new Array(byteChars.length);
+            for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
+            const byteArray = new Uint8Array(byteNumbers);
+            const blob = new Blob([byteArray], {type: imgMime});
+
+            const fd = new FormData();
+            fd.append('question', question);
+            fd.append('file_path', currentFilePath || '');
+            fd.append('file_content', fileContent);
+            fd.append('project', currentProject || '');
+            fd.append('project_files', projectFiles);
+            fd.append('messages', JSON.stringify(history));
+            fd.append('server_context', JSON.stringify(serverContext || {}));
+            fd.append('image', blob, 'pasted-image.' + (imgMime.split('/')[1] || 'png'));
+
+            const res = await fetch('/workspace/code/agent-vision', {method: 'POST', body: fd});
+            const data = await res.json();
+
+            _stopThinkWords();
+            wordEl.textContent = selectedModel;
+            thinkRow.classList.add('done');
+
+            for (const action of (data.actions || [])) {
+              const toolId = rid + '-tool-' + Date.now() + '-' + Math.random().toString(36).slice(2,6);
+              if (action.type === 'write_file') {
+                const row = addToolRow(action.ok ? 'ok' : 'err', 'WriteFile', action.path, toolId);
+                if (action.ok) {
+                  const diffInfo = (data.diffs || {})[action.path];
+                  const descEl = row.querySelector('.cc-tool-desc');
+                  if (diffInfo) {
+                    const badge = diffInfo.is_new
+                      ? `<span style="color:#4a9eff">new file</span>`
+                      : `<span style="color:#5f5">+${diffInfo.added||0}</span> <span style="color:#f66">-${diffInfo.removed||0}</span>`;
+                    if (descEl) descEl.innerHTML = `${escHtml(action.path||'')} &nbsp;${badge}&nbsp; <span style="color:#555">${action.lines} lines</span>`;
+                    const detailEl = row.querySelector('.cc-tool-detail');
+                    if (detailEl && diffInfo.diff && diffInfo.diff.length) {
+                      detailEl.innerHTML = _renderDiff(diffInfo.diff, action.path, diffInfo.is_new);
+                    }
+                  }
+                  writtenProjects.add((action.path||'').split('/')[0]);
+                  lastWrittenPath = action.path;
+                } else {
+                  const detailEl = row.querySelector('.cc-tool-detail');
+                  if (detailEl) detailEl.textContent = `✗ ${action.error||''}`;
+                }
+              }
+            }
+
+            for (const out of (data.exec_results || [])) {
+              const toolId = rid + '-tool-' + Date.now() + '-' + Math.random().toString(36).slice(2,6);
+              const row = addToolRow(out.ok ? 'ok' : 'err', 'Exec', out.cmd || '', toolId);
+              const detailEl = row.querySelector('.cc-tool-detail');
+              const outText = (out.stdout || '') + (out.stderr || '') + (out.error || '');
+              if (detailEl) detailEl.innerHTML = `<pre class="cc-exec-out">${escHtml(outText.slice(0,400))}</pre>`;
+            }
+
+            finalText = data.answer || '';
+            respEl.style.display = '';
+            respEl.innerHTML = `<div class="cc-final-text markdown-body">${marked.parse(finalText)}</div>`;
+
+            saveChatHistory(currentProject);
+            updateTokenCounter(question, finalText);
+
+            for (const proj of writtenProjects) {
+              const filesDiv = document.querySelector(`.code-project-files[data-project="${proj}"]`);
+              if (!filesDiv) {
+                await loadProjects();
+              } else if (filesDiv.style.display !== 'none') {
+                filesDiv.dataset.loaded = '';
+                await loadFilesInto(proj, filesDiv);
+              }
+            }
+            if (lastWrittenPath) await loadEnerFile(lastWrittenPath);
+
+            msgs.scrollTop = msgs.scrollHeight;
+          } catch(e) {
+            _stopThinkWords();
+            aiDiv.innerHTML += `<div class="code-chat-error">❌ ${escHtml(e.message)}</div>`;
+            codeToast('❌ ' + (e.message || 'Vision AI request failed'));
+          }
+          return;
         }
 
         try {
@@ -1438,6 +1581,7 @@
             this.style.height = Math.min(this.scrollHeight, 200) + 'px';
           });
         }
+        setupImagePaste();
         // Drag-to-resize chat column
         (function() {
           const handle = document.getElementById('chat-resize-handle');
