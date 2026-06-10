@@ -7032,10 +7032,55 @@ _UPDATE_MEMORY_RE = __import__("re").compile(
     r'<UPDATE_MEMORY\s+key="([^"]+)"\s+value="([^"]+)"\s*/?>', __import__("re").MULTILINE
 )
 
+# ── EXEC_CMD safety net ───────────────────────────────────────────────────────
+_BLOCKED_CMD_PATTERNS = [
+    (r'rm\s+-rf\s+[/~*]', 'attempt to delete root or home directory'),
+    (r':\(\)\s*{\s*:\s*\|\s*:\s*&\s*}\s*;?\s*:', 'fork bomb detected'),
+    (r'mkfs\b|dd\s+if=|>\s*/dev/(sd|nvme)', 'disk manipulation command'),
+    (r'shutdown\b|reboot\b|halt\b|init\s+[06]\b|poweroff\b', 'system shutdown command'),
+    (r'chmod\s+-R\s+777\s+/', 'recursive permission change on root'),
+    (r'sudo\b', 'sudo not allowed (already running as root)'),
+]
+
+_CONFIRM_CMD_PATTERNS = [
+    (r'rm\s+-rf\s+.*/\.\.', 'dangerous recursive delete (parent directory)'),
+    (r'git\s+push\s+--force|git\s+push\s+-f\b', 'force push to git'),
+    (r'docker\s+(rm\b|stop\b|system\s+prune|compose\s+down)', 'docker container removal'),
+    (r'kill\s+-9\b|pkill\b', 'forceful process termination'),
+    (r'drop\s+(table|database)\b|truncate\b', 'SQL data destruction'),
+    (r'systemctl\s+(stop|disable|restart)', 'system service manipulation'),
+    (r'>\s*/etc/|>\s*/root/(?!ener-code)', 'file redirection to system directories'),
+]
+
+
+def _check_cmd_safety(cmd: str) -> tuple[str, str | None]:
+    """Check if a shell command is safe to auto-execute.
+
+    Returns ("blocked", reason) / ("confirm", reason) / ("ok", None).
+    """
+    import re
+    cmd_lower = cmd.lower()
+    for pattern, reason in _BLOCKED_CMD_PATTERNS:
+        if re.search(pattern, cmd_lower, re.IGNORECASE):
+            return "blocked", reason
+    for pattern, reason in _CONFIRM_CMD_PATTERNS:
+        if re.search(pattern, cmd_lower, re.IGNORECASE):
+            return "confirm", reason
+    return "ok", None
+
 
 async def _agent_run_cmd(cmd: str, cwd: str) -> dict:
     """Run a shell command asynchronously, return result dict."""
     import asyncio as _aio
+
+    verdict, reason = _check_cmd_safety(cmd)
+    if verdict != "ok":
+        return {
+            "cmd": cmd, "ok": False, "blocked": True, "verdict": verdict,
+            "error": f"⛔ คำสั่งนี้ถูกบล็อกเพื่อความปลอดภัย: {reason}. ถ้าจำเป็นต้องรัน ให้แจ้ง user รันเองทาง SSH",
+            "returncode": -1,
+        }
+
     try:
         proc = await _aio.create_subprocess_shell(
             cmd, stdout=_aio.subprocess.PIPE, stderr=_aio.subprocess.PIPE, cwd=cwd,
@@ -7269,6 +7314,14 @@ async def workspace_code_agent(request: Request):
         project_dir = f"{BASE_ENER_CODE}/{project}"
         os.makedirs(project_dir, exist_ok=True)
         for cmd in exec_cmds[:6]:
+            verdict, reason = _check_cmd_safety(cmd)
+            if verdict != "ok":
+                exec_results.append({
+                    "cmd": cmd, "ok": False, "blocked": True, "verdict": verdict,
+                    "error": f"⛔ คำสั่งนี้ถูกบล็อกเพื่อความปลอดภัย: {reason}. ถ้าจำเป็นต้องรัน ให้แจ้ง user รันเองทาง SSH",
+                    "returncode": -1,
+                })
+                continue
             try:
                 proc = await _aio.create_subprocess_shell(
                     cmd,
@@ -7548,6 +7601,13 @@ async def workspace_code_agent_loop(request: Request):
     import asyncio as _aio
 
     async def _run_cmd(cmd: str, project_dir: str):
+        verdict, reason = _check_cmd_safety(cmd)
+        if verdict != "ok":
+            return {
+                "cmd": cmd, "ok": False, "blocked": True, "verdict": verdict,
+                "error": f"⛔ คำสั่งนี้ถูกบล็อกเพื่อความปลอดภัย: {reason}. ถ้าจำเป็นต้องรัน ให้แจ้ง user รันเองทาง SSH",
+                "returncode": -1,
+            }
         try:
             proc = await _aio.create_subprocess_shell(
                 cmd, stdout=_aio.subprocess.PIPE, stderr=_aio.subprocess.PIPE, cwd=project_dir,
