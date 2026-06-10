@@ -427,13 +427,16 @@
       .cc-msg-image img { max-height:120px; max-width:220px; border-radius:6px; object-fit:cover; display:block; }
 
       /* ── Claude Code style AI response ─────────────────────────────── */
-      .cc-style { padding: 8px 10px; }
+      .cc-style { padding: 8px 10px; position:relative; }
       .cc-think-row { display:flex;align-items:center;gap:6px;padding:4px 0;font-size:12px;color:#888;cursor:default; }
       .cc-think-row.done .cc-dot-thinking { background:#4a9eff;animation:none; }
       .cc-think-word { font-style:italic; }
       .cc-think-tokens { color:#555;font-size:10px; }
 
-      .cc-dot { width:8px;height:8px;border-radius:50%;flex-shrink:0; }
+      /* Connecting "pipeline" line through the action dots (think-row → tool rows) */
+      .cc-pipeline-line { position:absolute; width:1px; background:#2a2a3a; z-index:0; pointer-events:none; }
+
+      .cc-dot { width:8px;height:8px;border-radius:50%;flex-shrink:0;position:relative;z-index:1; }
       .cc-dot-thinking { background:#555;animation:cc-pulse 1.2s ease-in-out infinite; }
       .cc-dot-running  { background:#f0a500;animation:cc-pulse 0.8s ease-in-out infinite; }
       .cc-dot-ok  { background:#2ecc71; }
@@ -1307,9 +1310,10 @@
           row.innerHTML = `<span class="cc-dot ${icon === 'ok' ? 'cc-dot-ok' : icon === 'err' ? 'cc-dot-err' : 'cc-dot-running'}"></span>
             <span class="cc-tool-label">${escHtml(label)}</span>
             <span class="cc-tool-desc">${escHtml(desc)}</span>
-            <span class="cc-tool-toggle" onclick="this.closest('.cc-tool-row').classList.toggle('open')">›</span>
+            <span class="cc-tool-toggle" onclick="cc_toggleTool(this)">›</span>
             <div class="cc-tool-detail"></div>`;
           toolsEl.appendChild(row);
+          _updatePipelineLine(aiDiv);
           return row;
         }
 
@@ -1781,6 +1785,37 @@
           </div>
         </div>`;
       }
+      // ─────────────────────────────────────────────────────────────────────────
+
+      // ── Pipeline line: connects the action dots (think → tool rows) ──────────
+      function _updatePipelineLine(aiDiv) {
+        if (!aiDiv) return;
+        const dots = aiDiv.querySelectorAll('.cc-think-row > .cc-dot, .cc-tools > .cc-tool-row > .cc-dot');
+        let line = aiDiv.querySelector('.cc-pipeline-line');
+        if (dots.length < 2) {
+          if (line) line.remove();
+          return;
+        }
+        if (!line) {
+          line = document.createElement('div');
+          line.className = 'cc-pipeline-line';
+          aiDiv.insertBefore(line, aiDiv.firstChild);
+        }
+        const containerRect = aiDiv.getBoundingClientRect();
+        const first = dots[0].getBoundingClientRect();
+        const last = dots[dots.length - 1].getBoundingClientRect();
+        const x = (first.left + first.width / 2) - containerRect.left;
+        const top = (first.top + first.height / 2) - containerRect.top;
+        const bottom = (last.top + last.height / 2) - containerRect.top;
+        line.style.left = x + 'px';
+        line.style.top = top + 'px';
+        line.style.height = Math.max(0, bottom - top) + 'px';
+      }
+      window.cc_toggleTool = function(el) {
+        const row = el.closest('.cc-tool-row');
+        if (row) row.classList.toggle('open');
+        _updatePipelineLine(el.closest('.cc-style'));
+      };
       // ─────────────────────────────────────────────────────────────────────────
 
       window.showProjectMemory = showProjectMemory;
