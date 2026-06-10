@@ -7026,7 +7026,7 @@ _WRITE_FILE_RE = __import__("re").compile(
     r'<WRITE_FILE\s+path="([^"]+)">([\s\S]*?)</WRITE_FILE>', __import__("re").MULTILINE
 )
 _EXEC_CMD_RE = __import__("re").compile(
-    r'<EXEC_CMD\s+cmd="([^"]+)"\s*/?>', __import__("re").MULTILINE
+    r'<EXEC_CMD\s+cmd="(.*?)"\s*/?>', __import__("re").MULTILINE
 )
 _UPDATE_MEMORY_RE = __import__("re").compile(
     r'<UPDATE_MEMORY\s+key="([^"]+)"\s+value="([^"]+)"\s*/?>', __import__("re").MULTILINE
