@@ -456,18 +456,23 @@
       .cc-final-text { font-size:12px;color:#ccc;line-height:1.6; }
 
       /* Diff view */
-      .cc-diff-wrap { font-family:monospace;font-size:10px;border-radius:4px;overflow:hidden;margin:3px 0;border:1px solid #222; }
-      .cc-diff-header { background:#1a1a2e;padding:3px 8px;color:#888;font-size:10px;display:flex;gap:8px; }
-      .cc-diff-table { display:grid;grid-template-columns:1fr 1fr;width:100%; }
-      .cc-diff-col { overflow:auto;max-height:200px; }
-      .cc-diff-col-old { border-right:1px solid #222;background:#130a0a; }
-      .cc-diff-col-new { background:#0a130a; }
-      .cc-diff-col-label { padding:2px 6px;font-size:9px;color:#666;border-bottom:1px solid #1a1a1a; }
-      .cc-diff-line { padding:0 6px;line-height:1.5;white-space:pre;overflow:hidden;text-overflow:ellipsis; }
-      .cc-diff-line.removed { background:#2a0a0a;color:#f66; }
-      .cc-diff-line.added   { background:#0a2a0a;color:#5f5; }
-      .cc-diff-line.same    { color:#555; }
-      .cc-diff-line.new-file { color:#aaa; }
+      /* ── Unified diff card (VS Code / Claude Code style) ──────────────── */
+      .cc-diff-card { font-family:'SF Mono',Menlo,Monaco,Consolas,monospace; font-size:11px; border-radius:6px; overflow:hidden; margin:4px 0; background:#1e1e1e; border:1px solid #2d2d2d; }
+      .cc-diff-card-header { display:flex; align-items:center; gap:8px; padding:5px 10px; color:#aaa; font-size:11px; border-bottom:1px solid #2d2d2d; }
+      .cc-diff-card-path { color:#ccc; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .cc-diff-stat-new { color:#4a9eff; }
+      .cc-diff-stat-add { color:#3fb950; }
+      .cc-diff-stat-del { color:#f85149; margin-left:4px; }
+      .cc-diff-card-body { max-height:260px; overflow:auto; padding:2px 0; }
+      .cc-diff-row { display:flex; line-height:18px; white-space:pre; }
+      .cc-diff-gutter { flex-shrink:0; width:34px; text-align:right; padding-right:8px; color:#5a5a6a; user-select:none; }
+      .cc-diff-marker { flex-shrink:0; width:14px; text-align:center; color:#5a5a6a; }
+      .cc-diff-code { color:#d4d4d4; overflow-x:auto; }
+      .cc-diff-row.t-add { background:rgba(46,160,67,0.15); }
+      .cc-diff-row.t-add .cc-diff-marker { color:#3fb950; }
+      .cc-diff-row.t-del { background:rgba(248,81,73,0.15); }
+      .cc-diff-row.t-del .cc-diff-marker { color:#f85149; }
+      .cc-diff-row.t-ctx .cc-diff-code { color:#888; }
 
       /* Agent Loop */
       .agent-run-wrap { background:#0f0f14;border:1px solid #2a2a3a;border-radius:8px;margin:8px 10px;overflow:hidden;font-size:12px; }
@@ -1721,49 +1726,34 @@
       function escHtml(s) {
         return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
       }
-      // ── Diff renderer ────────────────────────────────────────────────────────
+      // ── Diff renderer (VS Code / Claude Code style unified gutter view) ──────
       function _renderDiff(diff, path, isNew) {
         const removed = diff.filter(d => d.t === '-');
         const added   = diff.filter(d => d.t === '+');
-        const same    = diff.filter(d => d.t === '=');
         const fname   = (path||'').split('/').pop();
 
-        if (isNew) {
-          const rows = added.slice(0, 40).map(d =>
-            `<div class="cc-diff-line new-file">${escHtml(d.l)}</div>`
-          ).join('');
-          return `<div class="cc-diff-wrap">
-            <div class="cc-diff-header"><span>${escHtml(fname)}</span><span style="color:#4a9eff">new file · ${added.length} lines</span></div>
-            <div style="max-height:140px;overflow:auto;background:#0a130a;padding:2px 0">${rows}</div>
-          </div>`;
-        }
+        const rows = diff.slice(0, 80).map(d => {
+          const cls = d.t === '+' ? 't-add' : d.t === '-' ? 't-del' : 't-ctx';
+          const marker = d.t === '+' ? '+' : d.t === '-' ? '-' : '';
+          const num = (d.n != null) ? d.n : '';
+          return `<div class="cc-diff-row ${cls}">` +
+            `<span class="cc-diff-gutter">${num}</span>` +
+            `<span class="cc-diff-marker">${marker}</span>` +
+            `<span class="cc-diff-code">${escHtml(d.l) || '&nbsp;'}</span>` +
+          `</div>`;
+        }).join('');
 
-        // Side-by-side for edits
-        let leftHtml = '', rightHtml = '';
-        for (const d of diff) {
-          if (d.t === '=') {
-            leftHtml  += `<div class="cc-diff-line same">${escHtml(d.l)||'&nbsp;'}</div>`;
-            rightHtml += `<div class="cc-diff-line same">${escHtml(d.l)||'&nbsp;'}</div>`;
-          } else if (d.t === '-') {
-            leftHtml  += `<div class="cc-diff-line removed">${escHtml(d.l)||'&nbsp;'}</div>`;
-          } else if (d.t === '+') {
-            rightHtml += `<div class="cc-diff-line added">${escHtml(d.l)||'&nbsp;'}</div>`;
-          }
-        }
-        return `<div class="cc-diff-wrap">
-          <div class="cc-diff-header">
-            <span>${escHtml(fname)}</span>
-            <span style="color:#f66">-${removed.length}</span>
-            <span style="color:#5f5">+${added.length}</span>
+        const stats = isNew
+          ? `<span class="cc-diff-stat-add">+${added.length}</span>`
+          : `<span class="cc-diff-stat-add">+${added.length}</span><span class="cc-diff-stat-del">-${removed.length}</span>`;
+
+        return `<div class="cc-diff-card">
+          <div class="cc-diff-card-header">
+            <span class="cc-diff-card-path">${escHtml(fname)}</span>
+            ${isNew ? '<span class="cc-diff-stat-new">new file</span>' : ''}
+            ${stats}
           </div>
-          <div class="cc-diff-table">
-            <div class="cc-diff-col cc-diff-col-old">
-              <div class="cc-diff-col-label">before</div>${leftHtml}
-            </div>
-            <div class="cc-diff-col cc-diff-col-new">
-              <div class="cc-diff-col-label">after</div>${rightHtml}
-            </div>
-          </div>
+          <div class="cc-diff-card-body">${rows}</div>
         </div>`;
       }
       // ─────────────────────────────────────────────────────────────────────────

@@ -7500,8 +7500,8 @@ async def workspace_code_agent_stream(request: Request):
                     # Build compact diff (max 60 lines)
                     diff_data: list[dict] = []
                     if is_new:
-                        for ln in new_lines[:60]:
-                            diff_data.append({"t": "+", "l": ln})
+                        for idx, ln in enumerate(new_lines[:60]):
+                            diff_data.append({"t": "+", "l": ln, "n": idx + 1})
                     else:
                         matcher = _difflib.SequenceMatcher(None, old_lines, new_lines)
                         count = 0
@@ -7509,14 +7509,15 @@ async def workspace_code_agent_stream(request: Request):
                             if count >= 60:
                                 break
                             if tag == "equal":
-                                for ln in old_lines[i1:min(i2, i1+2)]:
-                                    diff_data.append({"t": "=", "l": ln}); count += 1
+                                end = min(i2, i1 + 2)
+                                for off in range(end - i1):
+                                    diff_data.append({"t": "=", "l": old_lines[i1 + off], "n": j1 + off + 1}); count += 1
                             elif tag in ("replace", "delete"):
-                                for ln in old_lines[i1:i2]:
-                                    diff_data.append({"t": "-", "l": ln}); count += 1
+                                for off in range(i2 - i1):
+                                    diff_data.append({"t": "-", "l": old_lines[i1 + off], "n": i1 + off + 1}); count += 1
                             if tag in ("replace", "insert"):
-                                for ln in new_lines[j1:j2]:
-                                    diff_data.append({"t": "+", "l": ln}); count += 1
+                                for off in range(j2 - j1):
+                                    diff_data.append({"t": "+", "l": new_lines[j1 + off], "n": j1 + off + 1}); count += 1
                     os.makedirs(os.path.dirname(full_p), exist_ok=True)
                     with open(full_p, "w", encoding="utf-8") as fh:
                         fh.write(content)
@@ -7692,8 +7693,8 @@ async def workspace_code_agent_vision(request: Request):
             new_lines = content.splitlines()
             diff_data: list[dict] = []
             if is_new:
-                for ln in new_lines[:60]:
-                    diff_data.append({"t": "+", "l": ln})
+                for idx, ln in enumerate(new_lines[:60]):
+                    diff_data.append({"t": "+", "l": ln, "n": idx + 1})
             else:
                 matcher = _difflib.SequenceMatcher(None, old_lines, new_lines)
                 count = 0
@@ -7701,14 +7702,15 @@ async def workspace_code_agent_vision(request: Request):
                     if count >= 60:
                         break
                     if tag == "equal":
-                        for ln in old_lines[i1:min(i2, i1 + 2)]:
-                            diff_data.append({"t": "=", "l": ln}); count += 1
+                        end = min(i2, i1 + 2)
+                        for off in range(end - i1):
+                            diff_data.append({"t": "=", "l": old_lines[i1 + off], "n": j1 + off + 1}); count += 1
                     elif tag in ("replace", "delete"):
-                        for ln in old_lines[i1:i2]:
-                            diff_data.append({"t": "-", "l": ln}); count += 1
+                        for off in range(i2 - i1):
+                            diff_data.append({"t": "-", "l": old_lines[i1 + off], "n": i1 + off + 1}); count += 1
                     if tag in ("replace", "insert"):
-                        for ln in new_lines[j1:j2]:
-                            diff_data.append({"t": "+", "l": ln}); count += 1
+                        for off in range(j2 - j1):
+                            diff_data.append({"t": "+", "l": new_lines[j1 + off], "n": j1 + off + 1}); count += 1
             os.makedirs(os.path.dirname(full_p), exist_ok=True)
             with open(full_p, "w", encoding="utf-8") as fh:
                 fh.write(content)
