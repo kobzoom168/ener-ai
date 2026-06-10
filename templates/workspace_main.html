@@ -447,7 +447,15 @@
       .cc-tool-row.open .cc-tool-toggle { transform:rotate(90deg); }
       .cc-tool-detail { display:none;width:100%;margin:2px 0 4px 14px;font-size:11px;color:#aaa; }
       .cc-tool-row.open .cc-tool-detail { display:block; }
-      .cc-exec-out { margin:2px 0;font-family:monospace;font-size:10px;color:#888;white-space:pre-wrap;word-break:break-all;max-height:120px;overflow:auto;background:#0a0a12;border-radius:3px;padding:4px 6px; }
+      /* ── Bash IN/OUT block (VS Code / Claude Code style) ──────────────── */
+      .cc-bash-block { font-family:'SF Mono',Menlo,Monaco,Consolas,monospace; font-size:11px; border-radius:6px; overflow:hidden; margin:4px 0; background:#1e1e1e; border:1px solid #2d2d2d; }
+      .cc-bash-row { display:flex; gap:8px; padding:6px 10px; align-items:flex-start; }
+      .cc-bash-row + .cc-bash-row { border-top:1px solid #2d2d2d; }
+      .cc-bash-label { flex-shrink:0; width:26px; padding-top:1px; color:#666; font-size:9px; font-weight:700; letter-spacing:0.5px; }
+      .cc-bash-cmd { flex:1; color:#d4d4d4; white-space:pre-wrap; word-break:break-all; }
+      .cc-bash-output { flex:1; margin:0; color:#9aa0a6; white-space:pre-wrap; word-break:break-all; max-height:160px; overflow:auto; }
+      .cc-bash-row.cc-bash-out.err .cc-bash-output { color:#f85149; }
+      .cc-bash-empty { color:#555; font-style:italic; }
 
       .cc-repair-notice { color:#f0a500;font-size:11px;padding:3px 0 3px 14px;font-style:italic; }
 
@@ -1362,10 +1370,10 @@
 
             for (const out of (data.exec_results || [])) {
               const toolId = rid + '-tool-' + Date.now() + '-' + Math.random().toString(36).slice(2,6);
-              const row = addToolRow(out.ok ? 'ok' : 'err', 'Exec', out.cmd || '', toolId);
+              const row = addToolRow(out.ok ? 'ok' : 'err', 'Bash', out.cmd || '', toolId);
               const detailEl = row.querySelector('.cc-tool-detail');
               const outText = (out.stdout || '') + (out.stderr || '') + (out.error || '');
-              if (detailEl) detailEl.innerHTML = `<pre class="cc-exec-out">${escHtml(outText.slice(0,400))}</pre>`;
+              if (detailEl) detailEl.innerHTML = _renderBash(out.cmd, outText, out.ok);
             }
 
             finalText = data.answer || '';
@@ -1457,8 +1465,8 @@
 
               if (evt.type === 'tool_start') {
                 const toolId = rid + '-tool-' + Date.now();
-                const desc = evt.tool === 'WriteFile' ? evt.desc : evt.desc;
-                currentToolEl = addToolRow('running', evt.tool, desc, toolId);
+                const label = evt.tool === 'Exec' ? 'Bash' : evt.tool;
+                currentToolEl = addToolRow('running', label, evt.desc, toolId);
                 msgs.scrollTop = msgs.scrollHeight;
               }
 
@@ -1483,7 +1491,7 @@
                     detailEl.textContent = `✗ ${evt.error||''}`;
                   }
                   if (evt.tool === 'Exec') {
-                    if (evt.out) detailEl.innerHTML = `<pre class="cc-exec-out">${escHtml(evt.out.slice(0,400))}</pre>`;
+                    detailEl.innerHTML = _renderBash(evt.cmd, evt.out, evt.ok);
                   }
                 }
                 msgs.scrollTop = msgs.scrollHeight;
@@ -1754,6 +1762,23 @@
             ${stats}
           </div>
           <div class="cc-diff-card-body">${rows}</div>
+        </div>`;
+      }
+      // ─────────────────────────────────────────────────────────────────────────
+
+      // ── Bash IN/OUT block (VS Code / Claude Code style) ───────────────────────
+      function _renderBash(cmd, out, ok) {
+        const outTrim = (out || '').slice(0, 500).trim();
+        const outHtml = outTrim ? escHtml(outTrim) : '<span class="cc-bash-empty">(no output)</span>';
+        return `<div class="cc-bash-block">
+          <div class="cc-bash-row cc-bash-in">
+            <span class="cc-bash-label">IN</span>
+            <code class="cc-bash-cmd">${escHtml(cmd || '')}</code>
+          </div>
+          <div class="cc-bash-row cc-bash-out${ok === false ? ' err' : ''}">
+            <span class="cc-bash-label">OUT</span>
+            <pre class="cc-bash-output">${outHtml}</pre>
+          </div>
         </div>`;
       }
       // ─────────────────────────────────────────────────────────────────────────
