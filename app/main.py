@@ -7031,6 +7031,19 @@ _EXEC_CMD_RE = __import__("re").compile(
 _UPDATE_MEMORY_RE = __import__("re").compile(
     r'<UPDATE_MEMORY\s+key="([^"]+)"\s+value="([^"]+)"\s*/?>', __import__("re").MULTILINE
 )
+_INCOMPLETE_PLACEHOLDER_RE = __import__("re").compile(
+    r'#[^\n]*\b('
+    r'TODO|FIXME'
+    r'|will\s+be\s+added'
+    r'|to\s+be\s+(?:continued|added|implemented)'
+    r'|rest\s+of\s+the\s+(?:code|file|implementation|routes?)'
+    r'|(?:more|additional|remaining|other)\s+(?:routes?|endpoints?|code|functions?|views?|logic)'
+    r'|continue[sd]?\s+(?:here|below)'
+    r'|implement(?:ed)?\s+later'
+    r'|placeholder'
+    r')',
+    __import__("re").IGNORECASE,
+)
 
 
 def run_static_checks(files: dict[str, str]) -> list[dict]:
@@ -7072,6 +7085,20 @@ def run_static_checks(files: dict[str, str]) -> list[dict]:
                 ),
             })
 
+        # Leftover placeholder/TODO comments instead of real code (truncated response)
+        for line in content.splitlines():
+            if _INCOMPLETE_PLACEHOLDER_RE.search(line):
+                issues.append({
+                    'file': path,
+                    'check': 'incomplete_placeholder',
+                    'hint': (
+                        f'{path}: พบ comment ที่บ่งบอกว่าโค้ดเขียนไม่จบ เช่น "{line.strip()[:100]}" — '
+                        f'นี่คือ placeholder ไม่ใช่โค้ดจริง ต้องเขียน {path} ใหม่ทั้งไฟล์ให้สมบูรณ์ '
+                        f'แทนที่ comment นี้ด้วย route/ฟังก์ชันจริงตามที่ comment บอกไว้'
+                    ),
+                })
+                break  # one issue per file is enough
+
         # Collect DB file paths for cross-file duplicate-DB check
         for m in re.finditer(r'(?:aiosqlite|sqlite3)\.connect\(\s*["\']([^"\']+\.db)["\']', content):
             db_paths.add(m.group(1))
@@ -7108,6 +7135,39 @@ def run_static_checks(files: dict[str, str]) -> list[dict]:
                         f'{tpl}: ไฟล์ template นี้ไม่ถูก render โดย route ใดใน main.py และไม่ถูก '
                         f'extends โดย template อื่น — เพิ่ม route ที่ render ไฟล์นี้ใน main.py '
                         f'หรือลบไฟล์นี้ทิ้งถ้าไม่จำเป็น'
+                    ),
+                })
+
+    # Routes referenced by templates (form action / link href) but not defined in main.py
+    if main_src and template_files:
+        defined_routes: set[str] = set()
+        param_route_prefixes: list[str] = []
+        for m in re.finditer(r'@app\.(?:get|post|put|delete|patch)\(\s*["\']([^"\']+)["\']', main_src):
+            route = m.group(1)
+            if "{" in route:
+                param_route_prefixes.append(route.split("{")[0].rstrip("/"))
+            else:
+                defined_routes.add(route.rstrip("/") or "/")
+        for tpl in template_files:
+            content = files.get(tpl, "")
+            seen: set[str] = set()
+            for m in re.finditer(r'(?:action|href)\s*=\s*["\'](/[a-zA-Z0-9_\-./]*)["\']', content):
+                route = m.group(1).split("#")[0].split("?")[0]
+                if route in ("", "/") or route.startswith("/static"):
+                    continue
+                route_norm = route.rstrip("/") or "/"
+                if route_norm in defined_routes or route_norm in seen:
+                    continue
+                if any(p and route_norm.startswith(p) for p in param_route_prefixes):
+                    continue
+                seen.add(route_norm)
+                issues.append({
+                    'file': tpl,
+                    'check': 'missing_route',
+                    'hint': (
+                        f'{tpl}: ลิงก์/ฟอร์มชี้ไปที่ "{route}" แต่ main.py ไม่มี route นี้ '
+                        f'(ไม่มี @app.get/post("{route_norm}")) — เพิ่ม route นี้ใน main.py '
+                        f'หรือแก้ลิงก์ใน {tpl} ให้ตรงกับ route ที่มีอยู่จริง'
                     ),
                 })
 
@@ -7984,6 +8044,7 @@ async def workspace_code_agent_stream(request: Request):
         conv_messages = clean_history[:]
         current_q = question
         forced_validation = False
+        written_contents: dict[str, str] = {}
 
         while repair_iter <= MAX_REPAIR:
             # ── Stream AI tokens ──────────────────────────────────────
@@ -8002,7 +8063,8 @@ async def workspace_code_agent_stream(request: Request):
             yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': token_count})}\n\n"
 
             # ── Execute WRITE_FILE tags ───────────────────────────────
-            actions, events, _written = await process_write_files(full_response)
+            actions, events, written_now = await process_write_files(full_response)
+            written_contents.update(written_now)
             for ev in events:
                 yield f"data: {_json.dumps(ev)}\n\n"
 
@@ -8028,8 +8090,9 @@ async def workspace_code_agent_stream(request: Request):
             failed = [e for e in exec_results if not e.get("ok")]
             py_written = [a["path"] for a in actions if a.get("ok") and a["path"].endswith(".py")]
             needs_validation = bool(py_written) and not exec_cmds and not forced_validation
+            static_issues = run_static_checks(written_contents) if written_now else []
 
-            if (not failed and not needs_validation) or repair_iter >= MAX_REPAIR:
+            if (not failed and not needs_validation and not static_issues) or repair_iter >= MAX_REPAIR:
                 break
 
             repair_iter += 1
@@ -8041,6 +8104,15 @@ async def workspace_code_agent_stream(request: Request):
                 current_q = (
                     f"คำสั่งเหล่านี้ล้มเหลว:\n{error_lines}\n\n"
                     f"แก้ไข code ให้ถูกต้องโดยใช้ WRITE_FILE แล้ว re-run ด้วย EXEC_CMD เพื่อยืนยัน"
+                )
+            elif static_issues:
+                issue_lines = "\n".join(f"⚠️ {i['hint']}" for i in static_issues)
+                current_q = (
+                    f"โค้ดที่เขียนยังไม่สมบูรณ์หรือมีปัญหาดังนี้:\n{issue_lines}\n\n"
+                    f"กรุณาเขียนไฟล์ที่เกี่ยวข้องใหม่ทั้งไฟล์ด้วย WRITE_FILE ให้สมบูรณ์ ลบ comment "
+                    f"placeholder ใดๆ ออกแล้วเขียนโค้ดจริงแทนตามที่ comment บอกไว้ และเพิ่ม route "
+                    f"ที่ template อ้างถึงแต่ยังไม่มีใน main.py ให้ครบ จากนั้นรัน "
+                    f"<EXEC_CMD cmd=\"python -m py_compile <path>\"/> สำหรับไฟล์ .py ที่แก้ไขเพื่อยืนยัน"
                 )
             else:
                 forced_validation = True
