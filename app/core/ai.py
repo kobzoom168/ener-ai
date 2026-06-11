@@ -635,8 +635,9 @@ async def _call_deepseek_direct(
     system: str,
     messages: list[dict[str, str]] | None,
     agent: str,
+    max_tokens: int = 2048,
 ) -> str:
-    """DeepSeek V3 via direct API (cheaper than Groq relay)."""
+    """DeepSeek V4 Flash via direct API (cheaper than Featherless relay)."""
     from app.core.database import get_config
     api_key = settings.deepseek_api_key or await get_config("deepseek_api_key", "")
     if not api_key:
@@ -655,8 +656,8 @@ async def _call_deepseek_direct(
                     "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
                 },
-                json={"model": "deepseek-chat", "messages": msgs, "max_tokens": 2048},
-                timeout=30.0,
+                json={"model": "deepseek-chat", "messages": msgs, "max_tokens": max_tokens},
+                timeout=120.0,
             )
             resp.raise_for_status()
             data = resp.json()
@@ -1506,6 +1507,17 @@ async def stream_chat_response(
                 )
                 if not str(text or "").strip():
                     raise RuntimeError("OpenRouter returned empty text")
+                emitted = True
+                yield text
+                return
+
+            if candidate == "deepseek-direct":
+                text = await _call_deepseek_direct(
+                    message, system_prompt, history, agent,
+                    max_tokens=max_tokens or 2048,
+                )
+                if not str(text or "").strip():
+                    raise RuntimeError("DeepSeek returned empty text")
                 emitted = True
                 yield text
                 return
