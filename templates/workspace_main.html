@@ -1308,7 +1308,7 @@
 
         function addToolRow(icon, label, desc, id) {
           const row = document.createElement('div');
-          row.className = 'cc-tool-row';
+          row.className = 'cc-tool-row open';
           row.id = id;
           row.innerHTML = `<span class="cc-dot ${icon === 'ok' ? 'cc-dot-ok' : icon === 'err' ? 'cc-dot-err' : 'cc-dot-running'}"></span>
             <span class="cc-tool-label">${escHtml(label)}</span>
