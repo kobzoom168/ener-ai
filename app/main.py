@@ -7032,6 +7032,136 @@ _UPDATE_MEMORY_RE = __import__("re").compile(
     r'<UPDATE_MEMORY\s+key="([^"]+)"\s+value="([^"]+)"\s*/?>', __import__("re").MULTILINE
 )
 
+
+def run_static_checks(files: dict[str, str]) -> list[dict]:
+    """Pattern-based checks for cross-file/runtime bugs that py_compile can't catch.
+
+    `files` maps project-relative path -> file content (already-written files).
+    Returns a list of {'file', 'check', 'hint'} issues to feed into a repair prompt.
+    """
+    issues: list[dict] = []
+    db_paths: set[str] = set()
+
+    for path, content in files.items():
+        if not path.endswith(".py"):
+            continue
+
+        # UploadFile.read() called more than once without seek(0) in between
+        for var in re.findall(r'(\w+)\s*:\s*UploadFile', content):
+            read_count = len(re.findall(rf'await\s+{re.escape(var)}\.read\(\)', content))
+            if read_count > 1 and f'{var}.seek(0)' not in content:
+                issues.append({
+                    'file': path,
+                    'check': 'uploadfile_double_read',
+                    'hint': (
+                        f'{path}: ตัวแปร "{var}" (UploadFile) ถูกเรียก .read() {read_count} ครั้ง '
+                        f'โดยไม่มี .seek(0) คั่น — UploadFile.read() อ่านได้ครั้งเดียว ครั้งถัดไปจะได้ '
+                        f'b"" เปล่าๆ ให้เก็บผลลัพธ์การอ่านครั้งแรกไว้ในตัวแปรแล้วใช้ตัวแปรนั้นซ้ำ'
+                    ),
+                })
+
+        # dict(row) without row_factory = aiosqlite.Row
+        if re.search(r'dict\(\s*\w+\s*\)', content) and 'row_factory' not in content:
+            issues.append({
+                'file': path,
+                'check': 'missing_row_factory',
+                'hint': (
+                    f'{path}: ใช้ dict(row) แปลงผลลัพธ์ query แต่ไม่ได้ตั้ง '
+                    f'db.row_factory = aiosqlite.Row ก่อน execute — ถ้าไม่ตั้งจะได้ tuple แล้ว '
+                    f'dict(tuple) จะ raise ValueError'
+                ),
+            })
+
+        # Collect DB file paths for cross-file duplicate-DB check
+        for m in re.finditer(r'(?:aiosqlite|sqlite3)\.connect\(\s*["\']([^"\']+\.db)["\']', content):
+            db_paths.add(m.group(1))
+        for m in re.finditer(r'^DB_PATH\s*=\s*["\']([^"\']+\.db)["\']', content, re.M):
+            db_paths.add(m.group(1))
+
+    if len(db_paths) > 1:
+        issues.append({
+            'file': '(multiple files)',
+            'check': 'duplicate_db_path',
+            'hint': (
+                f'พบไฟล์ฐานข้อมูลคนละชื่อในโปรเจกต์เดียวกัน: {", ".join(sorted(db_paths))} — '
+                f'ทุกไฟล์ต้องเชื่อมต่อ database ไฟล์เดียวกัน (DB_PATH เดียวกัน) และใช้ schema '
+                f'(CREATE TABLE) เดียวกัน ห้ามมีสองชุด'
+            ),
+        })
+
+    # Dead templates: every templates/*.html must be rendered by main.py or extended by another template
+    main_src = files.get("main.py", "")
+    template_files = [p for p in files if p.startswith("templates/") and p.endswith(".html")]
+    if main_src and template_files:
+        for tpl in template_files:
+            tpl_name = tpl.split("/", 1)[1]
+            referenced = tpl_name in main_src
+            extended = any(
+                other != tpl and (f'"{tpl_name}"' in files.get(other, "") or f"'{tpl_name}'" in files.get(other, ""))
+                for other in template_files
+            )
+            if not referenced and not extended:
+                issues.append({
+                    'file': tpl,
+                    'check': 'dead_template',
+                    'hint': (
+                        f'{tpl}: ไฟล์ template นี้ไม่ถูก render โดย route ใดใน main.py และไม่ถูก '
+                        f'extends โดย template อื่น — เพิ่ม route ที่ render ไฟล์นี้ใน main.py '
+                        f'หรือลบไฟล์นี้ทิ้งถ้าไม่จำเป็น'
+                    ),
+                })
+
+    return issues
+
+
+def extract_contracts(files: dict[str, str]) -> str:
+    """Compact summary of routes/functions/DB schema from already-written files.
+
+    Used to give later batches enough cross-file context to avoid duplicating or
+    conflicting with what earlier batches already wrote, without sending full file
+    contents (token budget).
+    """
+    lines: list[str] = []
+
+    main_src = files.get("main.py", "")
+    if main_src:
+        routes = re.findall(
+            r'@app\.(get|post|put|delete|patch)\(\s*["\']([^"\']+)["\'][^)]*\)\s*\n\s*(?:async\s+)?def\s+(\w+)\(([^)]*)\)',
+            main_src,
+        )
+        if routes:
+            lines.append("Routes in main.py:")
+            for method, path, func, params in routes:
+                lines.append(f"  {method.upper()} {path} -> {func}({params.strip()})")
+        imports = sorted(set(re.findall(r'^(?:from|import)\s+([\w.]+)', main_src, re.M)))
+        if imports:
+            lines.append(f"main.py imports: {', '.join(imports)}")
+        m = re.search(r'^DB_PATH\s*=\s*["\']([^"\']+)["\']', main_src, re.M)
+        if m:
+            lines.append(f'main.py DB_PATH = "{m.group(1)}"')
+
+    for path, src in files.items():
+        if path == "main.py" or not path.endswith(".py"):
+            continue
+        funcs = re.findall(r'(?:async\s+)?def\s+(\w+)\(([^)]*)\)(?:\s*->\s*([\w\[\], "\']+))?:', src)
+        public_funcs = [(f, p, r) for f, p, r in funcs if not f.startswith("_")]
+        if public_funcs:
+            lines.append(f"Functions in {path}:")
+            for fname, params, ret in public_funcs:
+                sig = f"{fname}({params.strip()})"
+                if ret:
+                    sig += f" -> {ret.strip()}"
+                lines.append(f"  {sig}")
+        schema = re.search(r'CREATE TABLE[^;]*;', src, re.S | re.I)
+        if schema:
+            lines.append(f"{path} schema: {' '.join(schema.group(0).split())[:200]}")
+        m = re.search(r'^DB_PATH\s*=\s*["\']([^"\']+)["\']', src, re.M)
+        if m:
+            lines.append(f'{path} DB_PATH = "{m.group(1)}"')
+
+    return "\n".join(lines)[:1500]
+
+
 # ── EXEC_CMD safety net ───────────────────────────────────────────────────────
 _BLOCKED_CMD_PATTERNS = [
     (r'rm\s+-rf\s+[/~*]', 'attempt to delete root or home directory'),
@@ -7448,6 +7578,16 @@ async def workspace_code_agent_stream(request: Request):
         f"- After writing ANY .py file, IMMEDIATELY add <EXEC_CMD cmd=\"python -m py_compile <path>\"/> to check syntax\n"
         f"- NEVER leave requirements.txt empty or with placeholder comments — list real package names\n"
         f"- If a file imports/references another local file, make sure that file is also created\n"
+        f"\n"
+        f"CRITICAL ANTI-PATTERNS — NEVER DO THESE:\n"
+        f"- UploadFile.read() can only be called ONCE per request; store the result in a variable and reuse it "
+        f"(do not call file.read() twice — the second call returns empty bytes)\n"
+        f"- If you use dict(row) to convert aiosqlite rows, you MUST set db.row_factory = aiosqlite.Row "
+        f"on the connection BEFORE executing the query\n"
+        f"- Use exactly ONE database file path and ONE schema for the whole project — never define a "
+        f"separate db module with a different DB filename or table schema than main.py uses\n"
+        f"- Every template file you create must be rendered by a route in main.py (or extended by another "
+        f"template) — never leave an unused template file\n"
     )
 
     clean_history = [
@@ -7472,6 +7612,7 @@ async def workspace_code_agent_stream(request: Request):
         async def process_write_files(resp_text: str):
             actions: list[dict] = []
             events: list[dict] = []
+            contents: dict[str, str] = {}
             for m in _WRITE_FILE_RE.finditer(resp_text):
                 rel_path = m.group(1).strip()
                 content  = m.group(2).lstrip("\n").rstrip("\n")
@@ -7518,10 +7659,11 @@ async def workspace_code_agent_stream(request: Request):
                     removed = sum(1 for d in diff_data if d["t"] == "-")
                     actions.append({"type": "write_file", "path": rel_path, "ok": True, "lines": lines})
                     events.append({'type': 'tool_done', 'tool': 'WriteFile', 'path': rel_path, 'ok': True, 'lines': lines, 'is_new': is_new, 'added': added, 'removed': removed, 'diff': diff_data})
+                    contents[strip_project_prefix(rel_path)] = content
                 except Exception as exc:
                     actions.append({"type": "write_file", "path": rel_path, "ok": False, "error": str(exc)})
                     events.append({'type': 'tool_done', 'tool': 'WriteFile', 'path': rel_path, 'ok': False, 'error': str(exc)[:100]})
-            return actions, events
+            return actions, events, contents
 
         async def process_exec_cmds(cmds: list[str], cwd: str):
             results: list[dict] = []
@@ -7597,6 +7739,7 @@ async def workspace_code_agent_stream(request: Request):
                 all_actions: list[dict] = []
                 all_exec_results: list[dict] = []
                 written_files: list[str] = []
+                written_contents: dict[str, str] = {}
                 BATCH_SIZE = 2
                 batches = [files[i:i + BATCH_SIZE] for i in range(0, len(files), BATCH_SIZE)]
 
@@ -7607,10 +7750,17 @@ async def workspace_code_agent_stream(request: Request):
                     already = "\n".join(f"- {p}" for p in written_files) or "(none yet)"
                     deps_line = ", ".join(deps) if deps else "(none specified)"
                     write_list = "\n".join(f'- <WRITE_FILE path="{project}/{p}">' for p in batch)
+                    contracts_text = extract_contracts(written_contents)
+                    contracts_block = (
+                        f"\nEXISTING CONTRACTS (ต้องใช้ตามนี้ ห้ามสร้าง route/function/DB path/schema ใหม่ "
+                        f"ที่ชนหรือซ้ำซ้อนกับของเดิม):\n{contracts_text}\n"
+                        if contracts_text else ""
+                    )
                     batch_q = (
                         f"แผนงาน: {plan_summary}\n"
                         f"Dependencies ของโปรเจกต์: {deps_line}\n"
-                        f"ไฟล์ที่สร้างไปแล้ว:\n{already}\n\n"
+                        f"ไฟล์ที่สร้างไปแล้ว:\n{already}\n"
+                        f"{contracts_block}\n"
                         f"ตอนนี้ให้เขียนไฟล์ต่อไปนี้ให้ครบถ้วนสมบูรณ์ (ห้ามเว้นว่าง ห้ามใส่ placeholder):\n{write_list}\n\n"
                         f"สำหรับไฟล์ .py ทุกไฟล์ ให้ตามด้วย <EXEC_CMD cmd=\"python -m py_compile {{path}}\"/> "
                         f"(path ไม่ต้องมี '{project}/' นำหน้า) เพื่อตรวจ syntax ทันที\n"
@@ -7623,10 +7773,11 @@ async def workspace_code_agent_stream(request: Request):
                     yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': holder.get('tokens', 0)})}\n\n"
                     full_response = holder.get('response', '')
 
-                    actions, events = await process_write_files(full_response)
+                    actions, events, contents = await process_write_files(full_response)
                     for ev in events:
                         yield f"data: {_json.dumps(ev)}\n\n"
                     all_actions += actions
+                    written_contents.update(contents)
                     for a in actions:
                         if a.get("ok"):
                             rel = strip_project_prefix(a["path"])
@@ -7662,17 +7813,24 @@ async def workspace_code_agent_stream(request: Request):
                     repair_round = 0
                     while repair_round < 2:
                         failed = [e for e in exec_results if not e.get("ok")]
-                        if not failed:
+                        static_issues = run_static_checks(written_contents)
+                        if not failed and not static_issues:
                             break
                         repair_round += 1
-                        error_lines = "\n".join(
-                            f"❌ {e['cmd']}: {(e.get('stdout','') + e.get('stderr','') + e.get('error','')).strip()[:300]}"
-                            for e in failed
-                        )
-                        yield f"data: {_json.dumps({'type': 'repair_start', 'iter': repair_round, 'errors': len(failed)})}\n\n"
+                        problem_block = ""
+                        if failed:
+                            error_lines = "\n".join(
+                                f"❌ {e['cmd']}: {(e.get('stdout','') + e.get('stderr','') + e.get('error','')).strip()[:300]}"
+                                for e in failed
+                            )
+                            problem_block += f"คำสั่งตรวจสอบล้มเหลว:\n{error_lines}\n\n"
+                        if static_issues:
+                            static_lines = "\n".join(f"⚠️ {iss['hint']}" for iss in static_issues)
+                            problem_block += f"พบปัญหาจาก static analysis:\n{static_lines}\n\n"
+                        yield f"data: {_json.dumps({'type': 'repair_start', 'iter': repair_round, 'errors': len(failed) + len(static_issues)})}\n\n"
                         yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': f'🔧 Auto-repair batch {bi} #{repair_round}'})}\n\n"
                         repair_q = (
-                            f"คำสั่งตรวจสอบล้มเหลว:\n{error_lines}\n\n"
+                            f"{problem_block}"
                             f"แก้ไขไฟล์ที่เกี่ยวข้องด้วย <WRITE_FILE path=\"{project}/...\">...</WRITE_FILE> "
                             f"แล้ว <EXEC_CMD cmd=\"python -m py_compile ...\"/> ตรวจสอบใหม่อีกครั้ง"
                         )
@@ -7682,10 +7840,11 @@ async def workspace_code_agent_stream(request: Request):
                         yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': holder.get('tokens', 0)})}\n\n"
                         full_response = holder.get('response', '')
 
-                        actions2, events2 = await process_write_files(full_response)
+                        actions2, events2, contents2 = await process_write_files(full_response)
                         for ev in events2:
                             yield f"data: {_json.dumps(ev)}\n\n"
                         all_actions += actions2
+                        written_contents.update(contents2)
                         for a in actions2:
                             if a.get("ok"):
                                 rel = strip_project_prefix(a["path"])
@@ -7727,13 +7886,68 @@ async def workspace_code_agent_stream(request: Request):
                             diff_data = [{"t": "+", "l": d, "n": i + 1} for i, d in enumerate(deps)]
                             req_path = f"{project}/{req_file}"
                             all_actions.append({"type": "write_file", "path": req_path, "ok": True, "lines": len(deps)})
+                            written_contents[req_file] = req_content
                             yield f"data: {_json.dumps({'type': 'tool_start', 'tool': 'WriteFile', 'desc': req_path})}\n\n"
                             yield f"data: {_json.dumps({'type': 'tool_done', 'tool': 'WriteFile', 'path': req_path, 'ok': True, 'lines': len(deps), 'is_new': not bool(current), 'added': len(deps), 'removed': 0, 'diff': diff_data})}\n\n"
                     except Exception:
                         pass
 
+                # ── Final integration AI round: cross-file consistency / dead code ─
+                if len(written_files) >= 3:
+                    final_issues = run_static_checks(written_contents)
+                    contracts_text = extract_contracts(written_contents)
+                    issues_block = ""
+                    if final_issues:
+                        issues_lines = "\n".join(f"⚠️ {iss['hint']}" for iss in final_issues)
+                        issues_block = f"\nปัญหาที่ตรวจพบโดย static analysis:\n{issues_lines}\n"
+
+                    files_list_block = "\n".join(f"- {p}" for p in written_files)
+                    integration_q = (
+                        f"FINAL INTEGRATION REVIEW สำหรับโปรเจกต์ {project}\n\n"
+                        f"ไฟล์ทั้งหมดที่สร้างแล้ว:\n{files_list_block}\n\n"
+                        f"Contracts ปัจจุบัน:\n{contracts_text}\n"
+                        f"{issues_block}\n"
+                        f"งานของคุณ (แก้เฉพาะจุดที่จำเป็น เขียนไฟล์ทั้งไฟล์เวอร์ชันแก้ไขด้วย WRITE_FILE):\n"
+                        f"1. ทุก template ใน templates/ ต้องถูก render โดย route ใน main.py — ถ้ามี template "
+                        f"ที่ไม่ถูกใช้ ให้เพิ่ม route ที่เหมาะสมใน main.py\n"
+                        f"2. ทุกไฟล์ใน services/ ต้องถูก import และใช้งานจริงใน main.py — ถ้าไม่ได้ใช้ "
+                        f"ให้แก้ main.py ให้เรียกใช้ฟังก์ชันจากไฟล์นั้นแทนโค้ดซ้ำซ้อน\n"
+                        f"3. แก้ปัญหาทั้งหมดที่ static analysis แจ้งด้านบน (ถ้ามี)\n"
+                        f"4. หลังแก้ไฟล์ .py ใดๆ ให้ตามด้วย <EXEC_CMD cmd=\"python -m py_compile <path>\"/> "
+                        f"(path ไม่ต้องมี '{project}/' นำหน้า)\n\n"
+                        f"ถ้าตรวจสอบแล้วทุกอย่างถูกต้องสมบูรณ์ดีอยู่แล้ว ไม่ต้องเขียนไฟล์ใดๆ "
+                        f"ตอบสั้นๆ ว่า \"OK ไม่มีปัญหา\""
+                    )
+
+                    yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🔗 Final integration review'})}\n\n"
+                    holder = {}
+                    async for ev in stream_turn(integration_q, [], 4000, holder):
+                        yield f"data: {_json.dumps(ev)}\n\n"
+                    yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': holder.get('tokens', 0)})}\n\n"
+                    full_response = holder.get('response', '')
+
+                    actions3, events3, contents3 = await process_write_files(full_response)
+                    for ev in events3:
+                        yield f"data: {_json.dumps(ev)}\n\n"
+                    all_actions += actions3
+                    written_contents.update(contents3)
+                    for a in actions3:
+                        if a.get("ok"):
+                            rel = strip_project_prefix(a["path"])
+                            if rel not in written_files:
+                                written_files.append(rel)
+
+                    await save_memory_tags(full_response)
+
+                    exec_cmds3 = _EXEC_CMD_RE.findall(full_response)
+                    if exec_cmds3 and project_dir:
+                        exec_results3, events3b = await process_exec_cmds(exec_cmds3, project_dir)
+                        for ev in events3b:
+                            yield f"data: {_json.dumps(ev)}\n\n"
+                        all_exec_results += exec_results3
+
                 # Final syntax check across all created .py files
-                py_files = [f for f in files if f.endswith(".py")]
+                py_files = [f for f in written_files if f.endswith(".py")]
                 if py_files and project_dir:
                     yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🔍 Final integration check'})}\n\n"
                     final_results, final_events = await process_exec_cmds(
@@ -7745,8 +7959,7 @@ async def workspace_code_agent_stream(request: Request):
                     all_exec_results += final_results
 
                 # ── Final summary (built locally — no extra AI call) ─
-                ok_files = [a["path"] for a in all_actions if a.get("type") == "write_file" and a.get("ok")]
-                files_md = "\n".join(f"- {p}" for p in ok_files)
+                files_md = "\n".join(f"- {p}" for p in written_files)
                 deps_md = ", ".join(deps) if deps else "-"
                 run_steps = (
                     f"- pip install -r requirements.txt\n"
@@ -7754,7 +7967,7 @@ async def workspace_code_agent_stream(request: Request):
                 )
                 display = (
                     f"{plan_summary}\n\n"
-                    f"**สร้างแล้ว {len(ok_files)} ไฟล์:**\n{files_md}\n\n"
+                    f"**สร้างแล้ว {len(written_files)} ไฟล์:**\n{files_md}\n\n"
                     f"**Dependencies:** {deps_md}\n\n"
                     f"**วิธีรัน:**\n{run_steps}\n\n"
                     f"**วิธีทดสอบ:** http://my-ener.uk:<port>/"
@@ -7789,7 +8002,7 @@ async def workspace_code_agent_stream(request: Request):
             yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': token_count})}\n\n"
 
             # ── Execute WRITE_FILE tags ───────────────────────────────
-            actions, events = await process_write_files(full_response)
+            actions, events, _written = await process_write_files(full_response)
             for ev in events:
                 yield f"data: {_json.dumps(ev)}\n\n"
 
@@ -7919,6 +8132,16 @@ async def workspace_code_agent_vision(request: Request):
         f"- After writing ANY .py file, IMMEDIATELY add <EXEC_CMD cmd=\"python -m py_compile <path>\"/> to check syntax\n"
         f"- NEVER leave requirements.txt empty or with placeholder comments — list real package names\n"
         f"- If a file imports/references another local file, make sure that file is also created\n"
+        f"\n"
+        f"CRITICAL ANTI-PATTERNS — NEVER DO THESE:\n"
+        f"- UploadFile.read() can only be called ONCE per request; store the result in a variable and reuse it "
+        f"(do not call file.read() twice — the second call returns empty bytes)\n"
+        f"- If you use dict(row) to convert aiosqlite rows, you MUST set db.row_factory = aiosqlite.Row "
+        f"on the connection BEFORE executing the query\n"
+        f"- Use exactly ONE database file path and ONE schema for the whole project — never define a "
+        f"separate db module with a different DB filename or table schema than main.py uses\n"
+        f"- Every template file you create must be rendered by a route in main.py (or extended by another "
+        f"template) — never leave an unused template file\n"
     )
 
     clean_history = [
