@@ -2,7 +2,7 @@ import asyncio
 import json
 import time
 import threading
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator
 import anthropic
 import httpx
 from google import genai
@@ -1411,6 +1411,7 @@ async def stream_chat_response(
     system_prompt: str,
     model: str = "auto",
     agent: str = "MainChatAgent",
+    max_tokens: int | None = None,
 ) -> AsyncGenerator[str, None]:
     """Stream response tokens from the preferred model with provider fallbacks."""
     availability = get_model_availability()
@@ -1463,12 +1464,15 @@ async def stream_chat_response(
             if candidate in FEATHERLESS_KEYS:
                 from app.core.featherless_client import stream_featherless
 
+                featherless_kwargs: dict[str, Any] = {"agent": agent}
+                if max_tokens:
+                    featherless_kwargs["max_tokens"] = max_tokens
                 async for token in stream_featherless(
                     candidate,
                     message,
                     system_prompt,
                     history,
-                    agent=agent,
+                    **featherless_kwargs,
                 ):
                     if token:
                         emitted = True
@@ -1510,7 +1514,7 @@ async def stream_chat_response(
                 client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
                 stream = client.messages.stream(
                     model=_PRIMARY_MODEL,
-                    max_tokens=2048,
+                    max_tokens=max_tokens or 2048,
                     system=system_prompt,
                     messages=_anthropic_messages(message, history[-20:]),
                 )
@@ -1527,7 +1531,7 @@ async def stream_chat_response(
                 stream = await client.chat.completions.create(
                     model="llama-3.1-8b-instant",
                     messages=_groq_messages(message, system_prompt, history[-20:]),
-                    max_tokens=2048,
+                    max_tokens=max_tokens or 2048,
                     stream=True,
                 )
                 async for chunk in stream:

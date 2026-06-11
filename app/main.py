@@ -7443,7 +7443,11 @@ async def workspace_code_agent_stream(request: Request):
         f"Use <EXEC_CMD cmd=\"command\"/> to run shell commands (CWD is /root/ener-code/{project or 'project'}/).\n"
         f"CORRECT: 'ls -la'   WRONG: 'ls -la {project or 'project'}'\n"
         f"Use <UPDATE_MEMORY key=\"k\" value=\"v\"/> to save project facts.\n"
-        f"After WRITE_FILE, write a short Thai summary of what was done.\n"
+        f"After WRITE_FILE, write a short Thai summary of what was done.\n\n"
+        f"VALIDATION RULE — IMPORTANT:\n"
+        f"- After writing ANY .py file, IMMEDIATELY add <EXEC_CMD cmd=\"python -m py_compile <path>\"/> to check syntax\n"
+        f"- NEVER leave requirements.txt empty or with placeholder comments — list real package names\n"
+        f"- If a file imports/references another local file, make sure that file is also created\n"
     )
 
     clean_history = [
@@ -7453,37 +7457,25 @@ async def workspace_code_agent_stream(request: Request):
 
     async def generate():
         import os
+        import difflib as _difflib
         MAX_REPAIR = 3
-        repair_iter = 0
-        conv_messages = clean_history[:]
-        current_q = question
+        AGENT_MAX_TOKENS = 6000
         project_dir = f"{BASE_ENER_CODE}/{project}" if project else None
         if project_dir:
             os.makedirs(project_dir, exist_ok=True)
 
-        while repair_iter <= MAX_REPAIR:
-            # ── Stream AI tokens ──────────────────────────────────────
-            full_response = ""
-            token_count = 0
-            status_msg = "🤔 Thinking" if repair_iter == 0 else f"🔧 Auto-repair #{repair_iter}"
-            yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': status_msg})}\n\n"
+        def strip_project_prefix(path: str) -> str:
+            p = path.lstrip("/")
+            prefix = f"{project}/"
+            return p[len(prefix):] if project and p.startswith(prefix) else p
 
-            async for token in stream_chat_response(
-                current_q, conv_messages, system, model=model, agent="CodeAgent"
-            ):
-                full_response += token
-                token_count += len(token.split())
-                yield f"data: {_json.dumps({'type': 'token', 'text': token, 'tokens': token_count})}\n\n"
-
-            yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': token_count})}\n\n"
-
-            # ── Execute WRITE_FILE tags ───────────────────────────────
-            import difflib as _difflib
+        async def process_write_files(resp_text: str):
             actions: list[dict] = []
-            for m in _WRITE_FILE_RE.finditer(full_response):
+            events: list[dict] = []
+            for m in _WRITE_FILE_RE.finditer(resp_text):
                 rel_path = m.group(1).strip()
                 content  = m.group(2).lstrip("\n").rstrip("\n")
-                yield f"data: {_json.dumps({'type': 'tool_start', 'tool': 'WriteFile', 'desc': rel_path})}\n\n"
+                events.append({'type': 'tool_start', 'tool': 'WriteFile', 'desc': rel_path})
                 try:
                     full_p = _ener_code_resolve(rel_path)
                     # Compute diff vs existing file
@@ -7525,29 +7517,292 @@ async def workspace_code_agent_stream(request: Request):
                     added = sum(1 for d in diff_data if d["t"] == "+")
                     removed = sum(1 for d in diff_data if d["t"] == "-")
                     actions.append({"type": "write_file", "path": rel_path, "ok": True, "lines": lines})
-                    yield f"data: {_json.dumps({'type': 'tool_done', 'tool': 'WriteFile', 'path': rel_path, 'ok': True, 'lines': lines, 'is_new': is_new, 'added': added, 'removed': removed, 'diff': diff_data})}\n\n"
+                    events.append({'type': 'tool_done', 'tool': 'WriteFile', 'path': rel_path, 'ok': True, 'lines': lines, 'is_new': is_new, 'added': added, 'removed': removed, 'diff': diff_data})
                 except Exception as exc:
                     actions.append({"type": "write_file", "path": rel_path, "ok": False, "error": str(exc)})
-                    yield f"data: {_json.dumps({'type': 'tool_done', 'tool': 'WriteFile', 'path': rel_path, 'ok': False, 'error': str(exc)[:100]})}\n\n"
+                    events.append({'type': 'tool_done', 'tool': 'WriteFile', 'path': rel_path, 'ok': False, 'error': str(exc)[:100]})
+            return actions, events
 
-            # Save UPDATE_MEMORY
-            if project:
-                for m in _UPDATE_MEMORY_RE.finditer(full_response):
+        async def process_exec_cmds(cmds: list[str], cwd: str):
+            results: list[dict] = []
+            events: list[dict] = []
+            for cmd in cmds[:6]:
+                events.append({'type': 'tool_start', 'tool': 'Exec', 'desc': cmd})
+                result = await _agent_run_cmd(cmd, cwd)
+                results.append(result)
+                out = (result.get("stdout", "") + result.get("stderr", "") + result.get("error", "")).strip()
+                events.append({'type': 'tool_done', 'tool': 'Exec', 'cmd': cmd, 'ok': result['ok'], 'out': out[:500]})
+            return results, events
+
+        async def save_memory_tags(resp_text: str):
+            if not project:
+                return
+            for m in _UPDATE_MEMORY_RE.finditer(resp_text):
+                try:
+                    await _save_memory_entry(project, m.group(1).strip(), m.group(2).strip())
+                except Exception:
+                    pass
+
+        async def stream_turn(prompt: str, history: list[dict], max_tokens: int, holder: dict):
+            full_response = ""
+            token_count = 0
+            async for token in stream_chat_response(
+                prompt, history, system, model=model, agent="CodeAgent", max_tokens=max_tokens
+            ):
+                full_response += token
+                token_count += len(token.split())
+                yield {'type': 'token', 'text': token, 'tokens': token_count}
+            holder['response'] = full_response
+            holder['tokens'] = token_count
+
+        # ════════════════════════════════════════════════════════════
+        # PLAN-THEN-BATCH mode: brand-new project (no files / no history yet)
+        # ════════════════════════════════════════════════════════════
+        is_new_project = bool(project) and not (project_files or "").strip() and not clean_history
+        if is_new_project:
+            yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '📋 Planning project files'})}\n\n"
+            plan: dict | None = None
+            try:
+                plan_system = (
+                    f"{system}\n\n"
+                    f"PLANNING TASK: Output ONLY a raw JSON object (no markdown, no code fences, no explanation text) "
+                    f"that plans the files needed for this project.\n"
+                    f'Format: {{"files": ["main.py", "services/db.py", ..., "requirements.txt", "README.md"], '
+                    f'"dependencies": ["fastapi", "uvicorn[standard]", ...], "summary": "1-2 sentence Thai description"}}\n'
+                    f"All paths in 'files' are relative to the project root (do NOT prefix with '{project}/').\n"
+                    f"Order matters: core app/service files first, then templates/static assets, "
+                    f"then requirements.txt and README.md last.\n"
+                    f"Include every file the code will need (templates, static CSS, etc) — nothing extra."
+                )
+                plan_text = ""
+                async for token in stream_chat_response(
+                    question, [], plan_system, model=model, agent="CodeAgentPlan", max_tokens=800
+                ):
+                    plan_text += token
+                start = plan_text.find("{")
+                end = plan_text.rfind("}")
+                if start != -1 and end != -1:
+                    plan = _json.loads(plan_text[start:end + 1])
+            except Exception:
+                plan = None
+            yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': 0})}\n\n"
+
+            files = [str(f).strip().lstrip("/") for f in (plan or {}).get("files") or [] if str(f).strip()][:12]
+            deps = [str(d).strip() for d in (plan or {}).get("dependencies") or [] if str(d).strip()]
+            plan_summary = str((plan or {}).get("summary") or "").strip()
+
+            if files:
+                yield f"data: {_json.dumps({'type': 'plan_done', 'files': files, 'dependencies': deps, 'summary': plan_summary})}\n\n"
+
+                all_actions: list[dict] = []
+                all_exec_results: list[dict] = []
+                written_files: list[str] = []
+                BATCH_SIZE = 2
+                batches = [files[i:i + BATCH_SIZE] for i in range(0, len(files), BATCH_SIZE)]
+
+                for bi, batch in enumerate(batches, 1):
+                    batch_label = ", ".join(batch)
+                    yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': f'Batch {bi}/{len(batches)}: {batch_label}'})}\n\n"
+
+                    already = "\n".join(f"- {p}" for p in written_files) or "(none yet)"
+                    deps_line = ", ".join(deps) if deps else "(none specified)"
+                    write_list = "\n".join(f'- <WRITE_FILE path="{project}/{p}">' for p in batch)
+                    batch_q = (
+                        f"แผนงาน: {plan_summary}\n"
+                        f"Dependencies ของโปรเจกต์: {deps_line}\n"
+                        f"ไฟล์ที่สร้างไปแล้ว:\n{already}\n\n"
+                        f"ตอนนี้ให้เขียนไฟล์ต่อไปนี้ให้ครบถ้วนสมบูรณ์ (ห้ามเว้นว่าง ห้ามใส่ placeholder):\n{write_list}\n\n"
+                        f"สำหรับไฟล์ .py ทุกไฟล์ ให้ตามด้วย <EXEC_CMD cmd=\"python -m py_compile {{path}}\"/> "
+                        f"(path ไม่ต้องมี '{project}/' นำหน้า) เพื่อตรวจ syntax ทันที\n"
+                        f"ห้ามเขียนไฟล์อื่นนอกเหนือจากที่ระบุไว้ในรอบนี้"
+                    )
+
+                    holder: dict = {}
+                    async for ev in stream_turn(batch_q, [], 4000, holder):
+                        yield f"data: {_json.dumps(ev)}\n\n"
+                    yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': holder.get('tokens', 0)})}\n\n"
+                    full_response = holder.get('response', '')
+
+                    actions, events = await process_write_files(full_response)
+                    for ev in events:
+                        yield f"data: {_json.dumps(ev)}\n\n"
+                    all_actions += actions
+                    for a in actions:
+                        if a.get("ok"):
+                            rel = strip_project_prefix(a["path"])
+                            if rel not in written_files:
+                                written_files.append(rel)
+
+                    await save_memory_tags(full_response)
+
+                    exec_cmds = _EXEC_CMD_RE.findall(full_response)
+                    exec_results: list[dict] = []
+                    if exec_cmds and project_dir:
+                        exec_results, events = await process_exec_cmds(exec_cmds, project_dir)
+                        for ev in events:
+                            yield f"data: {_json.dumps(ev)}\n\n"
+                    all_exec_results += exec_results
+
+                    # Force-validate any .py file written without a matching py_compile check
+                    py_written = [strip_project_prefix(a["path"]) for a in actions if a.get("ok") and a["path"].endswith(".py")]
+                    checked = " ".join(exec_cmds)
+                    missing = [p for p in py_written if p not in checked]
+                    if missing and project_dir:
+                        yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🔍 Validating'})}\n\n"
+                        fv_results, fv_events = await process_exec_cmds(
+                            [f"python -m py_compile {p}" for p in missing], project_dir
+                        )
+                        for ev in fv_events:
+                            yield f"data: {_json.dumps(ev)}\n\n"
+                        yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': 0})}\n\n"
+                        all_exec_results += fv_results
+                        exec_results = exec_results + fv_results
+
+                    # Repair loop scoped to this batch (max 2 rounds)
+                    repair_round = 0
+                    while repair_round < 2:
+                        failed = [e for e in exec_results if not e.get("ok")]
+                        if not failed:
+                            break
+                        repair_round += 1
+                        error_lines = "\n".join(
+                            f"❌ {e['cmd']}: {(e.get('stdout','') + e.get('stderr','') + e.get('error','')).strip()[:300]}"
+                            for e in failed
+                        )
+                        yield f"data: {_json.dumps({'type': 'repair_start', 'iter': repair_round, 'errors': len(failed)})}\n\n"
+                        yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': f'🔧 Auto-repair batch {bi} #{repair_round}'})}\n\n"
+                        repair_q = (
+                            f"คำสั่งตรวจสอบล้มเหลว:\n{error_lines}\n\n"
+                            f"แก้ไขไฟล์ที่เกี่ยวข้องด้วย <WRITE_FILE path=\"{project}/...\">...</WRITE_FILE> "
+                            f"แล้ว <EXEC_CMD cmd=\"python -m py_compile ...\"/> ตรวจสอบใหม่อีกครั้ง"
+                        )
+                        holder = {}
+                        async for ev in stream_turn(repair_q, [], 3000, holder):
+                            yield f"data: {_json.dumps(ev)}\n\n"
+                        yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': holder.get('tokens', 0)})}\n\n"
+                        full_response = holder.get('response', '')
+
+                        actions2, events2 = await process_write_files(full_response)
+                        for ev in events2:
+                            yield f"data: {_json.dumps(ev)}\n\n"
+                        all_actions += actions2
+                        for a in actions2:
+                            if a.get("ok"):
+                                rel = strip_project_prefix(a["path"])
+                                if rel not in written_files:
+                                    written_files.append(rel)
+
+                        await save_memory_tags(full_response)
+
+                        exec_cmds2 = _EXEC_CMD_RE.findall(full_response)
+                        exec_results = []
+                        if exec_cmds2 and project_dir:
+                            exec_results, events2 = await process_exec_cmds(exec_cmds2, project_dir)
+                            for ev in events2:
+                                yield f"data: {_json.dumps(ev)}\n\n"
+                        all_exec_results += exec_results
+
+                    yield f"data: {_json.dumps({'type': 'batch_done', 'batch': bi, 'total': len(batches), 'files': batch})}\n\n"
+
+                # ── Final integration check ────────────────────────
+                # Fix empty/placeholder requirements.txt directly (no extra AI round-trip)
+                req_file = next((f for f in files if f.split("/")[-1] == "requirements.txt"), None)
+                if req_file and deps:
                     try:
-                        await _save_memory_entry(project, m.group(1).strip(), m.group(2).strip())
+                        req_full = _ener_code_resolve(f"{project}/{req_file}")
+                        current = ""
+                        if os.path.exists(req_full):
+                            with open(req_full, "r", encoding="utf-8", errors="replace") as fh:
+                                current = fh.read().strip()
+                        is_placeholder = (
+                            len(current) < 5
+                            or "add dependencies" in current.lower()
+                            or "placeholder" in current.lower()
+                        )
+                        if is_placeholder:
+                            req_content = "\n".join(deps) + "\n"
+                            os.makedirs(os.path.dirname(req_full), exist_ok=True)
+                            with open(req_full, "w", encoding="utf-8") as fh:
+                                fh.write(req_content)
+                            diff_data = [{"t": "+", "l": d, "n": i + 1} for i, d in enumerate(deps)]
+                            req_path = f"{project}/{req_file}"
+                            all_actions.append({"type": "write_file", "path": req_path, "ok": True, "lines": len(deps)})
+                            yield f"data: {_json.dumps({'type': 'tool_start', 'tool': 'WriteFile', 'desc': req_path})}\n\n"
+                            yield f"data: {_json.dumps({'type': 'tool_done', 'tool': 'WriteFile', 'path': req_path, 'ok': True, 'lines': len(deps), 'is_new': not bool(current), 'added': len(deps), 'removed': 0, 'diff': diff_data})}\n\n"
                     except Exception:
                         pass
+
+                # Final syntax check across all created .py files
+                py_files = [f for f in files if f.endswith(".py")]
+                if py_files and project_dir:
+                    yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🔍 Final integration check'})}\n\n"
+                    final_results, final_events = await process_exec_cmds(
+                        ["python -m py_compile " + " ".join(py_files)], project_dir
+                    )
+                    for ev in final_events:
+                        yield f"data: {_json.dumps(ev)}\n\n"
+                    yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': 0})}\n\n"
+                    all_exec_results += final_results
+
+                # ── Final summary (built locally — no extra AI call) ─
+                ok_files = [a["path"] for a in all_actions if a.get("type") == "write_file" and a.get("ok")]
+                files_md = "\n".join(f"- {p}" for p in ok_files)
+                deps_md = ", ".join(deps) if deps else "-"
+                run_steps = (
+                    f"- pip install -r requirements.txt\n"
+                    f"- uvicorn main:app --host 0.0.0.0 --port <port>"
+                )
+                display = (
+                    f"{plan_summary}\n\n"
+                    f"**สร้างแล้ว {len(ok_files)} ไฟล์:**\n{files_md}\n\n"
+                    f"**Dependencies:** {deps_md}\n\n"
+                    f"**วิธีรัน:**\n{run_steps}\n\n"
+                    f"**วิธีทดสอบ:** http://my-ener.uk:<port>/"
+                )
+                yield f"data: {_json.dumps({'type': 'final_text', 'text': display, 'actions': all_actions, 'exec_results': all_exec_results, 'repair_iter': 0})}\n\n"
+                yield f"data: {_json.dumps({'type': 'done'})}\n\n"
+                return
+            # plan parse failed / empty -> fall through to single-turn flow below
+
+        # ════════════════════════════════════════════════════════════
+        # SINGLE-TURN + AUTO-REPAIR mode (edits, follow-ups, plan fallback)
+        # ════════════════════════════════════════════════════════════
+        repair_iter = 0
+        conv_messages = clean_history[:]
+        current_q = question
+        forced_validation = False
+
+        while repair_iter <= MAX_REPAIR:
+            # ── Stream AI tokens ──────────────────────────────────────
+            full_response = ""
+            token_count = 0
+            status_msg = "🤔 Thinking" if repair_iter == 0 else f"🔧 Auto-repair #{repair_iter}"
+            yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': status_msg})}\n\n"
+
+            async for token in stream_chat_response(
+                current_q, conv_messages, system, model=model, agent="CodeAgent", max_tokens=AGENT_MAX_TOKENS
+            ):
+                full_response += token
+                token_count += len(token.split())
+                yield f"data: {_json.dumps({'type': 'token', 'text': token, 'tokens': token_count})}\n\n"
+
+            yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': token_count})}\n\n"
+
+            # ── Execute WRITE_FILE tags ───────────────────────────────
+            actions, events = await process_write_files(full_response)
+            for ev in events:
+                yield f"data: {_json.dumps(ev)}\n\n"
+
+            # Save UPDATE_MEMORY
+            await save_memory_tags(full_response)
 
             # ── Execute EXEC_CMD tags ─────────────────────────────────
             exec_results: list[dict] = []
             exec_cmds = _EXEC_CMD_RE.findall(full_response)
             if exec_cmds and project_dir:
-                for cmd in exec_cmds[:6]:
-                    yield f"data: {_json.dumps({'type': 'tool_start', 'tool': 'Exec', 'desc': cmd})}\n\n"
-                    result = await _agent_run_cmd(cmd, project_dir)
-                    exec_results.append(result)
-                    out = (result.get("stdout","") + result.get("stderr","") + result.get("error","")).strip()
-                    yield f"data: {_json.dumps({'type': 'tool_done', 'tool': 'Exec', 'cmd': cmd, 'ok': result['ok'], 'out': out[:500]})}\n\n"
+                exec_results, events = await process_exec_cmds(exec_cmds, project_dir)
+                for ev in events:
+                    yield f"data: {_json.dumps(ev)}\n\n"
 
             # ── Clean display text ────────────────────────────────────
             display = _WRITE_FILE_RE.sub("", full_response)
@@ -7556,20 +7811,32 @@ async def workspace_code_agent_stream(request: Request):
 
             yield f"data: {_json.dumps({'type': 'final_text', 'text': display, 'actions': actions, 'exec_results': exec_results, 'repair_iter': repair_iter})}\n\n"
 
-            # ── Auto-repair if exec failed ────────────────────────────
+            # ── Auto-repair if exec failed, or validate if .py written but never checked ──
             failed = [e for e in exec_results if not e.get("ok")]
-            if not failed or repair_iter >= MAX_REPAIR:
+            py_written = [a["path"] for a in actions if a.get("ok") and a["path"].endswith(".py")]
+            needs_validation = bool(py_written) and not exec_cmds and not forced_validation
+
+            if (not failed and not needs_validation) or repair_iter >= MAX_REPAIR:
                 break
 
             repair_iter += 1
-            error_lines = "\n".join(
-                f"❌ {e['cmd']}: {(e.get('stdout','') + e.get('stderr','') + e.get('error','')).strip()[:300]}"
-                for e in failed
-            )
-            current_q = (
-                f"คำสั่งเหล่านี้ล้มเหลว:\n{error_lines}\n\n"
-                f"แก้ไข code ให้ถูกต้องโดยใช้ WRITE_FILE แล้ว re-run ด้วย EXEC_CMD เพื่อยืนยัน"
-            )
+            if failed:
+                error_lines = "\n".join(
+                    f"❌ {e['cmd']}: {(e.get('stdout','') + e.get('stderr','') + e.get('error','')).strip()[:300]}"
+                    for e in failed
+                )
+                current_q = (
+                    f"คำสั่งเหล่านี้ล้มเหลว:\n{error_lines}\n\n"
+                    f"แก้ไข code ให้ถูกต้องโดยใช้ WRITE_FILE แล้ว re-run ด้วย EXEC_CMD เพื่อยืนยัน"
+                )
+            else:
+                forced_validation = True
+                files_list = "\n".join(f"- {p}" for p in py_written)
+                current_q = (
+                    f"คุณเขียนไฟล์ .py เหล่านี้แต่ยังไม่ได้ตรวจสอบ:\n{files_list}\n\n"
+                    f"กรุณารัน <EXEC_CMD cmd=\"python -m py_compile <path>\"/> สำหรับแต่ละไฟล์ "
+                    f"(path ไม่ต้องมีชื่อ project นำหน้า) และแก้ไขถ้ามี error"
+                )
             conv_messages = conv_messages + [
                 {"role": "user", "content": question[:400]},
                 {"role": "assistant", "content": full_response[:1200]},
@@ -7647,7 +7914,11 @@ async def workspace_code_agent_vision(request: Request):
         f"Use <EXEC_CMD cmd=\"command\"/> to run shell commands (CWD is /root/ener-code/{project or 'project'}/).\n"
         f"CORRECT: 'ls -la'   WRONG: 'ls -la {project or 'project'}'\n"
         f"Use <UPDATE_MEMORY key=\"k\" value=\"v\"/> to save project facts.\n"
-        f"After WRITE_FILE, write a short Thai summary of what was done.\n"
+        f"After WRITE_FILE, write a short Thai summary of what was done.\n\n"
+        f"VALIDATION RULE — IMPORTANT:\n"
+        f"- After writing ANY .py file, IMMEDIATELY add <EXEC_CMD cmd=\"python -m py_compile <path>\"/> to check syntax\n"
+        f"- NEVER leave requirements.txt empty or with placeholder comments — list real package names\n"
+        f"- If a file imports/references another local file, make sure that file is also created\n"
     )
 
     clean_history = [

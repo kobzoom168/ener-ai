@@ -461,6 +461,9 @@
       .cc-bash-empty { color:#555; font-style:italic; }
 
       .cc-repair-notice { color:#f0a500;font-size:11px;padding:3px 0 3px 14px;font-style:italic; }
+      .cc-plan-notice { color:#7aa2ff;font-size:11px;padding:4px 0 6px 14px; }
+      .cc-plan-notice .cc-plan-summary { color:#aab; margin-bottom:2px; }
+      .cc-plan-notice .cc-plan-files { color:#789; font-style:italic; }
 
       .cc-response { margin-top:6px;padding-top:6px;border-top:1px solid #1a1a28; }
       .cc-streaming-text { font-size:12px;color:#ccc;line-height:1.5;white-space:pre-wrap; }
@@ -1445,7 +1448,23 @@
                   rep.textContent = `🔧 ${evt.msg}`;
                   toolsEl.appendChild(rep);
                   streamText = '';
+                } else if (evt.msg && /^Batch \d+\/\d+/.test(evt.msg)) {
+                  const rep = document.createElement('div');
+                  rep.className = 'cc-repair-notice';
+                  rep.textContent = `✍️ ${evt.msg}`;
+                  toolsEl.appendChild(rep);
+                  streamText = '';
                 }
+              }
+
+              if (evt.type === 'plan_done') {
+                const plan = document.createElement('div');
+                plan.className = 'cc-plan-notice';
+                const filesLine = (evt.files || []).join(', ');
+                plan.innerHTML = `<div class="cc-plan-summary">📋 ${escHtml(evt.summary || 'แผนงาน')}</div>`
+                  + `<div class="cc-plan-files">จะสร้าง ${(evt.files||[]).length} ไฟล์: ${escHtml(filesLine)}</div>`;
+                toolsEl.appendChild(plan);
+                _updatePipelineLine(aiDiv);
               }
 
               if (evt.type === 'token') {
