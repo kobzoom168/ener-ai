@@ -465,6 +465,9 @@
       .cc-response { margin-top:6px;padding-top:6px;border-top:1px solid #1a1a28; }
       .cc-streaming-text { font-size:12px;color:#ccc;line-height:1.5;white-space:pre-wrap; }
       .cc-final-text { font-size:12px;color:#ccc;line-height:1.6; }
+      /* Final summary: show each paragraph as its own bullet line for readability */
+      .cc-final-text.markdown-body p { margin:3px 0; padding-left:14px; position:relative; }
+      .cc-final-text.markdown-body p::before { content:'•'; position:absolute; left:0; color:#555; }
 
       /* Diff view */
       /* ── Unified diff card (VS Code / Claude Code style) ──────────────── */
@@ -474,7 +477,7 @@
       .cc-diff-stat-new { color:#4a9eff; }
       .cc-diff-stat-add { color:#3fb950; }
       .cc-diff-stat-del { color:#f85149; margin-left:4px; }
-      .cc-diff-card-body { max-height:260px; overflow:auto; padding:2px 0; }
+      .cc-diff-card-body { padding:2px 0; }
       .cc-diff-row { display:flex; line-height:18px; white-space:pre; }
       .cc-diff-gutter { flex-shrink:0; width:34px; text-align:right; padding-right:8px; color:#5a5a6a; user-select:none; }
       .cc-diff-marker { flex-shrink:0; width:14px; text-align:center; color:#5a5a6a; }
