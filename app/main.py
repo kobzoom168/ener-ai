@@ -7031,6 +7031,18 @@ _EXEC_CMD_RE = __import__("re").compile(
 _UPDATE_MEMORY_RE = __import__("re").compile(
     r'<UPDATE_MEMORY\s+key="([^"]+)"\s+value="([^"]+)"\s*/?>', __import__("re").MULTILINE
 )
+_ROUTE_DECORATOR_RE = __import__("re").compile(
+    r'@app\.(get|post|put|delete|patch)\(\s*["\']([^"\']+)["\']', __import__("re").IGNORECASE
+)
+_FORM_METHOD_ACTION_RE = __import__("re").compile(
+    r'<form[^>]*\bmethod\s*=\s*["\'](\w+)["\'][^>]*\baction\s*=\s*["\']([^"\']+)["\']'
+    r'|<form[^>]*\baction\s*=\s*["\']([^"\']+)["\'][^>]*\bmethod\s*=\s*["\'](\w+)["\']',
+    __import__("re").IGNORECASE,
+)
+_FORM_ACTION_ONLY_RE = __import__("re").compile(
+    r'<form(?![^>]*\bmethod\s*=)[^>]*\baction\s*=\s*["\']([^"\']+)["\']', __import__("re").IGNORECASE
+)
+_HREF_RE = __import__("re").compile(r'<a[^>]*\bhref\s*=\s*["\']([^"\']+)["\']', __import__("re").IGNORECASE)
 _INCOMPLETE_PLACEHOLDER_RE = __import__("re").compile(
     r'#[^\n]*\b('
     r'TODO|FIXME'
@@ -7138,38 +7150,72 @@ def run_static_checks(files: dict[str, str]) -> list[dict]:
                     ),
                 })
 
-    # Routes referenced by templates (form action / link href) but not defined in main.py
+    # Routes referenced by templates (form action / link href) but not defined in main.py,
+    # or defined with a different HTTP method (would 405 at runtime)
     if main_src and template_files:
-        defined_routes: set[str] = set()
-        param_route_prefixes: list[str] = []
-        for m in re.finditer(r'@app\.(?:get|post|put|delete|patch)\(\s*["\']([^"\']+)["\']', main_src):
-            route = m.group(1)
+        defined_routes: set[tuple[str, str]] = set()  # (METHOD, path)
+        defined_paths: set[str] = set()
+        param_route_prefixes: set[str] = set()
+        for method, route in _ROUTE_DECORATOR_RE.findall(main_src):
             if "{" in route:
-                param_route_prefixes.append(route.split("{")[0].rstrip("/"))
+                param_route_prefixes.add(route.split("{")[0].rstrip("/"))
             else:
-                defined_routes.add(route.rstrip("/") or "/")
+                path = route.rstrip("/") or "/"
+                defined_routes.add((method.upper(), path))
+                defined_paths.add(path)
+
         for tpl in template_files:
             content = files.get(tpl, "")
-            seen: set[str] = set()
-            for m in re.finditer(r'(?:action|href)\s*=\s*["\'](/[a-zA-Z0-9_\-./]*)["\']', content):
-                route = m.group(1).split("#")[0].split("?")[0]
-                if route in ("", "/") or route.startswith("/static"):
+            template_actions: set[tuple[str, str]] = set()
+
+            for m in _FORM_METHOD_ACTION_RE.finditer(content):
+                if m.group(1):
+                    template_actions.add((m.group(1).upper(), m.group(2)))
+                else:
+                    template_actions.add((m.group(4).upper(), m.group(3)))
+            for m in _FORM_ACTION_ONLY_RE.finditer(content):
+                template_actions.add(("GET", m.group(1)))  # HTML default method
+            for m in _HREF_RE.finditer(content):
+                template_actions.add(("GET", m.group(1)))
+
+            seen: set[tuple[str, str]] = set()
+            for method, raw_path in template_actions:
+                path = raw_path.split("#")[0].split("?")[0]
+                if (
+                    path in ("", "/")
+                    or path.startswith("/static")
+                    or path.startswith(("http://", "https://", "mailto:", "javascript:"))
+                ):
                     continue
-                route_norm = route.rstrip("/") or "/"
-                if route_norm in defined_routes or route_norm in seen:
+                path_norm = path.rstrip("/") or "/"
+                key = (method, path_norm)
+                if key in seen or key in defined_routes:
                     continue
-                if any(p and route_norm.startswith(p) for p in param_route_prefixes):
+                if any(path_norm.startswith(p) for p in param_route_prefixes):
                     continue
-                seen.add(route_norm)
-                issues.append({
-                    'file': tpl,
-                    'check': 'missing_route',
-                    'hint': (
-                        f'{tpl}: ลิงก์/ฟอร์มชี้ไปที่ "{route}" แต่ main.py ไม่มี route นี้ '
-                        f'(ไม่มี @app.get/post("{route_norm}")) — เพิ่ม route นี้ใน main.py '
-                        f'หรือแก้ลิงก์ใน {tpl} ให้ตรงกับ route ที่มีอยู่จริง'
-                    ),
-                })
+                seen.add(key)
+                if path_norm in defined_paths:
+                    other_methods = ", ".join(sorted(m for m, p in defined_routes if p == path_norm))
+                    issues.append({
+                        'file': tpl,
+                        'check': 'method_mismatch',
+                        'hint': (
+                            f'{tpl}: ฟอร์ม/ลิงก์เรียก {method} {path} แต่ main.py มี route นี้เป็น '
+                            f'{other_methods} เท่านั้น — ผู้ใช้จะได้ 405 Method Not Allowed ตอนใช้งานจริง '
+                            f'เพิ่ม @app.{method.lower()}("{path_norm}") ใน main.py หรือแก้ method/action '
+                            f'ใน {tpl} ให้ตรงกับ route ที่มีอยู่จริง'
+                        ),
+                    })
+                else:
+                    issues.append({
+                        'file': tpl,
+                        'check': 'missing_route',
+                        'hint': (
+                            f'{tpl}: {method} {path} ไม่มี route นี้ใน main.py เลย — เพิ่ม '
+                            f'@app.{method.lower()}("{path_norm}") ใน main.py หรือแก้ลิงก์ใน {tpl} '
+                            f'ให้ตรงกับ route ที่มีอยู่จริง'
+                        ),
+                    })
 
     return issues
 
