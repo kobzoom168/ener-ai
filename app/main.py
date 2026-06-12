@@ -32,7 +32,7 @@ from app.admin.jinja_context import (
     load_admin_settings_context,
 )
 from app.bot.router import build_application
-from app.core.ai import get_active_model, get_model_availability, get_model_label
+from app.core.ai import chat, chat_json, get_active_model, get_model_availability, get_model_label
 from app.core.agents import COMMAND_AGENT_MAP, SCHEDULER_AGENTS
 from app.core.ai_gateway import get_recent_ai_traces, preview_context, run_ai
 from app.core.config import settings
@@ -5387,6 +5387,86 @@ async def ai_event(request: Request):
         if artifact_result.get("error"):
             response["artifact_warning"] = str(artifact_result["error"])[:200]
     return JSONResponse(response)
+
+
+# ---------------------------------------------------------------------------
+# Autopost (ener-autopost bridge): caption generation + AI review สำหรับ
+# โพสต์ขึ้น Facebook/Instagram ของเพจ Ener Scan แบบอัตโนมัติผ่าน n8n + Postiz
+# ---------------------------------------------------------------------------
+
+_AUTOPOST_PAGE_NAME = "Ener Scan ตรวจพลังพระ หิน เครื่องราง"
+
+_AUTOPOST_CAPTION_SYSTEM = {
+    "scan_result": f"""คุณคือแอดมินเพจ Facebook "{_AUTOPOST_PAGE_NAME}"
+งาน: เขียนแคปชั่นโพสต์จากผลสแกนพระเครื่อง/หิน/เครื่องรางของลูกค้า (ข้อมูล JSON ในข้อความถัดไป)
+กฎ:
+- ภาษาไทย น้ำเสียงเป็นกันเอง น่าสนใจ ไม่โอเวอร์ ไม่การันตีผลลัพธ์เกินจริง
+- ห้ามเปิดเผยข้อมูลส่วนตัวของลูกค้า (ชื่อ-นามสกุล เบอร์โทร ที่อยู่ อีเมล) แม้จะมีอยู่ใน JSON
+- ความยาว 3-6 บรรทัด ปิดท้ายด้วย hashtag ที่เกี่ยวข้อง 3-5 อัน
+- ห้ามใส่ disclaimer เอง (ระบบจะเติมข้อความ disclaimer ต่อท้ายให้อัตโนมัติ)
+- ตอบกลับเป็นแคปชั่นอย่างเดียว ห้ามมีคำอธิบาย ห้ามใส่เครื่องหมายคำพูดคร่อม""",
+    "amulet_match": f"""คุณคือแอดมินเพจ Facebook "{_AUTOPOST_PAGE_NAME}"
+งาน: เขียนโพสต์ความรู้ธีม "พระ/เครื่องรางแบบนี้เหมาะกับใคร" จากข้อมูล JSON ในข้อความถัดไป
+กฎ:
+- ภาษาไทย เป็นกันเอง ให้ความรู้ น่าเชื่อถือ ไม่ชวนเชื่อแบบงมงายเกินจริง
+- ความยาว 4-8 บรรทัด ปิดท้ายด้วย hashtag ที่เกี่ยวข้อง 3-5 อัน
+- ห้ามใส่ disclaimer เอง (ระบบจะเติมข้อความ disclaimer ต่อท้ายให้อัตโนมัติ)
+- ตอบกลับเป็นแคปชั่นอย่างเดียว ห้ามมีคำอธิบาย ห้ามใส่เครื่องหมายคำพูดคร่อม""",
+    "temple_info": f"""คุณคือแอดมินเพจ Facebook "{_AUTOPOST_PAGE_NAME}"
+งาน: เขียนโพสต์แนะนำวัด/สถานที่ศักดิ์สิทธิ์ จากข้อมูล JSON ในข้อความถัดไป (ชื่อ ที่ตั้ง จุดเด่น เกร็ดน่ารู้)
+กฎ:
+- ภาษาไทย เป็นกันเอง ชวนไปไหว้/เที่ยว ให้ข้อมูลที่เป็นประโยชน์
+- ความยาว 4-8 บรรทัด ปิดท้ายด้วย hashtag ที่เกี่ยวข้อง 3-5 อัน
+- ห้ามใส่ disclaimer เอง (ระบบจะเติมข้อความ disclaimer ต่อท้ายให้อัตโนมัติ)
+- ตอบกลับเป็นแคปชั่นอย่างเดียว ห้ามมีคำอธิบาย ห้ามใส่เครื่องหมายคำพูดคร่อม""",
+}
+
+_AUTOPOST_REVIEW_SYSTEM = """คุณคือผู้ตรวจสอบคุณภาพโพสต์ก่อนเผยแพร่ขึ้น Facebook/Instagram ของเพจสายมู/พระเครื่อง
+ตรวจแคปชั่นในข้อความถัดไปตามเกณฑ์:
+- เนื้อหาเหมาะสม ไม่ผิดนโยบาย Facebook (ไม่หลอกลวง ไม่สร้างความเชื่อที่เป็นอันตราย เช่น การันตีรักษาโรค/โชคลาภ)
+- ไม่มีข้อมูลส่วนตัวของลูกค้า (ชื่อ เบอร์โทร ที่อยู่ อีเมล)
+- ภาษาไทยถูกต้อง สื่อสารชัดเจน น้ำเสียงเหมาะกับเพจ
+ให้คะแนนความมั่นใจว่าโพสต์นี้ปลอดภัยพอจะเผยแพร่อัตโนมัติ เป็นตัวเลขเต็ม 0-100 (100 = มั่นใจมาก ปลอดภัย)
+ตอบกลับเป็น JSON เท่านั้น รูปแบบ: {"score": <0-100>, "reason": "<เหตุผลสั้นๆ ภาษาไทย>"}"""
+
+
+def _require_autopost_token(request: Request) -> None:
+    configured_token = str(getattr(settings, "ener_ai_event_token", "") or "").strip()
+    if configured_token:
+        provided_token = str(request.headers.get("X-Ener-AI-Event-Token", "") or "").strip()
+        if provided_token != configured_token:
+            raise HTTPException(status_code=401, detail="invalid event token")
+
+
+@app.post("/ai/autopost/caption")
+async def ai_autopost_caption(request: Request):
+    _require_autopost_token(request)
+    body = await request.json()
+    content_type = str(body.get("content_type", "") or "").strip()
+    system = _AUTOPOST_CAPTION_SYSTEM.get(content_type)
+    if not system:
+        raise HTTPException(status_code=400, detail=f"unknown content_type: {content_type}")
+    data = body.get("data") or {}
+    prompt = json.dumps(data, ensure_ascii=False)
+    caption = await chat(prompt, system=system, agent="autopost", preferred_model="haiku")
+    return JSONResponse({"ok": True, "caption": caption.strip()})
+
+
+@app.post("/ai/autopost/review")
+async def ai_autopost_review(request: Request):
+    _require_autopost_token(request)
+    body = await request.json()
+    caption = str(body.get("caption", "") or "").strip()
+    if not caption:
+        raise HTTPException(status_code=400, detail="caption is required")
+    try:
+        result = await chat_json(caption, system=_AUTOPOST_REVIEW_SYSTEM, agent="autopost", preferred_model="haiku")
+        score = max(0, min(100, int(result.get("score", 0))))
+        reason = str(result.get("reason", "") or "")
+    except Exception as exc:
+        score = 0
+        reason = f"review failed: {exc}"[:200]
+    return JSONResponse({"ok": True, "score": score, "reason": reason})
 
 
 WORKSPACE_TOOLS = [
