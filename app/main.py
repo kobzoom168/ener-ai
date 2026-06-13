@@ -7430,6 +7430,163 @@ def _project_app_port(project: str) -> int:
     return _APP_PORT_BASE + (h % 300)
 
 
+# Curated allowlist: import module name -> pip package name. Only packages we are
+# confident are safe to auto-install. Imports NOT in this map (e.g. hallucinated
+# tensorflow/keras/numpy) are deliberately never auto-added to requirements.txt.
+SAFE_PKG_MAP: dict[str, str] = {
+    "fastapi": "fastapi",
+    "uvicorn": "uvicorn[standard]",
+    "starlette": "starlette",
+    "jinja2": "jinja2",
+    "aiosqlite": "aiosqlite",
+    "aiofiles": "aiofiles",
+    "httpx": "httpx",
+    "requests": "requests",
+    "pydantic": "pydantic",
+    "multipart": "python-multipart",
+    "dotenv": "python-dotenv",
+    "jose": "python-jose",
+    "passlib": "passlib",
+    "itsdangerous": "itsdangerous",
+    "email_validator": "email-validator",
+    "sqlalchemy": "SQLAlchemy",
+    "bs4": "beautifulsoup4",
+    "yaml": "PyYAML",
+    "PIL": "Pillow",
+    "markdown": "Markdown",
+}
+
+
+def _pip_base_name(line: str) -> str:
+    """Normalize a requirements.txt line to its bare package name (lowercased)."""
+    import re as _re
+    name = _re.split(r"[<>=!~\[ ;]", line.strip(), 1)[0]
+    return name.strip().lower()
+
+
+def _needed_packages(py_sources: dict[str, str]) -> set[str]:
+    """Pip package names a project needs, from imports (allowlist) + implicit deps."""
+    import re as _re
+    needed: set[str] = set()
+    blob = "\n".join(py_sources.values())
+    # Explicit imports, allowlist-gated
+    for mod in _re.findall(r"^\s*(?:import|from)\s+([a-zA-Z_][\w.]*)", blob, _re.M):
+        top = mod.split(".")[0]
+        if top in SAFE_PKG_MAP:
+            needed.add(SAFE_PKG_MAP[top])
+    # Implicit framework deps (never hallucinated, always safe)
+    if _re.search(r"\b(Form|File|UploadFile)\b\s*\(", blob) or _re.search(r":\s*UploadFile", blob):
+        needed.add("python-multipart")
+    if "Jinja2Templates" in blob:
+        needed.add("jinja2")
+    return needed
+
+
+def _read_project_py(project: str) -> dict[str, str]:
+    """Read all .py files of a project from disk -> {relpath: content}."""
+    import os as _os
+    root = f"{BASE_ENER_CODE}/{project}"
+    out: dict[str, str] = {}
+    for base, _dirs, files in _os.walk(root):
+        if "__pycache__" in base or "/.venv" in base or "/.git" in base:
+            continue
+        for fn in files:
+            if fn.endswith(".py"):
+                fp = _os.path.join(base, fn)
+                try:
+                    with open(fp, "r", encoding="utf-8", errors="replace") as fh:
+                        out[_os.path.relpath(fp, root)] = fh.read()
+                except Exception:
+                    pass
+    return out
+
+
+def _autofix_requirements(project: str) -> list[str]:
+    """Deterministically add missing (allowlisted) packages to requirements.txt.
+
+    Returns the list of pip names added. No AI involved.
+    """
+    import os as _os
+    import re as _re
+    safe = _re.sub(r"[^a-zA-Z0-9_-]", "", project or "")
+    if not safe or safe != project:
+        return []
+    req_path = f"{BASE_ENER_CODE}/{safe}/requirements.txt"
+    py_sources = _read_project_py(safe)
+    if not py_sources:
+        return []
+    needed = _needed_packages(py_sources)
+    if not needed:
+        return []
+    existing_lines: list[str] = []
+    have: set[str] = set()
+    if _os.path.exists(req_path):
+        try:
+            with open(req_path, "r", encoding="utf-8", errors="replace") as fh:
+                existing_lines = fh.read().splitlines()
+        except Exception:
+            existing_lines = []
+        have = {_pip_base_name(ln) for ln in existing_lines if ln.strip() and not ln.strip().startswith("#")}
+    added = [pkg for pkg in sorted(needed) if _pip_base_name(pkg) not in have]
+    if not added:
+        return []
+    new_content = "\n".join([ln for ln in existing_lines if ln.strip() != ""] + added) + "\n"
+    try:
+        _os.makedirs(_os.path.dirname(req_path), exist_ok=True)
+        with open(req_path, "w", encoding="utf-8") as fh:
+            fh.write(new_content)
+    except Exception:
+        return []
+    return added
+
+
+def _packages_from_logs(logs: str) -> list[str]:
+    """Deterministically extract missing pip packages from container error logs."""
+    import re as _re
+    pkgs: set[str] = set()
+    for mod in _re.findall(r"No module named ['\"]([\w.]+)['\"]", logs or ""):
+        top = mod.split(".")[0]
+        if top in SAFE_PKG_MAP:
+            pkgs.add(SAFE_PKG_MAP[top])
+    # "requires \"python-multipart\" to be installed" / "pip install python-multipart"
+    for name in _re.findall(r'requires ["\']([\w-]+)["\'] to be installed', logs or ""):
+        pkgs.add(name)
+    for name in _re.findall(r'pip install ([\w-]+)', logs or ""):
+        if name.lower() in {v.lower() for v in SAFE_PKG_MAP.values()} or name == "python-multipart":
+            pkgs.add(name)
+    return sorted(pkgs)
+
+
+def _append_requirements(project: str, packages: list[str]) -> list[str]:
+    """Append given pip packages to a project's requirements.txt if missing."""
+    import os as _os
+    import re as _re
+    safe = _re.sub(r"[^a-zA-Z0-9_-]", "", project or "")
+    if not safe or safe != project or not packages:
+        return []
+    req_path = f"{BASE_ENER_CODE}/{safe}/requirements.txt"
+    existing_lines: list[str] = []
+    have: set[str] = set()
+    if _os.path.exists(req_path):
+        try:
+            with open(req_path, "r", encoding="utf-8", errors="replace") as fh:
+                existing_lines = fh.read().splitlines()
+        except Exception:
+            existing_lines = []
+        have = {_pip_base_name(ln) for ln in existing_lines if ln.strip() and not ln.strip().startswith("#")}
+    added = [p for p in packages if _pip_base_name(p) not in have]
+    if not added:
+        return []
+    new_content = "\n".join([ln for ln in existing_lines if ln.strip() != ""] + added) + "\n"
+    try:
+        _os.makedirs(_os.path.dirname(req_path), exist_ok=True)
+        with open(req_path, "w", encoding="utf-8") as fh:
+            fh.write(new_content)
+    except Exception:
+        return []
+    return added
+
+
 async def _trusted_shell(cmd: str, timeout: int = 90) -> dict:
     """Run an internally-built (NOT AI-generated) shell command."""
     import asyncio as _aio
@@ -7490,9 +7647,18 @@ async def _deploy_and_smoke(project: str, main_src: str = "", mode: str = "deplo
     port = _project_app_port(safe)
     name = f"ener-app-{safe}"
     proj_host_dir = f"/root/ener-code/{safe}"
+    base = f"http://host.docker.internal:{port}"
+    routes = _extract_get_routes(main_src)
 
-    if mode == "deploy":
-        yield {"type": "tool_start", "tool": "Exec", "desc": f"deploy {name} → port {port}"}
+    # ── Deterministic pre-deploy dependency fix (no AI) ──────────────────
+    added = _autofix_requirements(safe)
+    if added:
+        yield {"type": "tool_start", "tool": "Exec", "desc": "auto-fix requirements.txt"}
+        yield {"type": "tool_done", "tool": "Exec",
+               "cmd": "auto-add missing dependencies",
+               "ok": True, "out": "📦 เพิ่ม package ที่ขาด: " + ", ".join(added)}
+
+    async def _docker_deploy() -> dict:
         await _trusted_shell(f"docker rm -f {name} >/dev/null 2>&1 || true", 30)
         run_cmd = (
             f"docker run -d --name {name} -p {port}:{port} "
@@ -7501,7 +7667,32 @@ async def _deploy_and_smoke(project: str, main_src: str = "", mode: str = "deplo
             f"python:3.11-slim sh -c 'pip install -q -r requirements.txt && "
             f"python -m uvicorn main:app --host 0.0.0.0 --port {port}'"
         )
-        res = await _trusted_shell(run_cmd, 60)
+        return await _trusted_shell(run_cmd, 60)
+
+    async def _run_smoke() -> tuple[bool, list[dict], str]:
+        # Poll until the app responds (pip install inside the container takes time)
+        up = False
+        for _ in range(30):
+            await _aio.sleep(3)
+            code = await _aio.to_thread(_http_status_sync, base + routes[0], 3.0)
+            if code != "000":
+                up = True
+                break
+        results: list[dict] = []
+        if up:
+            for r in routes:
+                code = await _aio.to_thread(_http_status_sync, base + r, 5.0)
+                results.append({"path": r, "status": code})
+        ok = up and all(str(rr["status"]).startswith(("2", "3")) for rr in results)
+        logs = ""
+        if not ok:
+            lg = await _trusted_shell(f"docker logs --tail 30 {name} 2>&1", 15)
+            logs = (lg.get("stdout", "") + lg.get("stderr", "") + lg.get("error", "")).strip()[:900]
+        return ok, results, logs
+
+    if mode == "deploy":
+        yield {"type": "tool_start", "tool": "Exec", "desc": f"deploy {name} → port {port}"}
+        res = await _docker_deploy()
         out_txt = (res.get("stdout", "") + res.get("stderr", "") + res.get("error", "")).strip()
         yield {"type": "tool_done", "tool": "Exec", "cmd": f"docker run {name} (port {port})",
                "ok": res["ok"], "out": out_txt[:300]}
@@ -7515,27 +7706,21 @@ async def _deploy_and_smoke(project: str, main_src: str = "", mode: str = "deplo
         yield {"type": "tool_done", "tool": "Exec", "cmd": f"docker restart {name}",
                "ok": res["ok"], "out": (res.get("stderr", "") + res.get("error", ""))[:200]}
 
-    # Poll until the app responds (pip install inside the container takes time)
-    routes = _extract_get_routes(main_src)
-    base = f"http://host.docker.internal:{port}"
-    up = False
-    for _ in range(30):
-        await _aio.sleep(3)
-        code = await _aio.to_thread(_http_status_sync, base + routes[0], 3.0)
-        if code != "000":
-            up = True
-            break
+    ok, results, logs = await _run_smoke()
 
-    results = []
-    if up:
-        for r in routes:
-            code = await _aio.to_thread(_http_status_sync, base + r, 5.0)
-            results.append({"path": r, "status": code})
-    ok = up and all(str(r["status"]).startswith(("2", "3")) for r in results)
-    logs = ""
-    if not ok:
-        lg = await _trusted_shell(f"docker logs --tail 30 {name} 2>&1", 15)
-        logs = (lg.get("stdout", "") + lg.get("stderr", "") + lg.get("error", "")).strip()[:900]
+    # ── Deterministic post-failure fix from logs (missing package) ───────
+    if not ok and logs:
+        log_pkgs = _packages_from_logs(logs)
+        newly = _append_requirements(safe, log_pkgs) if log_pkgs else []
+        if newly:
+            yield {"type": "tool_start", "tool": "Exec", "desc": "auto-fix from logs"}
+            yield {"type": "tool_done", "tool": "Exec",
+                   "cmd": "auto-add missing dependencies (from container log)",
+                   "ok": True, "out": "📦 เพิ่ม: " + ", ".join(newly) + " แล้ว deploy ใหม่"}
+            res = await _docker_deploy()
+            if res["ok"]:
+                ok, results, logs = await _run_smoke()
+
     yield {"type": "smoke_result", "ok": ok, "port": port,
            "url": f"http://my-ener.uk:{port}/", "routes": results, "logs": logs}
 
@@ -8327,12 +8512,14 @@ async def workspace_code_agent_stream(request: Request):
                             f"- GET {r['path']} -> {r['status']}" for r in smoke.get("routes", [])
                         ) or "(แอปไม่ตอบสนองเลย)"
                         smoke_fix_q = (
-                            f"แอปถูก deploy แล้วแต่ smoke test ล้มเหลว\n"
+                            f"แอปถูก deploy แล้วแต่ smoke test ล้มเหลว (dependency ที่ขาดถูกเติมอัตโนมัติแล้ว "
+                            f"ดังนั้นปัญหานี้น่าจะเป็น bug ในโค้ด ไม่ใช่ package ขาด)\n"
                             f"ผลการเรียก route:\n{route_lines}\n\n"
                             f"Log จาก container:\n```\n{smoke['logs']}\n```\n\n"
-                            f"วิเคราะห์สาเหตุจาก log แล้วแก้ไฟล์ที่เกี่ยวข้องด้วย "
-                            f"<WRITE_FILE path=\"{project}/...\">...</WRITE_FILE> (เขียนทั้งไฟล์) "
-                            f"แล้วรัน <EXEC_CMD cmd=\"python -m py_compile <path>\"/> สำหรับ .py ที่แก้"
+                            f"อ่าน log บรรทัดสุดท้าย (ตัว error จริง) แล้วแก้ไฟล์ที่ระบุใน traceback ด้วย "
+                            f"<WRITE_FILE path=\"{project}/...\">...</WRITE_FILE> (เขียนทั้งไฟล์เวอร์ชันที่แก้แล้ว)\n"
+                            f"ห้ามรันคำสั่งตรวจสอบ/ค้นหา (curl, ls, cat, docker) — แก้ด้วย WRITE_FILE เท่านั้น "
+                            f"ระบบจะ deploy + ทดสอบใหม่ให้เองหลังคุณเขียนไฟล์เสร็จ"
                         )
                         holder = {}
                         async for ev in stream_turn(smoke_fix_q, [], 4000, holder, writer_model, "CodeAgentWriter"):
@@ -8600,13 +8787,14 @@ async def workspace_code_agent_stream(request: Request):
                             f"- GET {r['path']} -> {r['status']}" for r in st_smoke.get("routes", [])
                         ) or "(แอปไม่ตอบสนองเลย)"
                         st_fix_q = (
-                            f"แอปถูก deploy เป็น container แล้วแต่รันไม่ขึ้น/smoke test ล้มเหลว\n"
+                            f"แอปถูก deploy เป็น container แล้วแต่รันไม่ขึ้น/smoke test ล้มเหลว "
+                            f"(dependency ที่ขาดถูกเติมอัตโนมัติแล้ว ปัญหานี้น่าจะเป็น bug ในโค้ด)\n"
                             f"ผลการเรียก route:\n{st_route_lines}\n\n"
                             f"Log จาก container:\n```\n{st_smoke['logs']}\n```\n\n"
-                            f"วิเคราะห์สาเหตุจาก log แล้วแก้ไฟล์ที่เกี่ยวข้องด้วย "
-                            f"<WRITE_FILE path=\"{project}/...\">...</WRITE_FILE> (เขียนทั้งไฟล์) "
-                            f"เช่นถ้า log บอกว่า package ขาด ให้เพิ่มใน requirements.txt "
-                            f"ห้ามรันคำสั่ง server เอง — ระบบจะ deploy ใหม่ให้อัตโนมัติ"
+                            f"อ่าน log บรรทัดสุดท้าย (ตัว error จริง) แล้วแก้ไฟล์ที่ระบุใน traceback ด้วย "
+                            f"<WRITE_FILE path=\"{project}/...\">...</WRITE_FILE> (เขียนทั้งไฟล์เวอร์ชันที่แก้แล้ว)\n"
+                            f"ห้ามรันคำสั่งตรวจสอบ/ค้นหา (curl, ls, cat, docker) — แก้ด้วย WRITE_FILE เท่านั้น "
+                            f"ระบบจะ deploy + ทดสอบใหม่ให้เองหลังคุณเขียนไฟล์เสร็จ"
                         )
                         st_holder: dict = {}
                         async for ev in stream_turn(st_fix_q, conv_messages, 4000, st_holder, writer_model, "CodeAgentWriter"):
@@ -8625,11 +8813,27 @@ async def workspace_code_agent_stream(request: Request):
 
                         yield f"data: {_json.dumps({'type': 'stage', 'stage': 'run', 'agent': None})}\n\n"
                         yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🚀 Re-deploy & retest'})}\n\n"
+                        st_smoke2: dict | None = None
                         async for ev in _deploy_and_smoke(
                             project, written_contents.get("main.py", main_src_disk), "restart"
                         ):
+                            if ev.get("type") == "smoke_result":
+                                st_smoke2 = ev
                             yield f"data: {_json.dumps(ev)}\n\n"
                         yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': 0})}\n\n"
+
+                        # One AI round done. If still failing, stop and report — do not loop.
+                        if st_smoke2 and not st_smoke2.get("ok"):
+                            st_rl = "\n".join(
+                                f"- GET {r['path']} → {r['status']}" for r in st_smoke2.get("routes", [])
+                            ) or "(แอปไม่ตอบสนอง)"
+                            report = (
+                                f"**⚠️ แก้อัตโนมัติแล้วแต่แอปยังรันไม่ขึ้น** — หยุดเพื่อให้คนตรวจสอบ\n\n"
+                                f"URL: {st_smoke2.get('url','')}\n{st_rl}\n\n"
+                                f"**Log ล่าสุดจาก container:**\n```\n{(st_smoke2.get('logs') or '')[:600]}\n```\n"
+                                f"แนะนำ: เปิดไฟล์ที่ระบุใน traceback แล้วแก้เอง หรือสั่งให้ AI แก้จุดที่เจาะจง"
+                            )
+                            yield f"data: {_json.dumps({'type': 'final_text', 'text': report, 'actions': [], 'exec_results': [], 'repair_iter': repair_iter + 2})}\n\n"
 
         yield f"data: {_json.dumps({'type': 'done'})}\n\n"
 
