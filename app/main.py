@@ -8133,7 +8133,7 @@ async def workspace_code_agent_stream(request: Request):
         import os
         import difflib as _difflib
         MAX_REPAIR = 3
-        AGENT_MAX_TOKENS = 6000
+        AGENT_MAX_TOKENS = 6000  # raised dynamically for full-file edits (see change_plan block)
         project_dir = f"{BASE_ENER_CODE}/{project}" if project else None
         if project_dir:
             os.makedirs(project_dir, exist_ok=True)
@@ -8678,17 +8678,42 @@ async def workspace_code_agent_stream(request: Request):
 
         repair_iter = 0
         conv_messages = clean_history[:]
-        # Inject change plan into the writer's question so it makes targeted edits only
+        # Inject change plan + FULL current file content so the writer edits precisely
+        # (without the real content, DeepSeek regenerates whole files from memory and destroys them)
         if change_plan:
             _plan_lines = "\n".join(f"- {_f}: {_inst}" for _f, _inst in change_plan.items())
+            _file_blocks = []
+            for _fname in change_plan.keys():
+                _safe = strip_project_prefix(str(_fname))
+                _disk = os.path.join(project_dir, _safe) if project_dir else None
+                if _disk and os.path.isfile(_disk):
+                    try:
+                        with open(_disk, "r", encoding="utf-8", errors="replace") as _fh:
+                            _cur = _fh.read()
+                        if len(_cur) > 48000:
+                            _cur = _cur[:48000] + "\n/* ...truncated... */"
+                        _file_blocks.append(
+                            f"===== CURRENT CONTENT OF {_safe} ({_cur.count(chr(10))+1} lines) =====\n{_cur}"
+                        )
+                    except Exception:
+                        pass
+            _content_block = "\n\n".join(_file_blocks)
+            # Raise output ceiling so the writer can reproduce large files in full without truncation
+            _total_lines = sum(b.count(chr(10)) for b in _file_blocks)
+            if _total_lines > 200:
+                AGENT_MAX_TOKENS = min(16000, 6000 + _total_lines * 14)
             current_q = (
                 f"User request: {question}\n\n"
                 f"CHANGE PLAN — make ONLY these specific targeted changes, nothing else:\n{_plan_lines}\n\n"
-                f"CRITICAL RULES:\n"
-                f"- Keep ALL other existing content exactly as-is\n"
-                f"- Do NOT rewrite files from scratch\n"
-                f"- Do NOT add features not mentioned above\n"
-                f"- Make minimal, precise edits as specified per file"
+                f"{_content_block}\n\n"
+                f"CRITICAL RULES — READ CAREFULLY:\n"
+                f"- The COMPLETE current content of each file is shown above.\n"
+                f"- When you WRITE_FILE, output the ENTIRE file with ONLY the change-plan edits applied.\n"
+                f"- COPY every other line VERBATIM — do not shorten, summarise, omit, or regenerate sections.\n"
+                f"- If a file is 600 lines, your WRITE_FILE must be ~600 lines (original ± the small edit).\n"
+                f"- Do NOT add features, sections, images, or sprites not in the change plan.\n"
+                f"- Only WRITE_FILE the files listed in the change plan — leave all other files untouched.\n"
+                f"- NEVER replace real content with placeholders or external image URLs."
             )
         else:
             current_q = question
