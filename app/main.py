@@ -8157,9 +8157,10 @@ async def workspace_code_agent_stream(request: Request):
                         exec_results = exec_results + fv_results
 
                     # Repair loop scoped to this batch (max 2 rounds)
+                    # (blocked commands are policy, not bugs — don't "repair" them)
                     repair_round = 0
                     while repair_round < 2:
-                        failed = [e for e in exec_results if not e.get("ok")]
+                        failed = [e for e in exec_results if not e.get("ok") and not e.get("blocked")]
                         static_issues = run_static_checks(written_contents)
                         if not failed and not static_issues:
                             break
@@ -8441,7 +8442,8 @@ async def workspace_code_agent_stream(request: Request):
             yield f"data: {_json.dumps({'type': 'final_text', 'text': display, 'actions': actions, 'exec_results': exec_results, 'repair_iter': repair_iter})}\n\n"
 
             # ── Auto-repair if exec failed, or validate if .py written but never checked ──
-            failed = [e for e in exec_results if not e.get("ok")]
+            # (blocked commands are policy, not bugs — don't "repair" them)
+            failed = [e for e in exec_results if not e.get("ok") and not e.get("blocked")]
             py_written = [a["path"] for a in actions if a.get("ok") and a["path"].endswith(".py")]
             needs_validation = bool(py_written) and not exec_cmds and not forced_validation
             static_issues = run_static_checks(written_contents) if written_now else []
