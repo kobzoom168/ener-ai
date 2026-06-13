@@ -1625,13 +1625,15 @@
 
               if (evt.type === 'qc_verdict') {
                 const qcDiv = document.createElement('div');
-                qcDiv.className = 'cc-qc-verdict ' + (evt.pass ? 'pass' : 'fail');
-                qcDiv.innerHTML = evt.pass
-                  ? '✅ QC ผ่าน — ไม่พบปัญหา'
-                  : `🔍 QC พบปัญหา — ส่งกลับให้ Writer แก้<div class="cc-qc-text">${escHtml(evt.text || '')}</div>`;
+                qcDiv.className = 'cc-qc-verdict ' + (evt.skipped ? 'fail' : (evt.pass ? 'pass' : 'fail'));
+                qcDiv.innerHTML = evt.skipped
+                  ? `⚠️ QC ถูกข้าม — โมเดล QC เรียกไม่สำเร็จ ลองเปลี่ยนโมเดลในกล่อง QC<div class="cc-qc-text">${escHtml(evt.text || '')}</div>`
+                  : (evt.pass
+                    ? '✅ QC ผ่าน — ไม่พบปัญหา'
+                    : `🔍 QC พบปัญหา — ส่งกลับให้ Writer แก้<div class="cc-qc-text">${escHtml(evt.text || '')}</div>`);
                 toolsEl.appendChild(qcDiv);
                 const qcStatus = document.getElementById('agent-status-qc');
-                if (qcStatus) qcStatus.textContent = evt.pass ? 'PASS ✓' : 'found issues';
+                if (qcStatus) qcStatus.textContent = evt.skipped ? 'skipped!' : (evt.pass ? 'PASS ✓' : 'found issues');
                 msgs.scrollTop = msgs.scrollHeight;
                 continue;
               }

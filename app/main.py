@@ -8055,6 +8055,20 @@ async def workspace_code_agent_stream(request: Request):
                     plan = _json.loads(plan_text[start:end + 1])
             except Exception:
                 plan = None
+            # Planner model failed (e.g. Anthropic credits) -> retry once with writer model
+            if not (plan or {}).get("files") and writer_model and writer_model != planner_model:
+                try:
+                    plan_text = ""
+                    async for token in stream_chat_response(
+                        question, [], plan_system, model=writer_model, agent="CodeAgentPlan", max_tokens=800
+                    ):
+                        plan_text += token
+                    start = plan_text.find("{")
+                    end = plan_text.rfind("}")
+                    if start != -1 and end != -1:
+                        plan = _json.loads(plan_text[start:end + 1])
+                except Exception:
+                    plan = None
             yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': len(plan_text.split())})}\n\n"
 
             files = [str(f).strip().lstrip("/") for f in (plan or {}).get("files") or [] if str(f).strip()][:12]
@@ -8466,6 +8480,7 @@ async def workspace_code_agent_stream(request: Request):
             yield f"data: {_json.dumps({'type': 'stage', 'stage': 'qc', 'agent': 'qc', 'model': qc_model})}\n\n"
             yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🔍 QC reviewing'})}\n\n"
             qc_text = ""
+            qc_skipped = False
             try:
                 contracts_text = extract_contracts(written_contents)
                 qc_static = run_static_checks(written_contents)
@@ -8496,9 +8511,10 @@ async def workspace_code_agent_stream(request: Request):
                     qc_text += token
             except Exception as exc:
                 qc_text = f"QC_PASS (review skipped: {str(exc)[:80]})"
+                qc_skipped = True
             qc_pass = "QC_PASS" in qc_text[:200].upper()
             yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': len(qc_text.split())})}\n\n"
-            yield f"data: {_json.dumps({'type': 'qc_verdict', 'pass': qc_pass, 'text': qc_text.strip()[:1500]})}\n\n"
+            yield f"data: {_json.dumps({'type': 'qc_verdict', 'pass': qc_pass, 'skipped': qc_skipped, 'text': qc_text.strip()[:1500]})}\n\n"
 
             # QC found issues -> hand back to writer for one scoped fix round
             if not qc_pass and qc_text.strip():
@@ -8535,17 +8551,31 @@ async def workspace_code_agent_stream(request: Request):
                 if fix_display:
                     yield f"data: {_json.dumps({'type': 'final_text', 'text': fix_display, 'actions': fix_actions, 'exec_results': fix_exec_results, 'repair_iter': repair_iter + 1})}\n\n"
 
-        # ── Auto-redeploy: if this project already runs as a container, restart + retest ──
+        # ── Auto-deploy: existing container -> restart+retest; none yet but the
+        # project is a FastAPI app -> first deploy ───────────────────────────
         if written_contents and project:
             _safe_proj = __import__("re").sub(r"[^a-zA-Z0-9_-]", "", project)
             if _safe_proj == project:
                 chk = await _trusted_shell(
                     f"docker ps -a --filter name=^ener-app-{_safe_proj}$ --format '{{{{.Names}}}}'", 15
                 )
-                if (chk.get("stdout") or "").strip():
+                has_container = bool((chk.get("stdout") or "").strip())
+                main_src_disk = ""
+                try:
+                    with open(f"{BASE_ENER_CODE}/{_safe_proj}/main.py", "r",
+                              encoding="utf-8", errors="replace") as fh:
+                        main_src_disk = fh.read()
+                except Exception:
+                    pass
+                req_exists = os.path.exists(f"{BASE_ENER_CODE}/{_safe_proj}/requirements.txt")
+                if has_container or ("fastapi" in main_src_disk.lower() and req_exists):
+                    deploy_mode = "restart" if has_container else "deploy"
+                    msg = '🚀 Re-deploy & retest' if has_container else '🚀 First deploy & smoke test'
                     yield f"data: {_json.dumps({'type': 'stage', 'stage': 'run', 'agent': None})}\n\n"
-                    yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🚀 Re-deploy & retest'})}\n\n"
-                    async for ev in _deploy_and_smoke(project, written_contents.get("main.py", ""), "restart"):
+                    yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': msg})}\n\n"
+                    async for ev in _deploy_and_smoke(
+                        project, written_contents.get("main.py", main_src_disk), deploy_mode
+                    ):
                         yield f"data: {_json.dumps(ev)}\n\n"
                     yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': 0})}\n\n"
 
@@ -8651,6 +8681,7 @@ async def workspace_code_agent_vision(request: Request):
     anthropic_msgs[-1]["content"] = build_user_content(
         question, image_base64=image_b64, image_media_type=image_media
     )
+    raw_answer = ""
     try:
         response = await client.messages.create(
             model=_PRIMARY_MODEL,
@@ -8658,9 +8689,34 @@ async def workspace_code_agent_vision(request: Request):
             system=system,
             messages=anthropic_msgs,
         )
+        raw_answer = "".join(getattr(b, "text", "") for b in response.content)
     except Exception as exc:
-        return JSONResponse({"answer": f"❌ Vision AI error: {str(exc)[:300]}", "actions": [], "diffs": {}, "exec_results": []})
-    raw_answer = "".join(getattr(b, "text", "") for b in response.content)
+        # Anthropic unavailable (e.g. credit exhausted) -> OpenRouter vision fallback
+        try:
+            from app.core.openrouter_client import openrouter_chat_completions
+            or_messages: list[dict] = [{"role": "system", "content": system}]
+            for m in clean_history:
+                or_messages.append({"role": m["role"], "content": str(m["content"])[:2000]})
+            or_messages.append({"role": "user", "content": [
+                {"type": "text", "text": question},
+                {"type": "image_url", "image_url": {"url": f"data:{image_media};base64,{image_b64}"}},
+            ]})
+            data = await openrouter_chat_completions(
+                "gemini-flash-lite", or_messages, max_tokens=4096
+            )
+            raw_answer = str(
+                ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+            )
+        except Exception as exc2:
+            return JSONResponse({
+                "answer": (
+                    f"❌ Vision AI error: {str(exc)[:200]}\n"
+                    f"❌ Fallback (OpenRouter Gemini) ก็ล้มเหลว: {str(exc2)[:200]}"
+                ),
+                "actions": [], "diffs": {}, "exec_results": [],
+            })
+    if not raw_answer.strip():
+        return JSONResponse({"answer": "❌ Vision AI ตอบกลับว่างเปล่า", "actions": [], "diffs": {}, "exec_results": []})
 
     # ── Parse WRITE_FILE (with diff) ───────────────────────────────────────
     import os, difflib as _difflib
