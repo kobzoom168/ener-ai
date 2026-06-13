@@ -8825,27 +8825,42 @@ async def workspace_code_agent_stream(request: Request):
                 qc_static = run_static_checks(written_contents)
                 static_lines = "\n".join(f"- {i['hint']}" for i in qc_static) or "(none)"
                 files_block = "\n\n".join(
-                    f"=== {p} ===\n" + "\n".join(c.splitlines()[:120])
+                    f"=== {p} ({len(c.splitlines())} lines) ===\n"
+                    + "\n".join(c.splitlines()[:240])
+                    + ("\n... (truncated)" if len(c.splitlines()) > 240 else "")
                     for p, c in list(written_contents.items())[:6]
                 )
                 qc_system = (
-                    "You are a strict senior code reviewer (QC). You CANNOT write files — verdict only.\n"
-                    "Review the files below for runtime bugs, cross-file inconsistencies "
-                    "(missing templates/routes, schema mismatch, double UploadFile.read(), "
-                    "dict(row) without row_factory), and imports missing from requirements.txt.\n"
-                    "If everything is correct reply EXACTLY: QC_PASS\n"
-                    "Otherwise reply in Thai with concrete issues, one per line:\n"
+                    "You are a strict senior QC reviewer. You CANNOT write files — verdict only.\n"
+                    "You run TWO checks, in this order:\n\n"
+                    "1) ACCEPTANCE — the most important check. Did the code ACTUALLY implement "
+                    "what the user asked for? Read the user request, then SEARCH the written files "
+                    "for concrete evidence of every requested feature. A feature only counts if the "
+                    "real markup/CSS/route exists — NOT if a comment or the assistant merely says it "
+                    "was added. Examples of MISSING features: user asked for a walking RPG character "
+                    "but there is no character element/sprite/@keyframes that moves it; user asked for "
+                    "a contact form but there is no <form>; user asked to change a heading but the text "
+                    "is unchanged. If ANY clearly requested, concrete feature is absent → this is a "
+                    "FAIL.\n\n"
+                    "2) BUGS — runtime bugs, cross-file inconsistencies (missing templates/routes, "
+                    "schema mismatch, double UploadFile.read(), dict(row) without row_factory), and "
+                    "imports missing from requirements.txt.\n\n"
+                    "If BOTH checks pass reply EXACTLY: QC_PASS\n"
+                    "Otherwise reply in Thai, one issue per line. For a missing feature use:\n"
+                    "MISSING:<feature> FILE:<path> FIX:<exactly what to add and where>\n"
+                    "For a bug use:\n"
                     "FILE:<path> ISSUE:<what is wrong> FIX:<specific instruction>\n"
-                    "Maximum 5 issues. Report only real bugs that break the app — not style preferences."
+                    "Maximum 5 issues. List missing-feature issues FIRST. "
+                    "Do not nitpick style — only real bugs or genuinely missing requested features."
                 )
                 qc_q = (
-                    f"งานที่ผู้ใช้สั่ง: {question[:300]}\n\n"
+                    f"━━ สิ่งที่ผู้ใช้สั่งให้ทำ (ตรวจ ACCEPTANCE กับอันนี้) ━━\n{question[:400]}\n\n"
                     f"Contracts ของโปรเจกต์:\n{contracts_text or '(none)'}\n\n"
                     f"Static analysis:\n{static_lines}\n\n"
-                    f"ไฟล์ที่เพิ่งถูกเขียน:\n{files_block}"
+                    f"━━ ไฟล์ที่ AI เพิ่งเขียนจริง (ตรวจว่าฟีเจอร์ที่สั่งอยู่ในนี้ไหม) ━━\n{files_block}"
                 )
                 async for token in stream_chat_response(
-                    qc_q, [], qc_system, model=qc_model, agent="CodeAgentQC", max_tokens=700
+                    qc_q, [], qc_system, model=qc_model, agent="CodeAgentQC", max_tokens=900
                 ):
                     qc_text += token
             except Exception as exc:
@@ -8860,11 +8875,28 @@ async def workspace_code_agent_stream(request: Request):
                 yield f"data: {_json.dumps({'type': 'stage', 'stage': 'write', 'agent': 'writer', 'model': writer_model})}\n\n"
                 yield f"data: {_json.dumps({'type': 'repair_start', 'iter': repair_iter + 1, 'errors': 1})}\n\n"
                 yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🔧 Fixing QC issues'})}\n\n"
+                # Inject the CURRENT full content of every flagged file so the
+                # writer ADDS the missing feature / fixes the bug WITHOUT
+                # regenerating (and destroying) the rest of the file.
+                _qc_fix_files = []
+                for _p in list(written_contents.keys()):
+                    if _p and _p in qc_text:
+                        _cur = written_contents.get(_p, "")
+                        if len(_cur) > 40000:
+                            _cur = _cur[:40000] + "\n/* ...truncated... */"
+                        _qc_fix_files.append(
+                            f"===== CURRENT CONTENT OF {_p} ({_cur.count(chr(10))+1} lines) =====\n{_cur}"
+                        )
+                _qc_fix_block = "\n\n".join(_qc_fix_files)
                 qc_fix_q = (
                     f"QC reviewer ตรวจพบปัญหาดังนี้:\n{qc_text.strip()[:1200]}\n\n"
-                    f"แก้ไขเฉพาะจุดที่ QC ระบุด้วย <WRITE_FILE path=\"{project}/...\">...</WRITE_FILE> "
-                    f"(เขียนทั้งไฟล์เวอร์ชันแก้แล้ว) จากนั้นรัน "
-                    f"<EXEC_CMD cmd=\"python -m py_compile <path>\"/> สำหรับไฟล์ .py ที่แก้"
+                    + (f"{_qc_fix_block}\n\n" if _qc_fix_block else "")
+                    + f"แก้ไขเฉพาะจุดที่ QC ระบุด้วย <WRITE_FILE path=\"{project}/...\">...</WRITE_FILE>\n"
+                    f"กฎสำคัญ:\n"
+                    f"- เขียนทั้งไฟล์ออกมา โดย COPY ทุกบรรทัดเดิมเป๊ะ ๆ แล้วเพิ่ม/แก้เฉพาะจุดที่ QC บอก\n"
+                    f"- ถ้าเป็น MISSING feature ให้ ADD เข้าไป ห้ามลบหรือย่อส่วนอื่นของไฟล์\n"
+                    f"- ไฟล์เดิมกี่บรรทัด ผลลัพธ์ต้องประมาณเท่าเดิม (บวกส่วนที่เพิ่ม)\n"
+                    f"จากนั้นรัน <EXEC_CMD cmd=\"python -m py_compile <path>\"/> สำหรับไฟล์ .py ที่แก้"
                 )
                 holder_qcfix: dict = {}
                 async for ev in stream_turn(qc_fix_q, conv_messages, 4000, holder_qcfix, writer_model, "CodeAgentWriter"):
