@@ -1200,6 +1200,7 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   async function loadActiveModelBadge() {
+    if (!activeModelBadge) return;
     try {
       const data = await api('/admin/api/status');
       activeModelBadge.textContent = data.active_model_label || 'Auto / Active';
