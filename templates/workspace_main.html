@@ -522,6 +522,32 @@
       .agent-exec-cmd { font-family:monospace;font-size:11px;color:#9b9bff; }
       .agent-exec-out { font-family:monospace;font-size:10px;color:#888;margin:3px 0 0;white-space:pre-wrap;word-break:break-all;max-height:120px;overflow:auto; }
       .agent-step-text { margin-top:6px;color:#ccc;font-size:12px;line-height:1.5; }
+
+      /* ── Multi-agent pipeline panel ── */
+      .agent-pipeline { border-bottom:1px solid #2a2a38;background:#0d0d14;padding:6px 8px 8px;flex-shrink:0; }
+      .agent-stepper { display:flex;align-items:center;gap:4px;font-size:9px;font-weight:700;letter-spacing:.5px;color:#444;margin-bottom:6px;justify-content:center; }
+      .agent-stepper span[data-stage] { padding:1px 7px;border-radius:8px;transition:all .2s; }
+      .agent-stepper span[data-stage].active { background:#7c3aed;color:#fff; }
+      .agent-stepper span[data-stage].done { color:#2ecc71; }
+      .agent-stepper .ap-arrow { color:#333; }
+      .agent-cards { display:flex;gap:6px; }
+      .agent-card { flex:1;min-width:0;background:#13131c;border:1px solid #23232f;border-radius:8px;padding:5px 7px;transition:border-color .25s, box-shadow .25s; }
+      .agent-card.active { border-color:#7c3aed;box-shadow:0 0 8px rgba(124,58,237,.45); }
+      .agent-card.done-ok { border-color:#1f5c38; }
+      .agent-card.done-err { border-color:#7c2d2d; }
+      .agent-card-head { display:flex;align-items:center;gap:4px;font-size:11px;font-weight:700;color:#ccc;margin-bottom:3px;white-space:nowrap; }
+      .agent-card-dot { width:7px;height:7px;border-radius:50%;background:#3a3a4a;margin-left:auto;flex-shrink:0; }
+      .agent-card-dot.running { background:#7c3aed;animation:agentPulse 1s ease-in-out infinite; }
+      .agent-card-dot.ok { background:#2ecc71; }
+      .agent-card-dot.err { background:#e74c3c; }
+      @keyframes agentPulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+      .agent-card-select { width:100%;background:#1a1a26;color:#aaa;border:1px solid #2c2c3a;border-radius:5px;font-size:10px;padding:2px 3px;margin-bottom:3px;cursor:pointer; }
+      .agent-card-status { font-size:9.5px;color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-height:13px; }
+      .agent-card-tokens { font-size:9px;color:#4a4a5a;text-align:right;min-height:11px; }
+      .cc-qc-verdict { margin:6px 0;border-radius:6px;padding:7px 10px;font-size:12px;line-height:1.5; }
+      .cc-qc-verdict.pass { background:#0d1f14;border:1px solid #1f5c38;color:#2ecc71; }
+      .cc-qc-verdict.fail { background:#1f150a;border:1px solid #6b4a1f;color:#e67e22; }
+      .cc-qc-verdict .cc-qc-text { color:#bbb;font-size:11px;margin-top:4px;white-space:pre-wrap; }
     </style>
       <div id="code-toolbar" class="code-toolbar">
         <div class="code-toolbar-left">
@@ -591,6 +617,34 @@
             </div>
             <button onclick="showProjectMemory()" title="ดู Project Memory" style="background:none;border:1px solid #444;color:#888;padding:2px 8px;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap;flex-shrink:0">🧠</button>
             <button onclick="clearProjectChat()" title="เริ่ม chat ใหม่" style="background:none;border:1px solid #444;color:#888;padding:2px 8px;border-radius:4px;cursor:pointer;font-size:11px;white-space:nowrap;flex-shrink:0">+ New Chat</button>
+          </div>
+          <div id="agent-pipeline-panel" class="agent-pipeline">
+            <div class="agent-stepper" id="agent-stepper">
+              <span data-stage="plan">PLAN</span><span class="ap-arrow">→</span>
+              <span data-stage="write">WRITE</span><span class="ap-arrow">→</span>
+              <span data-stage="qc">QC</span><span class="ap-arrow">→</span>
+              <span data-stage="done">DONE</span>
+            </div>
+            <div class="agent-cards">
+              <div class="agent-card" id="agent-card-planner">
+                <div class="agent-card-head">🧠 Planner <span class="agent-card-dot" id="agent-dot-planner"></span></div>
+                <select id="agent-model-planner" class="agent-card-select"></select>
+                <div class="agent-card-status" id="agent-status-planner">idle</div>
+                <div class="agent-card-tokens" id="agent-tokens-planner"></div>
+              </div>
+              <div class="agent-card" id="agent-card-writer">
+                <div class="agent-card-head">⚡ Writer <span class="agent-card-dot" id="agent-dot-writer"></span></div>
+                <select id="agent-model-writer" class="agent-card-select"></select>
+                <div class="agent-card-status" id="agent-status-writer">idle</div>
+                <div class="agent-card-tokens" id="agent-tokens-writer"></div>
+              </div>
+              <div class="agent-card" id="agent-card-qc">
+                <div class="agent-card-head">🔍 QC <span class="agent-card-dot" id="agent-dot-qc"></span></div>
+                <select id="agent-model-qc" class="agent-card-select"></select>
+                <div class="agent-card-status" id="agent-status-qc">idle</div>
+                <div class="agent-card-tokens" id="agent-tokens-qc"></div>
+              </div>
+            </div>
           </div>
           <div id="code-chat-messages" class="code-chat-messages" role="log" aria-live="polite">
             <div class="code-chat-empty-placeholder" style="color:#666;font-size:12px;text-align:center;margin-top:40px">เลือกไฟล์แล้วถามได้เลย</div>
@@ -1250,6 +1304,108 @@
         });
       }
 
+      // ── Multi-agent pipeline panel ─────────────────────────────────────
+      const AGENT_ROLES = ['planner', 'writer', 'qc'];
+      const AGENT_MODEL_DEFAULTS = { planner: 'sonnet', writer: 'deepseek-direct', qc: 'haiku' };
+      let _agentCurrent = null;
+      let _agentTokens = { planner: 0, writer: 0, qc: 0 };
+
+      function initAgentPanel() {
+        const src = document.getElementById('code-model-select');
+        if (!src) return;
+        let saved = {};
+        try { saved = JSON.parse(localStorage.getItem('agentPipelineModels') || '{}'); } catch {}
+        for (const role of AGENT_ROLES) {
+          const sel = document.getElementById('agent-model-' + role);
+          if (!sel || sel.options.length) continue;
+          sel.innerHTML = src.innerHTML;
+          sel.value = saved[role] || AGENT_MODEL_DEFAULTS[role];
+          if (!sel.value) sel.value = src.value;
+          sel.addEventListener('change', () => {
+            localStorage.setItem('agentPipelineModels', JSON.stringify(getAgentModels()));
+          });
+        }
+      }
+
+      function getAgentModels() {
+        const out = {};
+        for (const role of AGENT_ROLES) {
+          const sel = document.getElementById('agent-model-' + role);
+          if (sel && sel.value) out[role] = sel.value;
+        }
+        return out;
+      }
+
+      function resetAgentPanel() {
+        _agentCurrent = null;
+        _agentTokens = { planner: 0, writer: 0, qc: 0 };
+        for (const role of AGENT_ROLES) {
+          const card = document.getElementById('agent-card-' + role);
+          const dot  = document.getElementById('agent-dot-' + role);
+          const st   = document.getElementById('agent-status-' + role);
+          const tk   = document.getElementById('agent-tokens-' + role);
+          if (card) card.className = 'agent-card';
+          if (dot)  dot.className = 'agent-card-dot';
+          if (st)   st.textContent = 'waiting';
+          if (tk)   tk.textContent = '';
+        }
+        document.querySelectorAll('#agent-stepper span[data-stage]').forEach(s => s.className = '');
+      }
+
+      function _agentSetStage(stage, agent) {
+        const order = ['plan', 'write', 'qc', 'done'];
+        const idx = order.indexOf(stage);
+        document.querySelectorAll('#agent-stepper span[data-stage]').forEach(s => {
+          const i = order.indexOf(s.dataset.stage);
+          s.className = i < idx ? 'done' : (i === idx ? 'active' : '');
+        });
+        if (!agent) return;
+        if (_agentCurrent && _agentCurrent !== agent) {
+          const pc = document.getElementById('agent-card-' + _agentCurrent);
+          const pd = document.getElementById('agent-dot-' + _agentCurrent);
+          const ps = document.getElementById('agent-status-' + _agentCurrent);
+          if (pc) pc.className = 'agent-card done-ok';
+          if (pd) pd.className = 'agent-card-dot ok';
+          if (ps) ps.textContent = 'done';
+        }
+        _agentCurrent = agent;
+        const card = document.getElementById('agent-card-' + agent);
+        const dot  = document.getElementById('agent-dot-' + agent);
+        const st   = document.getElementById('agent-status-' + agent);
+        if (card) card.className = 'agent-card active';
+        if (dot)  dot.className = 'agent-card-dot running';
+        if (st)   st.textContent = 'starting...';
+      }
+
+      function _agentSetAction(text) {
+        if (!_agentCurrent) return;
+        const st = document.getElementById('agent-status-' + _agentCurrent);
+        if (st) st.textContent = (text || '').slice(0, 60);
+      }
+
+      function _agentAddTokens(n) {
+        if (!_agentCurrent || !n) return;
+        _agentTokens[_agentCurrent] = (_agentTokens[_agentCurrent] || 0) + n;
+        const tk = document.getElementById('agent-tokens-' + _agentCurrent);
+        if (tk) tk.textContent = _agentTokens[_agentCurrent] + ' tok';
+      }
+
+      function _agentFinish(ok) {
+        if (_agentCurrent) {
+          const card = document.getElementById('agent-card-' + _agentCurrent);
+          const dot  = document.getElementById('agent-dot-' + _agentCurrent);
+          const st   = document.getElementById('agent-status-' + _agentCurrent);
+          if (card) card.className = 'agent-card ' + (ok ? 'done-ok' : 'done-err');
+          if (dot)  dot.className = 'agent-card-dot ' + (ok ? 'ok' : 'err');
+          if (st)   st.textContent = ok ? 'done' : 'error';
+        }
+        if (ok) {
+          document.querySelectorAll('#agent-stepper span[data-stage]').forEach(s => {
+            s.className = s.dataset.stage === 'done' ? 'active' : 'done';
+          });
+        }
+      }
+
       async function askCodeAI(preset) {
         const input = document.getElementById('code-question-input');
         const question = preset || (input ? input.value.trim() : '');
@@ -1295,6 +1451,7 @@
         `;
         msgs.appendChild(aiDiv);
         msgs.scrollTop = msgs.scrollHeight;
+        resetAgentPanel();
 
         const wordEl   = document.getElementById(`${rid}-word`);
         const tokensEl = document.getElementById(`${rid}-tokens`);
@@ -1420,7 +1577,7 @@
             headers: {'Content-Type':'application/json'},
             body: JSON.stringify({
               question, file_path: currentFilePath, file_content: fileContent,
-              project: currentProject, model: selectedModel,
+              project: currentProject, model: selectedModel, models: getAgentModels(),
               messages: history, server_context: serverContext, project_files: projectFiles,
             }),
           });
@@ -1441,7 +1598,26 @@
               let evt;
               try { evt = JSON.parse(line.slice(6)); } catch { continue; }
 
+              if (evt.type === 'stage') {
+                _agentSetStage(evt.stage, evt.agent);
+                continue;
+              }
+
+              if (evt.type === 'qc_verdict') {
+                const qcDiv = document.createElement('div');
+                qcDiv.className = 'cc-qc-verdict ' + (evt.pass ? 'pass' : 'fail');
+                qcDiv.innerHTML = evt.pass
+                  ? '✅ QC ผ่าน — ไม่พบปัญหา'
+                  : `🔍 QC พบปัญหา — ส่งกลับให้ Writer แก้<div class="cc-qc-text">${escHtml(evt.text || '')}</div>`;
+                toolsEl.appendChild(qcDiv);
+                const qcStatus = document.getElementById('agent-status-qc');
+                if (qcStatus) qcStatus.textContent = evt.pass ? 'PASS ✓' : 'found issues';
+                msgs.scrollTop = msgs.scrollHeight;
+                continue;
+              }
+
               if (evt.type === 'thinking_start') {
+                _agentSetAction(evt.msg || 'thinking...');
                 wordEl.textContent = (evt.msg || 'Thinking') + '...';
                 if (evt.msg && evt.msg.includes('repair')) {
                   const rep = document.createElement('div');
@@ -1486,6 +1662,7 @@
 
               if (evt.type === 'thinking_done') {
                 _stopThinkWords();
+                _agentAddTokens(evt.tokens || 0);
                 wordEl.textContent = selectedModel;
                 thinkRow.classList.add('done');
               }
@@ -1493,6 +1670,7 @@
               if (evt.type === 'tool_start') {
                 const toolId = rid + '-tool-' + Date.now();
                 const label = evt.tool === 'Exec' ? 'Bash' : evt.tool;
+                _agentSetAction(label + ': ' + (evt.desc || ''));
                 currentToolEl = addToolRow('running', label, evt.desc, toolId);
                 msgs.scrollTop = msgs.scrollHeight;
               }
@@ -1545,6 +1723,7 @@
 
               if (evt.type === 'done') {
                 _stopThinkWords();
+                _agentFinish(true);
                 // Refresh file trees
                 for (const proj of writtenProjects) {
                   const filesDiv = document.querySelector(`.code-project-files[data-project="${proj}"]`);
@@ -1561,12 +1740,14 @@
           }
         } catch(e) {
           _stopThinkWords();
+          _agentFinish(false);
           aiDiv.innerHTML += `<div class="code-chat-error">❌ ${escHtml(e.message)}</div>`;
           codeToast('❌ ' + (e.message || 'AI request failed'));
         }
       }
 
       function bindCodePanelEvents() {
+        initAgentPanel();
         document.getElementById('code-project-select')?.addEventListener('change', function() {
           currentProject = this.value;
           if (currentProject) loadExplorer(currentProject);

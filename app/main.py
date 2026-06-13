@@ -7710,6 +7710,10 @@ async def workspace_code_agent_stream(request: Request):
     file_content = body.get("file_content", "")
     project    = body.get("project", "").strip()
     model      = body.get("model", "")
+    models_cfg = body.get("models") or {}
+    planner_model = str(models_cfg.get("planner") or "").strip() or model
+    writer_model  = str(models_cfg.get("writer") or "").strip() or model
+    qc_model      = str(models_cfg.get("qc") or "").strip() or model
     messages   = body.get("messages", [])
     server_ctx = body.get("server_context", {})
     project_files = body.get("project_files", "")
@@ -7871,11 +7875,12 @@ async def workspace_code_agent_stream(request: Request):
                 except Exception:
                     pass
 
-        async def stream_turn(prompt: str, history: list[dict], max_tokens: int, holder: dict):
+        async def stream_turn(prompt: str, history: list[dict], max_tokens: int, holder: dict,
+                              turn_model: str = "", agent_name: str = "CodeAgent"):
             full_response = ""
             token_count = 0
             async for token in stream_chat_response(
-                prompt, history, system, model=model, agent="CodeAgent", max_tokens=max_tokens
+                prompt, history, system, model=turn_model or model, agent=agent_name, max_tokens=max_tokens
             ):
                 full_response += token
                 token_count += len(token.split())
@@ -7888,8 +7893,10 @@ async def workspace_code_agent_stream(request: Request):
         # ════════════════════════════════════════════════════════════
         is_new_project = bool(project) and not (project_files or "").strip() and not clean_history
         if is_new_project:
+            yield f"data: {_json.dumps({'type': 'stage', 'stage': 'plan', 'agent': 'planner', 'model': planner_model})}\n\n"
             yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '📋 Planning project files'})}\n\n"
             plan: dict | None = None
+            plan_text = ""
             try:
                 plan_system = (
                     f"{system}\n\n"
@@ -7902,9 +7909,8 @@ async def workspace_code_agent_stream(request: Request):
                     f"then requirements.txt and README.md last.\n"
                     f"Include every file the code will need (templates, static CSS, etc) — nothing extra."
                 )
-                plan_text = ""
                 async for token in stream_chat_response(
-                    question, [], plan_system, model=model, agent="CodeAgentPlan", max_tokens=800
+                    question, [], plan_system, model=planner_model, agent="CodeAgentPlan", max_tokens=800
                 ):
                     plan_text += token
                 start = plan_text.find("{")
@@ -7913,7 +7919,7 @@ async def workspace_code_agent_stream(request: Request):
                     plan = _json.loads(plan_text[start:end + 1])
             except Exception:
                 plan = None
-            yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': 0})}\n\n"
+            yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': len(plan_text.split())})}\n\n"
 
             files = [str(f).strip().lstrip("/") for f in (plan or {}).get("files") or [] if str(f).strip()][:12]
             deps = [str(d).strip() for d in (plan or {}).get("dependencies") or [] if str(d).strip()]
@@ -7921,6 +7927,7 @@ async def workspace_code_agent_stream(request: Request):
 
             if files:
                 yield f"data: {_json.dumps({'type': 'plan_done', 'files': files, 'dependencies': deps, 'summary': plan_summary})}\n\n"
+                yield f"data: {_json.dumps({'type': 'stage', 'stage': 'write', 'agent': 'writer', 'model': writer_model})}\n\n"
 
                 all_actions: list[dict] = []
                 all_exec_results: list[dict] = []
@@ -7954,7 +7961,7 @@ async def workspace_code_agent_stream(request: Request):
                     )
 
                     holder: dict = {}
-                    async for ev in stream_turn(batch_q, [], 4000, holder):
+                    async for ev in stream_turn(batch_q, [], 4000, holder, writer_model, "CodeAgentWriter"):
                         yield f"data: {_json.dumps(ev)}\n\n"
                     yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': holder.get('tokens', 0)})}\n\n"
                     full_response = holder.get('response', '')
@@ -8021,7 +8028,7 @@ async def workspace_code_agent_stream(request: Request):
                             f"แล้ว <EXEC_CMD cmd=\"python -m py_compile ...\"/> ตรวจสอบใหม่อีกครั้ง"
                         )
                         holder = {}
-                        async for ev in stream_turn(repair_q, [], 3000, holder):
+                        async for ev in stream_turn(repair_q, [], 3000, holder, writer_model, "CodeAgentWriter"):
                             yield f"data: {_json.dumps(ev)}\n\n"
                         yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': holder.get('tokens', 0)})}\n\n"
                         full_response = holder.get('response', '')
@@ -8105,9 +8112,10 @@ async def workspace_code_agent_stream(request: Request):
                         f"ตอบสั้นๆ ว่า \"OK ไม่มีปัญหา\""
                     )
 
+                    yield f"data: {_json.dumps({'type': 'stage', 'stage': 'qc', 'agent': 'qc', 'model': qc_model})}\n\n"
                     yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🔗 Final integration review'})}\n\n"
                     holder = {}
-                    async for ev in stream_turn(integration_q, [], 4000, holder):
+                    async for ev in stream_turn(integration_q, [], 4000, holder, qc_model, "CodeAgentQC"):
                         yield f"data: {_json.dumps(ev)}\n\n"
                     yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': holder.get('tokens', 0)})}\n\n"
                     full_response = holder.get('response', '')
@@ -8171,6 +8179,7 @@ async def workspace_code_agent_stream(request: Request):
         current_q = question
         forced_validation = False
         written_contents: dict[str, str] = {}
+        yield f"data: {_json.dumps({'type': 'stage', 'stage': 'write', 'agent': 'writer', 'model': writer_model})}\n\n"
 
         while repair_iter <= MAX_REPAIR:
             # ── Stream AI tokens ──────────────────────────────────────
@@ -8180,7 +8189,7 @@ async def workspace_code_agent_stream(request: Request):
             yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': status_msg})}\n\n"
 
             async for token in stream_chat_response(
-                current_q, conv_messages, system, model=model, agent="CodeAgent", max_tokens=AGENT_MAX_TOKENS
+                current_q, conv_messages, system, model=writer_model, agent="CodeAgentWriter", max_tokens=AGENT_MAX_TOKENS
             ):
                 full_response += token
                 token_count += len(token.split())
@@ -8253,6 +8262,80 @@ async def workspace_code_agent_stream(request: Request):
                 {"role": "assistant", "content": full_response[:1200]},
             ]
             yield f"data: {_json.dumps({'type': 'repair_start', 'iter': repair_iter, 'errors': len(failed)})}\n\n"
+
+        # ── QC review round: separate reviewer model checks written files ──
+        if written_contents and qc_model:
+            yield f"data: {_json.dumps({'type': 'stage', 'stage': 'qc', 'agent': 'qc', 'model': qc_model})}\n\n"
+            yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🔍 QC reviewing'})}\n\n"
+            qc_text = ""
+            try:
+                contracts_text = extract_contracts(written_contents)
+                qc_static = run_static_checks(written_contents)
+                static_lines = "\n".join(f"- {i['hint']}" for i in qc_static) or "(none)"
+                files_block = "\n\n".join(
+                    f"=== {p} ===\n" + "\n".join(c.splitlines()[:120])
+                    for p, c in list(written_contents.items())[:6]
+                )
+                qc_system = (
+                    "You are a strict senior code reviewer (QC). You CANNOT write files — verdict only.\n"
+                    "Review the files below for runtime bugs, cross-file inconsistencies "
+                    "(missing templates/routes, schema mismatch, double UploadFile.read(), "
+                    "dict(row) without row_factory), and imports missing from requirements.txt.\n"
+                    "If everything is correct reply EXACTLY: QC_PASS\n"
+                    "Otherwise reply in Thai with concrete issues, one per line:\n"
+                    "FILE:<path> ISSUE:<what is wrong> FIX:<specific instruction>\n"
+                    "Maximum 5 issues. Report only real bugs that break the app — not style preferences."
+                )
+                qc_q = (
+                    f"งานที่ผู้ใช้สั่ง: {question[:300]}\n\n"
+                    f"Contracts ของโปรเจกต์:\n{contracts_text or '(none)'}\n\n"
+                    f"Static analysis:\n{static_lines}\n\n"
+                    f"ไฟล์ที่เพิ่งถูกเขียน:\n{files_block}"
+                )
+                async for token in stream_chat_response(
+                    qc_q, [], qc_system, model=qc_model, agent="CodeAgentQC", max_tokens=700
+                ):
+                    qc_text += token
+            except Exception as exc:
+                qc_text = f"QC_PASS (review skipped: {str(exc)[:80]})"
+            qc_pass = "QC_PASS" in qc_text[:200].upper()
+            yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': len(qc_text.split())})}\n\n"
+            yield f"data: {_json.dumps({'type': 'qc_verdict', 'pass': qc_pass, 'text': qc_text.strip()[:1500]})}\n\n"
+
+            # QC found issues -> hand back to writer for one scoped fix round
+            if not qc_pass and qc_text.strip():
+                yield f"data: {_json.dumps({'type': 'stage', 'stage': 'write', 'agent': 'writer', 'model': writer_model})}\n\n"
+                yield f"data: {_json.dumps({'type': 'repair_start', 'iter': repair_iter + 1, 'errors': 1})}\n\n"
+                yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🔧 Fixing QC issues'})}\n\n"
+                qc_fix_q = (
+                    f"QC reviewer ตรวจพบปัญหาดังนี้:\n{qc_text.strip()[:1200]}\n\n"
+                    f"แก้ไขเฉพาะจุดที่ QC ระบุด้วย <WRITE_FILE path=\"{project}/...\">...</WRITE_FILE> "
+                    f"(เขียนทั้งไฟล์เวอร์ชันแก้แล้ว) จากนั้นรัน "
+                    f"<EXEC_CMD cmd=\"python -m py_compile <path>\"/> สำหรับไฟล์ .py ที่แก้"
+                )
+                holder_qcfix: dict = {}
+                async for ev in stream_turn(qc_fix_q, conv_messages, 4000, holder_qcfix, writer_model, "CodeAgentWriter"):
+                    yield f"data: {_json.dumps(ev)}\n\n"
+                yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': holder_qcfix.get('tokens', 0)})}\n\n"
+                fix_response = holder_qcfix.get('response', '')
+
+                fix_actions, fix_events, fix_contents = await process_write_files(fix_response)
+                written_contents.update(fix_contents)
+                for ev in fix_events:
+                    yield f"data: {_json.dumps(ev)}\n\n"
+                await save_memory_tags(fix_response)
+                fix_cmds = _EXEC_CMD_RE.findall(fix_response)
+                fix_exec_results: list[dict] = []
+                if fix_cmds and project_dir:
+                    fix_exec_results, fix_ev2 = await process_exec_cmds(fix_cmds, project_dir)
+                    for ev in fix_ev2:
+                        yield f"data: {_json.dumps(ev)}\n\n"
+
+                fix_display = _WRITE_FILE_RE.sub("", fix_response)
+                fix_display = _EXEC_CMD_RE.sub("", fix_display)
+                fix_display = _UPDATE_MEMORY_RE.sub("", fix_display).strip()
+                if fix_display:
+                    yield f"data: {_json.dumps({'type': 'final_text', 'text': fix_display, 'actions': fix_actions, 'exec_results': fix_exec_results, 'repair_iter': repair_iter + 1})}\n\n"
 
         yield f"data: {_json.dumps({'type': 'done'})}\n\n"
 
