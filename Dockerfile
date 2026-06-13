@@ -13,8 +13,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Visual QC needs a real headless browser in the image (the orchestrator runs
 # INSIDE this container, so chromium must live here — a host install won't help).
-# --with-deps pulls the OS libs/fonts chromium needs on Debian slim.
-RUN python -m playwright install --with-deps chromium
+# python:3.11-slim is Debian bookworm; `playwright install --with-deps` fails here
+# because it references font packages (ttf-unifont, ttf-ubuntu-font-family) that
+# slim has dropped — so install chromium's runtime libs ourselves, then the browser.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libdbus-1-3 \
+    libatspi2.0-0 libx11-6 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxrandr2 \
+    libgbm1 libxcb1 libxkbcommon0 libpango-1.0-0 libcairo2 libasound2 \
+    libwayland-client0 fonts-liberation \
+    && rm -rf /var/lib/apt/lists/*
+RUN python -m playwright install chromium
 
 COPY . .
 
