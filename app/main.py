@@ -8156,6 +8156,13 @@ async def workspace_code_agent_stream(request: Request):
             actions: list[dict] = []
             events: list[dict] = []
             contents: dict[str, str] = {}
+            # Safety net: snapshot current files BEFORE the AI overwrites them,
+            # so any bad rewrite can be rolled back from the UI.
+            if project and _WRITE_FILE_RE.search(resp_text):
+                _snap = _git_snapshot(project, f"before edit: {(question or '')[:80]}")
+                if _snap:
+                    events.append({'type': 'snapshot', 'hash': _snap,
+                                   'desc': f'💾 restore point saved ({_snap})'})
             for m in _WRITE_FILE_RE.finditer(resp_text):
                 rel_path = m.group(1).strip()
                 content  = m.group(2).lstrip("\n").rstrip("\n")
@@ -9492,6 +9499,97 @@ def _ener_code_project_dir(project: str) -> str:
     if not os.path.isdir(full):
         raise HTTPException(404, "project not found")
     return full
+
+
+_GIT_ENV = {
+    "GIT_AUTHOR_NAME": "ener-codeagent", "GIT_AUTHOR_EMAIL": "agent@my-ener.uk",
+    "GIT_COMMITTER_NAME": "ener-codeagent", "GIT_COMMITTER_EMAIL": "agent@my-ener.uk",
+}
+
+
+def _git_snapshot(project: str, label: str) -> str | None:
+    """Commit the project's CURRENT files to git before the AI overwrites them.
+
+    This is the safety net: every write batch is preceded by a restore point,
+    so a bad rewrite can always be rolled back. Returns the new short hash, or
+    None when nothing changed / not a valid project.
+    """
+    import os, subprocess
+
+    if not _ENER_CODE_PROJECT_RE.match(project or ""):
+        return None
+    pdir = os.path.normpath(os.path.join(BASE_ENER_CODE, project))
+    if not pdir.startswith(BASE_ENER_CODE) or not os.path.isdir(pdir):
+        return None
+    env = {**os.environ, **_GIT_ENV}
+    try:
+        if not os.path.isdir(os.path.join(pdir, ".git")):
+            subprocess.run(["git", "init"], cwd=pdir, capture_output=True, text=True, env=env)
+        subprocess.run(["git", "add", "-A"], cwd=pdir, capture_output=True, text=True, env=env)
+        # Nothing staged → no need for a snapshot commit.
+        if subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=pdir, env=env).returncode == 0:
+            return None
+        subprocess.run(["git", "commit", "-m", (label or "auto-snapshot")[:120]],
+                       cwd=pdir, capture_output=True, text=True, env=env)
+        h = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                           cwd=pdir, capture_output=True, text=True, env=env)
+        return (h.stdout or "").strip() or None
+    except Exception:
+        return None
+
+
+@app.get("/workspace/code/snapshots")
+async def workspace_code_snapshots(request: Request, project: str):
+    """List restore points (git commits) for a project, newest first."""
+    await _require_admin(request)
+    import os, subprocess
+
+    pdir = _ener_code_project_dir(project)
+    if not os.path.isdir(os.path.join(pdir, ".git")):
+        return JSONResponse({"snapshots": []})
+    env = {**os.environ, **_GIT_ENV}
+    try:
+        r = subprocess.run(["git", "log", "-30", "--format=%h|%s|%ar"],
+                           cwd=pdir, capture_output=True, text=True, env=env)
+        snaps = []
+        for line in (r.stdout or "").strip().splitlines():
+            parts = line.split("|", 2)
+            if len(parts) == 3:
+                snaps.append({"hash": parts[0], "message": parts[1], "time": parts[2]})
+        return JSONResponse({"snapshots": snaps})
+    except Exception as exc:
+        return JSONResponse({"snapshots": [], "error": str(exc)})
+
+
+@app.post("/workspace/code/restore")
+async def workspace_code_restore(request: Request):
+    """Roll a project's files back to a previous snapshot commit."""
+    await _require_admin(request)
+    import os, subprocess
+
+    body = await request.json()
+    project = (body.get("project") or "").strip()
+    target = (body.get("hash") or "").strip()
+    pdir = _ener_code_project_dir(project)
+    if not re.match(r"^[0-9a-f]{4,40}$", target):
+        raise HTTPException(400, "invalid snapshot hash")
+    if not os.path.isdir(os.path.join(pdir, ".git")):
+        raise HTTPException(404, "no snapshots for this project")
+    env = {**os.environ, **_GIT_ENV}
+    try:
+        # Snapshot the current (about-to-be-discarded) state first, so a restore
+        # is itself undoable.
+        _git_snapshot(project, "auto-snapshot before restore")
+        chk = subprocess.run(["git", "checkout", target, "--", "."],
+                             cwd=pdir, capture_output=True, text=True, env=env)
+        if chk.returncode != 0:
+            raise HTTPException(400, f"restore failed: {(chk.stderr or '')[:200]}")
+        _git_snapshot(project, f"restored to {target}")
+        return JSONResponse({"ok": True, "project": project, "restored_to": target})
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(500, f"restore error: {exc}")
 
 
 @app.get("/workspace/code/projects")

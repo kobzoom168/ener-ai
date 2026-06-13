@@ -477,6 +477,11 @@
       .cc-clarify-opt.chosen { opacity:1;background:#2e2152;border-color:#a855f7;color:#fff; }
       .cc-clarify-opt.chosen::before { content:'✓ '; color:#a855f7;font-weight:700; }
 
+      .cc-snapshot { display:flex;align-items:center;justify-content:space-between;gap:10px;margin:4px 0;padding:7px 11px;border:1px solid #2a3520;border-radius:7px;background:#13180e;font-size:11px;color:#9bbd6f; }
+      .cc-snap-btn { padding:5px 11px;background:#1c2612;border:1px solid #3a5022;border-radius:6px;color:#bce08a;font-size:11px;cursor:pointer;font-family:inherit;white-space:nowrap;transition:all 0.15s; }
+      .cc-snap-btn:hover:not(:disabled) { background:#26341a;border-color:#5a7a32;color:#fff; }
+      .cc-snap-btn:disabled { opacity:0.5;cursor:default; }
+
       .cc-response { margin-top:6px;padding-top:6px;border-top:1px solid #1a1a28; }
       .cc-streaming-text { font-size:12px;color:#ccc;line-height:1.5;white-space:pre-wrap; }
       .cc-final-text { font-size:12px;color:#ccc;line-height:1.6; }
@@ -1100,6 +1105,31 @@
         }
       }
 
+      async function restoreSnapshot(project, hash, btn) {
+        if (!project || !hash) return;
+        if (!confirm(`ย้อนไฟล์ของ "${project}" กลับไปจุด ${hash}?\n(ไฟล์ปัจจุบันจะถูกบันทึกไว้ก่อน ย้อนกลับได้อีก)`)) return;
+        if (btn) { btn.disabled = true; btn.textContent = '⏳ กำลังย้อน...'; }
+        try {
+          const res = await fetch('/workspace/code/restore', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project, hash }),
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || res.statusText);
+          }
+          codeToast('↺ ย้อนกลับสำเร็จ → ' + hash);
+          if (currentProject === project) {
+            await loadExplorer(project);
+            if (currentFilePath) await loadEnerFile(currentFilePath);
+          }
+        } catch (e) {
+          codeToast('❌ ' + (e.message || 'Restore failed'));
+          if (btn) { btn.disabled = false; btn.textContent = '↺ ย้อนกลับมาจุดนี้'; }
+        }
+      }
+
       function showDeleteConfirm(name, preview) {
         return new Promise(resolve => {
           document.getElementById('delete-project-modal')?.remove();
@@ -1699,6 +1729,20 @@
                     askCodeAI(`${_origQ} — แนวทางที่เลือก: ${btn.dataset.val}`);
                   });
                 });
+                msgs.scrollTop = msgs.scrollHeight;
+                continue;
+              }
+
+              if (evt.type === 'snapshot') {
+                const snp = document.createElement('div');
+                snp.className = 'cc-snapshot';
+                snp.innerHTML = `<span>💾 บันทึกจุดย้อนกลับไว้แล้ว (${escHtml(evt.hash || '')})</span>`
+                  + `<button type="button" class="cc-snap-btn" data-hash="${escHtml(evt.hash || '')}">↺ ย้อนกลับมาจุดนี้</button>`;
+                const _proj = currentProject;
+                snp.querySelector('.cc-snap-btn').addEventListener('click', (e) => {
+                  restoreSnapshot(_proj, e.target.dataset.hash, e.target);
+                });
+                toolsEl.appendChild(snp);
                 msgs.scrollTop = msgs.scrollHeight;
                 continue;
               }
