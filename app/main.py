@@ -7416,6 +7416,126 @@ async def _agent_run_cmd(cmd: str, cwd: str) -> dict:
         return {"cmd": cmd, "ok": False, "error": str(exc)[:200], "returncode": -1}
 
 
+# ── Deploy & smoke test: run generated project in its own container ─────────
+_APP_PORT_BASE = 8200
+
+
+def _project_app_port(project: str) -> int:
+    import hashlib
+    h = int(hashlib.md5(project.encode("utf-8")).hexdigest(), 16)
+    return _APP_PORT_BASE + (h % 300)
+
+
+async def _trusted_shell(cmd: str, timeout: int = 90) -> dict:
+    """Run an internally-built (NOT AI-generated) shell command."""
+    import asyncio as _aio
+    try:
+        proc = await _aio.create_subprocess_shell(
+            cmd, stdout=_aio.subprocess.PIPE, stderr=_aio.subprocess.PIPE,
+        )
+        out, err = await _aio.wait_for(proc.communicate(), timeout=timeout)
+        return {
+            "cmd": cmd, "ok": proc.returncode == 0,
+            "stdout": out.decode("utf-8", errors="replace")[:800],
+            "stderr": err.decode("utf-8", errors="replace")[:400],
+            "returncode": proc.returncode,
+        }
+    except Exception as exc:
+        return {"cmd": cmd, "ok": False, "error": str(exc)[:200], "returncode": -1}
+
+
+def _http_status_sync(url: str, timeout: float = 4.0) -> str:
+    import urllib.request
+    import urllib.error
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            return str(r.status)
+    except urllib.error.HTTPError as e:
+        return str(e.code)
+    except Exception:
+        return "000"
+
+
+def _extract_get_routes(main_src: str) -> list[str]:
+    routes = []
+    for m in __import__("re").finditer(r'@app\.get\(\s*["\']([^"\']+)', main_src or ""):
+        path = m.group(1)
+        if "{" not in path and path not in routes:
+            routes.append(path)
+    return routes[:6] or ["/"]
+
+
+async def _deploy_and_smoke(project: str, main_src: str = "", mode: str = "deploy"):
+    """Run the generated project in its own container, then smoke test GET routes.
+
+    Yields SSE-ready event dicts. mode='deploy' recreates the container,
+    mode='restart' restarts the existing one (after a repair).
+    """
+    import asyncio as _aio
+    import re as _re
+
+    safe = _re.sub(r"[^a-zA-Z0-9_-]", "", project or "")
+    if not safe or safe != project:
+        return
+    if not main_src:
+        try:
+            with open(f"{BASE_ENER_CODE}/{safe}/main.py", "r", encoding="utf-8", errors="replace") as fh:
+                main_src = fh.read()
+        except Exception:
+            main_src = ""
+    port = _project_app_port(safe)
+    name = f"ener-app-{safe}"
+    proj_host_dir = f"/root/ener-code/{safe}"
+
+    if mode == "deploy":
+        yield {"type": "tool_start", "tool": "Exec", "desc": f"deploy {name} → port {port}"}
+        await _trusted_shell(f"docker rm -f {name} >/dev/null 2>&1 || true", 30)
+        run_cmd = (
+            f"docker run -d --name {name} -p {port}:{port} "
+            f"-v {proj_host_dir}:/app -w /app --restart unless-stopped "
+            f"--memory 256m --cpus 0.5 "
+            f"python:3.11-slim sh -c 'pip install -q -r requirements.txt && "
+            f"python -m uvicorn main:app --host 0.0.0.0 --port {port}'"
+        )
+        res = await _trusted_shell(run_cmd, 60)
+        out_txt = (res.get("stdout", "") + res.get("stderr", "") + res.get("error", "")).strip()
+        yield {"type": "tool_done", "tool": "Exec", "cmd": f"docker run {name} (port {port})",
+               "ok": res["ok"], "out": out_txt[:300]}
+        if not res["ok"]:
+            yield {"type": "smoke_result", "ok": False, "port": port,
+                   "url": f"http://my-ener.uk:{port}/", "routes": [], "logs": out_txt[:600]}
+            return
+    else:
+        yield {"type": "tool_start", "tool": "Exec", "desc": f"restart {name}"}
+        res = await _trusted_shell(f"docker restart {name}", 45)
+        yield {"type": "tool_done", "tool": "Exec", "cmd": f"docker restart {name}",
+               "ok": res["ok"], "out": (res.get("stderr", "") + res.get("error", ""))[:200]}
+
+    # Poll until the app responds (pip install inside the container takes time)
+    routes = _extract_get_routes(main_src)
+    base = f"http://host.docker.internal:{port}"
+    up = False
+    for _ in range(30):
+        await _aio.sleep(3)
+        code = await _aio.to_thread(_http_status_sync, base + routes[0], 3.0)
+        if code != "000":
+            up = True
+            break
+
+    results = []
+    if up:
+        for r in routes:
+            code = await _aio.to_thread(_http_status_sync, base + r, 5.0)
+            results.append({"path": r, "status": code})
+    ok = up and all(str(r["status"]).startswith(("2", "3")) for r in results)
+    logs = ""
+    if not ok:
+        lg = await _trusted_shell(f"docker logs --tail 30 {name} 2>&1", 15)
+        logs = (lg.get("stdout", "") + lg.get("stderr", "") + lg.get("error", "")).strip()[:900]
+    yield {"type": "smoke_result", "ok": ok, "port": port,
+           "url": f"http://my-ener.uk:{port}/", "routes": results, "logs": logs}
+
+
 async def _load_project_memory(project: str) -> dict:
     """Load all memory entries for a project."""
     async with get_db() as db:
@@ -7747,6 +7867,7 @@ async def workspace_code_agent_stream(request: Request):
         if containers_txt:
             server_block += f"Running containers:\n{containers_txt}\n"
 
+    app_port = _project_app_port(project) if project else 0
     system = (
         f"You are Ener-AI Code Agent. You write files directly using WRITE_FILE tags.\n\n"
         f"STACK: Python 3.11 / FastAPI / aiosqlite / Docker / Hetzner CPX22\n"
@@ -7756,6 +7877,21 @@ async def workspace_code_agent_stream(request: Request):
         f"FORBIDDEN: localhost:8000, localhost:any_port, 127.0.0.1\n"
         f"ALWAYS use: https://my-ener.uk or http://my-ener.uk:<port>\n"
         f"##########################################\n"
+        f"\n"
+        f"=== YOU LIVE ON THE SERVER my-ener.uk ===\n"
+        f"You are running INSIDE the server my-ener.uk (Ubuntu + Docker). EXEC_CMD runs real shell "
+        f"commands on this server (30s timeout each). When something fails or you are unsure, "
+        f"INSPECT THE SERVER YOURSELF before guessing:\n"
+        f"- ls -la / cat <file>            — check files actually written\n"
+        f"- docker ps                      — see running containers\n"
+        f"- docker logs --tail 30 ener-app-{project or 'project'}   — runtime errors of YOUR app\n"
+        f"- curl -s -m 5 http://host.docker.internal:{app_port or '<port>'}/   — test YOUR app's HTTP response\n"
+        f"- pip list | grep <pkg> / python -c \"import <pkg>\"   — verify dependencies\n"
+        f"Read-only inspection commands are always allowed; destructive ones are blocked.\n"
+        f"AUTO-DEPLOY: when this project passes all checks, the system deploys it automatically as "
+        f"Docker container 'ener-app-{project or 'project'}' on port {app_port or '<auto>'} "
+        f"(public: http://my-ener.uk:{app_port or '<auto>'}/). Do NOT run uvicorn yourself in EXEC_CMD — "
+        f"long-running commands are killed at 30s and 'uvicorn ... &' will not survive.\n"
         f"{memory_block}"
         f"{server_block}"
         f"{file_ctx}\n"
@@ -8152,19 +8288,81 @@ async def workspace_code_agent_stream(request: Request):
                     yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': 0})}\n\n"
                     all_exec_results += final_results
 
+                # ── RUN stage: deploy in own container + smoke test ──
+                smoke: dict | None = None
+                main_src = written_contents.get("main.py", "")
+                if main_src and "fastapi" in main_src.lower():
+                    yield f"data: {_json.dumps({'type': 'stage', 'stage': 'run', 'agent': None})}\n\n"
+                    yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🚀 Deploy & smoke test'})}\n\n"
+                    async for ev in _deploy_and_smoke(project, main_src, "deploy"):
+                        if ev.get("type") == "smoke_result":
+                            smoke = ev
+                        yield f"data: {_json.dumps(ev)}\n\n"
+                    yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': 0})}\n\n"
+
+                    # Smoke failed -> writer repairs from runtime logs, restart, retest once
+                    if smoke and not smoke.get("ok") and smoke.get("logs"):
+                        yield f"data: {_json.dumps({'type': 'stage', 'stage': 'write', 'agent': 'writer', 'model': writer_model})}\n\n"
+                        yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🔧 Fixing runtime errors'})}\n\n"
+                        route_lines = "\n".join(
+                            f"- GET {r['path']} -> {r['status']}" for r in smoke.get("routes", [])
+                        ) or "(แอปไม่ตอบสนองเลย)"
+                        smoke_fix_q = (
+                            f"แอปถูก deploy แล้วแต่ smoke test ล้มเหลว\n"
+                            f"ผลการเรียก route:\n{route_lines}\n\n"
+                            f"Log จาก container:\n```\n{smoke['logs']}\n```\n\n"
+                            f"วิเคราะห์สาเหตุจาก log แล้วแก้ไฟล์ที่เกี่ยวข้องด้วย "
+                            f"<WRITE_FILE path=\"{project}/...\">...</WRITE_FILE> (เขียนทั้งไฟล์) "
+                            f"แล้วรัน <EXEC_CMD cmd=\"python -m py_compile <path>\"/> สำหรับ .py ที่แก้"
+                        )
+                        holder = {}
+                        async for ev in stream_turn(smoke_fix_q, [], 4000, holder, writer_model, "CodeAgentWriter"):
+                            yield f"data: {_json.dumps(ev)}\n\n"
+                        yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': holder.get('tokens', 0)})}\n\n"
+                        fix_resp = holder.get('response', '')
+                        fa, fe, fc = await process_write_files(fix_resp)
+                        all_actions += fa
+                        written_contents.update(fc)
+                        for ev in fe:
+                            yield f"data: {_json.dumps(ev)}\n\n"
+                        fix_cmds = _EXEC_CMD_RE.findall(fix_resp)
+                        if fix_cmds and project_dir:
+                            _r, _e = await process_exec_cmds(fix_cmds, project_dir)
+                            all_exec_results += _r
+                            for ev in _e:
+                                yield f"data: {_json.dumps(ev)}\n\n"
+
+                        yield f"data: {_json.dumps({'type': 'stage', 'stage': 'run', 'agent': None})}\n\n"
+                        yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🚀 Re-deploy & retest'})}\n\n"
+                        async for ev in _deploy_and_smoke(project, written_contents.get("main.py", main_src), "restart"):
+                            if ev.get("type") == "smoke_result":
+                                smoke = ev
+                            yield f"data: {_json.dumps(ev)}\n\n"
+                        yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': 0})}\n\n"
+
                 # ── Final summary (built locally — no extra AI call) ─
                 files_md = "\n".join(f"- {p}" for p in written_files)
                 deps_md = ", ".join(deps) if deps else "-"
-                run_steps = (
-                    f"- pip install -r requirements.txt\n"
-                    f"- uvicorn main:app --host 0.0.0.0 --port <port>"
-                )
+                if smoke and smoke.get("ok"):
+                    test_block = (
+                        f"**แอปรันอยู่แล้วที่:** {smoke['url']}\n"
+                        + "\n".join(f"- GET {r['path']} → {r['status']} ✓" for r in smoke.get("routes", []))
+                    )
+                elif smoke:
+                    test_block = (
+                        f"**⚠️ Deploy แล้วแต่ smoke test ยังไม่ผ่าน** — {smoke['url']}\n"
+                        + "\n".join(f"- GET {r['path']} → {r['status']}" for r in smoke.get("routes", []))
+                    )
+                else:
+                    test_block = (
+                        f"**วิธีรัน:**\n- pip install -r requirements.txt\n"
+                        f"- uvicorn main:app --host 0.0.0.0 --port <port>"
+                    )
                 display = (
                     f"{plan_summary}\n\n"
                     f"**สร้างแล้ว {len(written_files)} ไฟล์:**\n{files_md}\n\n"
                     f"**Dependencies:** {deps_md}\n\n"
-                    f"**วิธีรัน:**\n{run_steps}\n\n"
-                    f"**วิธีทดสอบ:** http://my-ener.uk:<port>/"
+                    f"{test_block}"
                 )
                 yield f"data: {_json.dumps({'type': 'final_text', 'text': display, 'actions': all_actions, 'exec_results': all_exec_results, 'repair_iter': 0})}\n\n"
                 yield f"data: {_json.dumps({'type': 'done'})}\n\n"
@@ -8336,6 +8534,20 @@ async def workspace_code_agent_stream(request: Request):
                 fix_display = _UPDATE_MEMORY_RE.sub("", fix_display).strip()
                 if fix_display:
                     yield f"data: {_json.dumps({'type': 'final_text', 'text': fix_display, 'actions': fix_actions, 'exec_results': fix_exec_results, 'repair_iter': repair_iter + 1})}\n\n"
+
+        # ── Auto-redeploy: if this project already runs as a container, restart + retest ──
+        if written_contents and project:
+            _safe_proj = __import__("re").sub(r"[^a-zA-Z0-9_-]", "", project)
+            if _safe_proj == project:
+                chk = await _trusted_shell(
+                    f"docker ps -a --filter name=^ener-app-{_safe_proj}$ --format '{{{{.Names}}}}'", 15
+                )
+                if (chk.get("stdout") or "").strip():
+                    yield f"data: {_json.dumps({'type': 'stage', 'stage': 'run', 'agent': None})}\n\n"
+                    yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🚀 Re-deploy & retest'})}\n\n"
+                    async for ev in _deploy_and_smoke(project, written_contents.get("main.py", ""), "restart"):
+                        yield f"data: {_json.dumps(ev)}\n\n"
+                    yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': 0})}\n\n"
 
         yield f"data: {_json.dumps({'type': 'done'})}\n\n"
 

@@ -625,6 +625,7 @@
               <span data-stage="plan">PLAN</span><span class="ap-arrow">→</span>
               <span data-stage="write">WRITE</span><span class="ap-arrow">→</span>
               <span data-stage="qc">QC</span><span class="ap-arrow">→</span>
+              <span data-stage="run">RUN</span><span class="ap-arrow">→</span>
               <span data-stage="done">DONE</span>
             </div>
             <div class="agent-cards">
@@ -1355,7 +1356,7 @@
       }
 
       function _agentSetStage(stage, agent) {
-        const order = ['plan', 'write', 'qc', 'done'];
+        const order = ['plan', 'write', 'qc', 'run', 'done'];
         const idx = order.indexOf(stage);
         document.querySelectorAll('#agent-stepper span[data-stage]').forEach(s => {
           const i = order.indexOf(s.dataset.stage);
@@ -1602,6 +1603,23 @@
 
               if (evt.type === 'stage') {
                 _agentSetStage(evt.stage, evt.agent);
+                continue;
+              }
+
+              if (evt.type === 'smoke_result') {
+                const sd = document.createElement('div');
+                sd.className = 'cc-qc-verdict ' + (evt.ok ? 'pass' : 'fail');
+                const routeLines = (evt.routes || [])
+                  .map(r => `GET ${r.path} → ${r.status}`).join('\n');
+                if (evt.ok) {
+                  sd.innerHTML = `🚀 แอปรันแล้ว — <a href="${escHtml(evt.url||'')}" target="_blank" style="color:#4a9eff">${escHtml(evt.url||'')}</a>`
+                    + (routeLines ? `<div class="cc-qc-text">${escHtml(routeLines)}</div>` : '');
+                } else {
+                  sd.innerHTML = `⚠️ Smoke test ไม่ผ่าน (${escHtml(evt.url||'')})`
+                    + `<div class="cc-qc-text">${escHtml(routeLines || '')}${evt.logs ? '\n--- logs ---\n' + escHtml(evt.logs) : ''}</div>`;
+                }
+                toolsEl.appendChild(sd);
+                msgs.scrollTop = msgs.scrollHeight;
                 continue;
               }
 
