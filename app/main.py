@@ -9570,6 +9570,52 @@ async def workspace_code_project_create(request: Request):
     return JSONResponse({"ok": True, "project": name, "path": project_dir})
 
 
+@app.get("/workspace/code/project/{name}/delete-preview")
+async def workspace_code_project_delete_preview(name: str, request: Request):
+    await _require_admin(request)
+    import os
+
+    if not _ENER_CODE_PROJECT_RE.match(name):
+        raise HTTPException(400, "invalid project name")
+    project_dir = os.path.join(BASE_ENER_CODE, name)
+    if not os.path.isdir(project_dir):
+        raise HTTPException(404, "project not found")
+
+    files_count = sum(len(fs) for _, _, fs in os.walk(project_dir))
+
+    container_name = f"ener-app-{name}"
+    port = _project_app_port(name)
+    docker_running = False
+    try:
+        r = subprocess.run(
+            ["docker", "inspect", "--format", "{{.State.Running}}", container_name],
+            capture_output=True, text=True, timeout=5,
+        )
+        docker_running = r.returncode == 0 and r.stdout.strip() == "true"
+    except Exception:
+        pass
+
+    memory_count = 0
+    try:
+        async with get_db() as db:
+            cur = await db.execute(
+                "SELECT COUNT(*) AS cnt FROM code_project_memory WHERE project=?", (name,)
+            )
+            row = await cur.fetchone()
+            memory_count = row["cnt"] if row else 0
+    except Exception:
+        pass
+
+    return JSONResponse({
+        "project": name,
+        "files_count": files_count,
+        "docker_container": container_name,
+        "docker_running": docker_running,
+        "docker_port": port if docker_running else None,
+        "memory_count": memory_count,
+    })
+
+
 @app.delete("/workspace/code/project/{name}")
 async def workspace_code_project_delete(name: str, request: Request):
     await _require_admin(request)
@@ -9581,8 +9627,34 @@ async def workspace_code_project_delete(name: str, request: Request):
     project_dir = os.path.join(BASE_ENER_CODE, name)
     if not os.path.isdir(project_dir):
         raise HTTPException(404, "project not found")
+
+    cleaned: dict = {}
+
+    # Stop + remove Docker container
+    container_name = f"ener-app-{name}"
+    try:
+        r = subprocess.run(
+            ["docker", "rm", "-f", container_name],
+            capture_output=True, text=True, timeout=15,
+        )
+        cleaned["docker"] = r.returncode == 0
+    except Exception:
+        cleaned["docker"] = False
+
+    # Clear project memory
+    try:
+        async with get_db() as db:
+            await db.execute("DELETE FROM code_project_memory WHERE project=?", (name,))
+            await db.commit()
+        cleaned["memory"] = True
+    except Exception:
+        cleaned["memory"] = False
+
+    # Delete files
     shutil.rmtree(project_dir)
-    return JSONResponse({"ok": True, "deleted": name})
+    cleaned["files"] = True
+
+    return JSONResponse({"ok": True, "deleted": name, "cleaned": cleaned})
 
 
 @app.post("/workspace/code/git")
