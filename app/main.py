@@ -7111,6 +7111,21 @@ _EXEC_CMD_RE = __import__("re").compile(
 _UPDATE_MEMORY_RE = __import__("re").compile(
     r'<UPDATE_MEMORY\s+key="([^"]+)"\s+value="([^"]+)"\s*/?>', __import__("re").MULTILINE
 )
+_THINK_RE = __import__("re").compile(r'<think>[\s\S]*?</think>|<thinking>[\s\S]*?</thinking>',
+                                     __import__("re").IGNORECASE)
+
+
+def _strip_think(text: str) -> str:
+    """Remove <think>…</think> reasoning blocks emitted by thinking models
+    (Kimi-K2-Thinking, Qwen3-Thinking) so JSON/answer parsing sees clean output.
+    Also drops a dangling unclosed <think> tail (truncated mid-reasoning)."""
+    if not text:
+        return text
+    cleaned = _THINK_RE.sub("", text)
+    _open = cleaned.lower().rfind("<think>")
+    if _open != -1 and "</think>" not in cleaned.lower()[_open:]:
+        cleaned = cleaned[:_open]
+    return cleaned.strip()
 _ROUTE_DECORATOR_RE = __import__("re").compile(
     r'@app\.(get|post|put|delete|patch)\(\s*["\']([^"\']+)["\']', __import__("re").IGNORECASE
 )
@@ -8616,8 +8631,9 @@ async def workspace_code_agent_stream(request: Request):
 
         # ── Change Analysis Planner: for modification tasks, analyse what specifically needs changing ──
         change_plan: dict[str, str] = {}
+        acceptance_checklist: list[str] = []
+        plan_model = planner_model or writer_model
         if project and (project_files or "").strip():
-            plan_model = planner_model or writer_model
             yield f"data: {_json.dumps({'type': 'stage', 'stage': 'plan', 'agent': 'planner', 'model': plan_model})}\n\n"
             yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🔍 Analysing required changes'})}\n\n"
             _ca_system = (
@@ -8627,7 +8643,15 @@ async def workspace_code_agent_stream(request: Request):
                 "Output ONLY a raw JSON object (no markdown, no code fences, no explanation):\n"
                 "{\"files\": [\"only_files_that_need_change\"], "
                 "\"change_plan\": {\"filename\": \"specific Thai instruction: exactly what to change in this file\"}, "
+                "\"acceptance_checklist\": [\"concrete, checkable deliverable in Thai\", \"...\"], "
                 "\"summary\": \"one-sentence Thai description\"}\n"
+                "\n"
+                "ACCEPTANCE_CHECKLIST — list every concrete thing that MUST be true for this "
+                "request to count as DONE. Each item must be objectively verifiable by looking at "
+                "the code (not vague). Good: \"มี element ตัวละครใน index.html\", \"ตัวละครขยับด้วย "
+                "@keyframes ที่เลื่อนตำแหน่ง\", \"ไม่ใช้ emoji เป็นตัวละคร (กัน tofu)\", \"ส่วนอื่นของ "
+                "หน้าเดิมไม่ถูกลบ\". Bad (vague): \"หน้าตาสวย\", \"ทำงานได้\". This list is the "
+                "contract used later to judge whether the work is complete.\n"
                 "\n"
                 "ASK-WHEN-UNSURE — IMPORTANT:\n"
                 "If the request is genuinely AMBIGUOUS — multiple reasonable interpretations, unclear scope, "
@@ -8655,12 +8679,15 @@ async def workspace_code_agent_stream(request: Request):
             try:
                 async for _tok in stream_chat_response(
                     question, [], _ca_system, model=plan_model,
-                    agent="CodeAgentChangeAnalysis", max_tokens=600
+                    agent="CodeAgentChangeAnalysis", max_tokens=2000
                 ):
                     _ca_text += _tok
-                _s = _ca_text.find("{"); _e = _ca_text.rfind("}")
+                # Thinking models (Kimi/Qwen) wrap reasoning in <think>…</think> —
+                # strip it so the JSON parser locks onto the real object.
+                _ca_clean = _strip_think(_ca_text)
+                _s = _ca_clean.find("{"); _e = _ca_clean.rfind("}")
                 if _s != -1 and _e != -1:
-                    _cp = _json.loads(_ca_text[_s:_e + 1])
+                    _cp = _json.loads(_ca_clean[_s:_e + 1])
                     # Planner is unsure → ask the user with clickable options, then stop
                     if _cp.get("needs_clarification") and _cp.get("options"):
                         _opts = []
@@ -8675,10 +8702,11 @@ async def workspace_code_agent_stream(request: Request):
                             yield f"data: {_json.dumps({'type': 'done'})}\n\n"
                             return
                     change_plan = _cp.get("change_plan") or {}
+                    acceptance_checklist = [str(x).strip() for x in (_cp.get("acceptance_checklist") or []) if str(x).strip()][:10]
                     _cp_files = [str(f) for f in (_cp.get("files") or []) if f]
                     _cp_summary = str(_cp.get("summary") or "")
                     if change_plan and _cp_files:
-                        yield f"data: {_json.dumps({'type': 'plan_done', 'files': _cp_files, 'dependencies': [], 'summary': _cp_summary})}\n\n"
+                        yield f"data: {_json.dumps({'type': 'plan_done', 'files': _cp_files, 'dependencies': [], 'summary': _cp_summary, 'checklist': acceptance_checklist})}\n\n"
             except Exception:
                 change_plan = {}
             yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': len(_ca_text.split())})}\n\n"
@@ -8814,88 +8842,145 @@ async def workspace_code_agent_stream(request: Request):
             ]
             yield f"data: {_json.dumps({'type': 'repair_start', 'iter': repair_iter, 'errors': len(failed)})}\n\n"
 
-        # ── QC review round: separate reviewer model checks written files ──
+        # ════════════════════════════════════════════════════════════
+        # VERIFY LOOP — QC technical review + Planner acceptance judgment.
+        # Planner is the FINAL authority on "is the request fully done?":
+        # QC reports facts (bugs + which checklist items are physically present)
+        # → Planner judges against its own acceptance_checklist → any gap is
+        # handed back to the Writer with full file content. Loops up to
+        # MAX_VERIFY rounds, then stops and reports honestly (no infinite loop).
+        # ════════════════════════════════════════════════════════════
         if written_contents and qc_model:
-            yield f"data: {_json.dumps({'type': 'stage', 'stage': 'qc', 'agent': 'qc', 'model': qc_model})}\n\n"
-            yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🔍 QC reviewing'})}\n\n"
-            qc_text = ""
-            qc_skipped = False
-            try:
-                contracts_text = extract_contracts(written_contents)
-                qc_static = run_static_checks(written_contents)
-                static_lines = "\n".join(f"- {i['hint']}" for i in qc_static) or "(none)"
-                files_block = "\n\n".join(
-                    f"=== {p} ({len(c.splitlines())} lines) ===\n"
-                    + "\n".join(c.splitlines()[:240])
-                    + ("\n... (truncated)" if len(c.splitlines()) > 240 else "")
-                    for p, c in list(written_contents.items())[:6]
-                )
-                qc_system = (
-                    "You are a strict senior QC reviewer. You CANNOT write files — verdict only.\n"
-                    "You run TWO checks, in this order:\n\n"
-                    "1) ACCEPTANCE — the most important check. Did the code ACTUALLY implement "
-                    "what the user asked for? Read the user request, then SEARCH the written files "
-                    "for concrete evidence of every requested feature. A feature only counts if the "
-                    "real markup/CSS/route exists — NOT if a comment or the assistant merely says it "
-                    "was added. Examples of MISSING features: user asked for a walking RPG character "
-                    "but there is no character element/sprite/@keyframes that moves it; user asked for "
-                    "a contact form but there is no <form>; user asked to change a heading but the text "
-                    "is unchanged. If ANY clearly requested, concrete feature is absent → this is a "
-                    "FAIL.\n\n"
-                    "2) BUGS — runtime bugs, cross-file inconsistencies (missing templates/routes, "
-                    "schema mismatch, double UploadFile.read(), dict(row) without row_factory), and "
-                    "imports missing from requirements.txt.\n\n"
-                    "If BOTH checks pass reply EXACTLY: QC_PASS\n"
-                    "Otherwise reply in Thai, one issue per line. For a missing feature use:\n"
-                    "MISSING:<feature> FILE:<path> FIX:<exactly what to add and where>\n"
-                    "For a bug use:\n"
-                    "FILE:<path> ISSUE:<what is wrong> FIX:<specific instruction>\n"
-                    "Maximum 5 issues. List missing-feature issues FIRST. "
-                    "Do not nitpick style — only real bugs or genuinely missing requested features."
-                )
-                qc_q = (
-                    f"━━ สิ่งที่ผู้ใช้สั่งให้ทำ (ตรวจ ACCEPTANCE กับอันนี้) ━━\n{question[:400]}\n\n"
-                    f"Contracts ของโปรเจกต์:\n{contracts_text or '(none)'}\n\n"
-                    f"Static analysis:\n{static_lines}\n\n"
-                    f"━━ ไฟล์ที่ AI เพิ่งเขียนจริง (ตรวจว่าฟีเจอร์ที่สั่งอยู่ในนี้ไหม) ━━\n{files_block}"
-                )
-                async for token in stream_chat_response(
-                    qc_q, [], qc_system, model=qc_model, agent="CodeAgentQC", max_tokens=900
-                ):
-                    qc_text += token
-            except Exception as exc:
-                qc_text = f"QC_PASS (review skipped: {str(exc)[:80]})"
-                qc_skipped = True
-            qc_pass = "QC_PASS" in qc_text[:200].upper()
-            yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': len(qc_text.split())})}\n\n"
-            yield f"data: {_json.dumps({'type': 'qc_verdict', 'pass': qc_pass, 'skipped': qc_skipped, 'text': qc_text.strip()[:1500]})}\n\n"
+            MAX_VERIFY = 2
+            _checklist_txt = ("\n".join(f"- {c}" for c in acceptance_checklist)
+                              or "(Planner ไม่ได้ให้ checklist — ตัดสินจากคำสั่งผู้ใช้โดยตรง)")
+            for _vround in range(1, MAX_VERIFY + 1):
+                # ── 1) QC technical review (facts: bugs + checklist presence) ──
+                yield f"data: {_json.dumps({'type': 'stage', 'stage': 'qc', 'agent': 'qc', 'model': qc_model})}\n\n"
+                yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': f'🔍 QC ตรวจ (รอบ {_vround})'})}\n\n"
+                qc_text = ""
+                qc_skipped = False
+                files_block = ""
+                try:
+                    contracts_text = extract_contracts(written_contents)
+                    qc_static = run_static_checks(written_contents)
+                    static_lines = "\n".join(f"- {i['hint']}" for i in qc_static) or "(none)"
+                    files_block = "\n\n".join(
+                        f"=== {p} ({len(c.splitlines())} lines) ===\n"
+                        + "\n".join(c.splitlines()[:240])
+                        + ("\n... (truncated)" if len(c.splitlines()) > 240 else "")
+                        for p, c in list(written_contents.items())[:6]
+                    )
+                    qc_system = (
+                        "You are a strict senior QC reviewer. You CANNOT write files — report only.\n"
+                        "You run TWO checks:\n\n"
+                        "1) ACCEPTANCE — go through the Planner's acceptance checklist item by item. "
+                        "For EACH item, SEARCH the written files for real evidence (actual "
+                        "markup/CSS/route) — a comment or a claim does NOT count. Mark each item ✅ "
+                        "present or ❌ missing.\n"
+                        "2) BUGS — runtime bugs, cross-file inconsistencies (missing templates/routes, "
+                        "schema mismatch, double UploadFile.read(), dict(row) without row_factory), "
+                        "imports missing from requirements.txt.\n\n"
+                        "If every checklist item is ✅ and there are no bugs reply EXACTLY: QC_PASS\n"
+                        "Otherwise reply in Thai, one issue per line:\n"
+                        "MISSING:<checklist item> FILE:<path> FIX:<exactly what to add and where>\n"
+                        "FILE:<path> ISSUE:<bug> FIX:<specific instruction>\n"
+                        "Max 5 issues, missing items first. Only real bugs / genuinely missing items."
+                    )
+                    qc_q = (
+                        f"━━ คำสั่งผู้ใช้ ━━\n{question[:400]}\n\n"
+                        f"━━ Acceptance checklist (ตรวจทีละข้อ) ━━\n{_checklist_txt}\n\n"
+                        f"Contracts:\n{contracts_text or '(none)'}\n\n"
+                        f"Static analysis:\n{static_lines}\n\n"
+                        f"━━ ไฟล์ที่ AI เขียนจริง ━━\n{files_block}"
+                    )
+                    async for token in stream_chat_response(
+                        qc_q, [], qc_system, model=qc_model, agent="CodeAgentQC", max_tokens=900
+                    ):
+                        qc_text += token
+                    qc_text = _strip_think(qc_text)
+                except Exception as exc:
+                    qc_text = f"QC_PASS (review skipped: {str(exc)[:80]})"
+                    qc_skipped = True
+                qc_pass = "QC_PASS" in qc_text[:200].upper()
+                yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': len(qc_text.split())})}\n\n"
+                yield f"data: {_json.dumps({'type': 'qc_verdict', 'pass': qc_pass, 'skipped': qc_skipped, 'text': qc_text.strip()[:1500]})}\n\n"
 
-            # QC found issues -> hand back to writer for one scoped fix round
-            if not qc_pass and qc_text.strip():
-                yield f"data: {_json.dumps({'type': 'stage', 'stage': 'write', 'agent': 'writer', 'model': writer_model})}\n\n"
-                yield f"data: {_json.dumps({'type': 'repair_start', 'iter': repair_iter + 1, 'errors': 1})}\n\n"
-                yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🔧 Fixing QC issues'})}\n\n"
-                # Inject the CURRENT full content of every flagged file so the
-                # writer ADDS the missing feature / fixes the bug WITHOUT
-                # regenerating (and destroying) the rest of the file.
-                _qc_fix_files = []
-                for _p in list(written_contents.keys()):
-                    if _p and _p in qc_text:
-                        _cur = written_contents.get(_p, "")
-                        if len(_cur) > 40000:
-                            _cur = _cur[:40000] + "\n/* ...truncated... */"
-                        _qc_fix_files.append(
-                            f"===== CURRENT CONTENT OF {_p} ({_cur.count(chr(10))+1} lines) =====\n{_cur}"
+                # ── 2) Planner acceptance judgment (final authority) ──
+                verdict_complete = qc_pass
+                missing_items: list[str] = []
+                judge_instructions = ""
+                if not qc_skipped and plan_model:
+                    yield f"data: {_json.dumps({'type': 'stage', 'stage': 'plan', 'agent': 'planner', 'model': plan_model})}\n\n"
+                    yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🧠 Planner ตรวจรับงาน — ครบไหม?'})}\n\n"
+                    judge_text = ""
+                    try:
+                        judge_system = (
+                            "You are the Planner acting as the FINAL acceptance authority for this "
+                            "task. You CANNOT write files. Using YOUR acceptance checklist, decide "
+                            "whether the work is genuinely COMPLETE.\n"
+                            "Output ONLY a raw JSON object (no markdown, no fences):\n"
+                            "{\"complete\": true|false, \"missing\": [\"checklist item still not "
+                            "done\"], \"instructions\": \"Thai: precisely what the writer must still "
+                            "add or fix, referencing file + location\"}\n"
+                            "Set complete=false if ANY checklist item lacks real evidence in the code, "
+                            "or QC reported a real bug. Be strict but fair — do not invent new "
+                            "requirements beyond the checklist and the user request."
                         )
+                        judge_q = (
+                            f"คำสั่งผู้ใช้: {question[:300]}\n\n"
+                            f"Acceptance checklist (เกณฑ์ปิดงานของคุณ):\n{_checklist_txt}\n\n"
+                            f"รายงานจาก QC:\n{qc_text.strip()[:1000]}\n\n"
+                            f"━━ ไฟล์ที่เขียนจริง ━━\n{files_block}"
+                        )
+                        async for token in stream_chat_response(
+                            judge_q, [], judge_system, model=plan_model,
+                            agent="CodeAgentPlanJudge", max_tokens=1500
+                        ):
+                            judge_text += token
+                        judge_text = _strip_think(judge_text)
+                        _js = judge_text.find("{"); _je = judge_text.rfind("}")
+                        if _js != -1 and _je != -1:
+                            _jd = _json.loads(judge_text[_js:_je + 1])
+                            verdict_complete = bool(_jd.get("complete"))
+                            missing_items = [str(x).strip() for x in (_jd.get("missing") or []) if str(x).strip()][:8]
+                            judge_instructions = str(_jd.get("instructions") or "").strip()
+                    except Exception:
+                        verdict_complete = qc_pass  # parsing failed → defer to QC
+                    yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': len(judge_text.split())})}\n\n"
+                    yield f"data: {_json.dumps({'type': 'judge_verdict', 'complete': verdict_complete, 'missing': missing_items, 'round': _vround})}\n\n"
+
+                # ── done? ──
+                if verdict_complete:
+                    break
+                if _vround >= MAX_VERIFY:
+                    yield f"data: {_json.dumps({'type': 'judge_incomplete', 'missing': missing_items, 'round': _vround})}\n\n"
+                    break
+
+                # ── 3) Writer fix round — full content injected so it ADDs, not rewrites ──
+                yield f"data: {_json.dumps({'type': 'stage', 'stage': 'write', 'agent': 'writer', 'model': writer_model})}\n\n"
+                yield f"data: {_json.dumps({'type': 'repair_start', 'iter': repair_iter + _vround, 'errors': len(missing_items) or 1})}\n\n"
+                yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🔧 เติมส่วนที่ยังขาด'})}\n\n"
+                _qc_fix_files = []
+                for _p, _cur in list(written_contents.items())[:6]:
+                    if len(_cur) > 40000:
+                        _cur = _cur[:40000] + "\n/* ...truncated... */"
+                    _qc_fix_files.append(
+                        f"===== CURRENT CONTENT OF {_p} ({_cur.count(chr(10))+1} lines) =====\n{_cur}"
+                    )
                 _qc_fix_block = "\n\n".join(_qc_fix_files)
+                _gap_txt = "\n".join(f"- {m}" for m in missing_items)
                 qc_fix_q = (
-                    f"QC reviewer ตรวจพบปัญหาดังนี้:\n{qc_text.strip()[:1200]}\n\n"
+                    f"Planner ตรวจรับงานแล้ว ยังไม่ครบตาม checklist:\n"
+                    + (f"{_gap_txt}\n\n" if _gap_txt else "")
+                    + (f"คำสั่งจาก Planner:\n{judge_instructions}\n\n" if judge_instructions else "")
+                    + (f"รายละเอียดจาก QC:\n{qc_text.strip()[:800]}\n\n" if qc_text.strip() else "")
                     + (f"{_qc_fix_block}\n\n" if _qc_fix_block else "")
-                    + f"แก้ไขเฉพาะจุดที่ QC ระบุด้วย <WRITE_FILE path=\"{project}/...\">...</WRITE_FILE>\n"
+                    + f"เติม/แก้เฉพาะส่วนที่ขาดด้วย <WRITE_FILE path=\"{project}/...\">...</WRITE_FILE>\n"
                     f"กฎสำคัญ:\n"
-                    f"- เขียนทั้งไฟล์ออกมา โดย COPY ทุกบรรทัดเดิมเป๊ะ ๆ แล้วเพิ่ม/แก้เฉพาะจุดที่ QC บอก\n"
-                    f"- ถ้าเป็น MISSING feature ให้ ADD เข้าไป ห้ามลบหรือย่อส่วนอื่นของไฟล์\n"
-                    f"- ไฟล์เดิมกี่บรรทัด ผลลัพธ์ต้องประมาณเท่าเดิม (บวกส่วนที่เพิ่ม)\n"
+                    f"- เขียนทั้งไฟล์ออกมา โดย COPY ทุกบรรทัดเดิมเป๊ะ ๆ แล้ว ADD เฉพาะส่วนที่ขาด\n"
+                    f"- ห้ามลบหรือย่อส่วนอื่นของไฟล์ ไฟล์เดิมกี่บรรทัด ผลลัพธ์ต้องประมาณเท่าเดิม (บวกส่วนที่เพิ่ม)\n"
+                    f"- อย่าใช้ emoji เป็นกราฟิกหลัก ถ้าเสี่ยง tofu ให้วาดด้วย CSS/SVG แทน\n"
                     f"จากนั้นรัน <EXEC_CMD cmd=\"python -m py_compile <path>\"/> สำหรับไฟล์ .py ที่แก้"
                 )
                 holder_qcfix: dict = {}
@@ -8920,7 +9005,8 @@ async def workspace_code_agent_stream(request: Request):
                 fix_display = _EXEC_CMD_RE.sub("", fix_display)
                 fix_display = _UPDATE_MEMORY_RE.sub("", fix_display).strip()
                 if fix_display:
-                    yield f"data: {_json.dumps({'type': 'final_text', 'text': fix_display, 'actions': fix_actions, 'exec_results': fix_exec_results, 'repair_iter': repair_iter + 1})}\n\n"
+                    yield f"data: {_json.dumps({'type': 'final_text', 'text': fix_display, 'actions': fix_actions, 'exec_results': fix_exec_results, 'repair_iter': repair_iter + _vround})}\n\n"
+                # loop back to QC for the next verify round
 
         # ── Auto-deploy: existing container -> restart+retest; none yet but the
         # project is a FastAPI app -> first deploy. Triggers on any agent

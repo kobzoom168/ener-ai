@@ -466,6 +466,7 @@
       .cc-plan-notice { color:#7aa2ff;font-size:11px;padding:4px 0 6px 14px; }
       .cc-plan-notice .cc-plan-summary { color:#aab; margin-bottom:2px; }
       .cc-plan-notice .cc-plan-files { color:#789; font-style:italic; }
+      .cc-plan-notice .cc-plan-check { color:#9bbd6f; margin-top:5px; font-size:11px; line-height:1.6; }
 
       /* Clarify card — Planner asks the user to choose */
       .cc-clarify { margin:6px 0;border:1px solid #3a2a55;border-radius:8px;overflow:hidden;background:#15101f; }
@@ -1779,6 +1780,30 @@
                 continue;
               }
 
+              if (evt.type === 'judge_verdict') {
+                const jd = document.createElement('div');
+                jd.className = 'cc-qc-verdict ' + (evt.complete ? 'pass' : 'fail');
+                const miss = (evt.missing || []).map(m => `• ${escHtml(m)}`).join('<br>');
+                jd.innerHTML = evt.complete
+                  ? '🧠 Planner ตรวจรับ — ✅ ครบตามที่สั่งแล้ว'
+                  : `🧠 Planner ตรวจรับ (รอบ ${evt.round || 1}) — ยังขาด ส่งกลับให้ Writer เติม`
+                    + (miss ? `<div class="cc-qc-text">${miss}</div>` : '');
+                toolsEl.appendChild(jd);
+                msgs.scrollTop = msgs.scrollHeight;
+                continue;
+              }
+
+              if (evt.type === 'judge_incomplete') {
+                const ji = document.createElement('div');
+                ji.className = 'cc-qc-verdict fail';
+                const miss = (evt.missing || []).map(m => `• ${escHtml(m)}`).join('<br>');
+                ji.innerHTML = `⚠️ ทำได้ไม่ครบหลังลอง ${evt.round || 2} รอบ — หยุดไว้ก่อน (กด 💾 ย้อนกลับได้)`
+                  + (miss ? `<div class="cc-qc-text">ยังขาด:<br>${miss}</div>` : '');
+                toolsEl.appendChild(ji);
+                msgs.scrollTop = msgs.scrollHeight;
+                continue;
+              }
+
               if (evt.type === 'thinking_start') {
                 _agentSetAction(evt.msg || 'thinking...');
                 wordEl.textContent = (evt.msg || 'Thinking') + '...';
@@ -1801,8 +1826,12 @@
                 const plan = document.createElement('div');
                 plan.className = 'cc-plan-notice';
                 const filesLine = (evt.files || []).join(', ');
+                const checkLine = (evt.checklist && evt.checklist.length)
+                  ? `<div class="cc-plan-check">✓ เกณฑ์ปิดงาน:<br>${evt.checklist.map(c => `&nbsp;&nbsp;□ ${escHtml(c)}`).join('<br>')}</div>`
+                  : '';
                 plan.innerHTML = `<div class="cc-plan-summary">📋 ${escHtml(evt.summary || 'แผนงาน')}</div>`
-                  + `<div class="cc-plan-files">จะสร้าง ${(evt.files||[]).length} ไฟล์: ${escHtml(filesLine)}</div>`;
+                  + `<div class="cc-plan-files">จะแก้ ${(evt.files||[]).length} ไฟล์: ${escHtml(filesLine)}</div>`
+                  + checkLine;
                 toolsEl.appendChild(plan);
                 _updatePipelineLine(aiDiv);
               }

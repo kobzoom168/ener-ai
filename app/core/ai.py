@@ -57,6 +57,11 @@ _MODEL_SHORT_LABELS = {
     "featherless-coder":       "💻 Coder 32B",
     "featherless-deepseek":    "⚡ DeepSeek V3",
     "featherless-qwen3":       "🧠 Qwen3 32B",
+    "featherless-kimi-thinking":  "🧠 Kimi Thinking 1T",
+    "featherless-deepseek-pro":   "🦾 DeepSeek V4 Pro",
+    "featherless-deepseek-v4":    "⚡ DeepSeek V4 Flash",
+    "featherless-qwen3-coder":    "💻 Qwen3 Coder",
+    "featherless-qwen3-thinking": "🧠 Qwen3 235B Think",
 }
 _OLLAMA_MODEL_MAP = {
     "qwen3b": "qwen2.5:3b",

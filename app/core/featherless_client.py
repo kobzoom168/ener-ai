@@ -20,6 +20,17 @@ FEATHERLESS_MODELS: dict[str, str] = {
     "featherless-deepseek": "deepseek-ai/DeepSeek-V3-0324",
     # Reasoning / brainstorm — complex thinking
     "featherless-qwen3": "Qwen/Qwen3-32B",
+    # ── Top-tier (Featherless flat/unlimited) — Code Agent brains ──
+    # Agentic thinking model — best for Planner (plans + judges completeness)
+    "featherless-kimi-thinking": "moonshotai/Kimi-K2-Thinking",
+    # Flagship 862B — strong all-round reasoning (Planner / QC)
+    "featherless-deepseek-pro": "deepseek-ai/DeepSeek-V4-Pro",
+    # Fast 284B + TOOLS — Writer / quick edits
+    "featherless-deepseek-v4": "deepseek-ai/DeepSeek-V4-Flash",
+    # Coding specialist — Writer
+    "featherless-qwen3-coder": "Qwen/Qwen3-Coder-Next",
+    # 235B thinking — reasoning alternative
+    "featherless-qwen3-thinking": "Qwen/Qwen3-235B-A22B-Thinking-2507",
 }
 
 FEATHERLESS_KEYS = frozenset(FEATHERLESS_MODELS.keys())
@@ -29,6 +40,11 @@ FEATHERLESS_LABELS: dict[str, str] = {
     "featherless-coder":       "Qwen2.5 Coder 32B",
     "featherless-deepseek":    "DeepSeek V3 (Fast)",
     "featherless-qwen3":       "Qwen3 32B (Reasoning)",
+    "featherless-kimi-thinking":  "Kimi K2 Thinking 1T (Brain)",
+    "featherless-deepseek-pro":   "DeepSeek V4 Pro 862B",
+    "featherless-deepseek-v4":    "DeepSeek V4 Flash 284B",
+    "featherless-qwen3-coder":    "Qwen3 Coder Next",
+    "featherless-qwen3-thinking": "Qwen3 235B Thinking",
 }
 
 FEATHERLESS_BASE_URL_DEFAULT = "https://api.featherless.ai/v1"
