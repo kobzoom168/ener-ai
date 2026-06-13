@@ -7492,7 +7492,7 @@ async def _deploy_and_smoke(project: str, main_src: str = "", mode: str = "deplo
         await _trusted_shell(f"docker rm -f {name} >/dev/null 2>&1 || true", 30)
         run_cmd = (
             f"docker run -d --name {name} -p {port}:{port} "
-            f"-v {proj_host_dir}:/app -w /app --restart unless-stopped "
+            f"-v {proj_host_dir}:/app -w /app --restart on-failure:3 "
             f"--memory 256m --cpus 0.5 "
             f"python:3.11-slim sh -c 'pip install -q -r requirements.txt && "
             f"python -m uvicorn main:app --host 0.0.0.0 --port {port}'"
