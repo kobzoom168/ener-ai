@@ -1401,21 +1401,24 @@
       }
 
       function _agentSetStage(stage, agent) {
-        const order = ['plan', 'write', 'qc', 'run', 'done'];
-        const idx = order.indexOf(stage);
+        const stageOrder = ['plan', 'write', 'qc', 'run', 'done'];
+        const agentOrder = ['planner', 'writer', 'qc'];
+        const idx = stageOrder.indexOf(stage);
         document.querySelectorAll('#agent-stepper span[data-stage]').forEach(s => {
-          const i = order.indexOf(s.dataset.stage);
+          const i = stageOrder.indexOf(s.dataset.stage);
           s.className = i < idx ? 'done' : (i === idx ? 'active' : '');
         });
         if (!agent) return;
-        if (_agentCurrent && _agentCurrent !== agent) {
-          const pc = document.getElementById('agent-card-' + _agentCurrent);
-          const pd = document.getElementById('agent-dot-' + _agentCurrent);
-          const ps = document.getElementById('agent-status-' + _agentCurrent);
+        // Mark every agent that comes before this one as done (robust — no reliance on _agentCurrent)
+        const agentIdx = agentOrder.indexOf(agent);
+        agentOrder.slice(0, agentIdx).forEach(prev => {
+          const pc = document.getElementById('agent-card-' + prev);
+          const pd = document.getElementById('agent-dot-' + prev);
+          const ps = document.getElementById('agent-status-' + prev);
           if (pc) pc.className = 'agent-card done-ok';
           if (pd) pd.className = 'agent-card-dot ok';
-          if (ps) ps.textContent = 'done';
-        }
+          if (ps && ps.textContent !== 'done') ps.textContent = 'done';
+        });
         _agentCurrent = agent;
         const card = document.getElementById('agent-card-' + agent);
         const dot  = document.getElementById('agent-dot-' + agent);
