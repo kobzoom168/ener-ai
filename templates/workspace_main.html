@@ -1774,6 +1774,38 @@
                 continue;
               }
 
+              if (evt.type === 'visual_result') {
+                const vd = document.createElement('div');
+                const issues = evt.issues || [];
+                vd.className = 'cc-qc-verdict ' + (evt.ok ? 'pass' : 'fail');
+                let head;
+                if (evt.skipped) {
+                  head = `👁️ Visual QC ถูกข้าม — ${escHtml(evt.note || '')}`;
+                } else if (evt.ok && !issues.length) {
+                  head = (evt.final ? '👁️ Visual QC (หลังแก้) ✅ ผ่าน — UI ดูเรียบร้อย'
+                                    : '👁️ Visual QC ✅ ผ่าน — UI ดูเรียบร้อย');
+                } else {
+                  const sevIcon = i => (i.severity === 'high' ? '🔴' : i.severity === 'medium' ? '🟠' : '⚪');
+                  const lines = issues.map(i =>
+                    `${sevIcon(i)} [${escHtml(i.category||'')}] ${escHtml(i.description||'')}`
+                    + (i.suggested_fix ? `\n   ↳ ${escHtml(i.suggested_fix)}` : '')
+                  ).join('\n');
+                  head = `👁️ Visual QC พบ ${issues.length} จุด${evt.final ? ' (หลังแก้)' : ''}`
+                    + `<div class="cc-qc-text">${lines}</div>`;
+                }
+                let imgHtml = '';
+                if (evt.image) {
+                  const src = 'data:image/png;base64,' + evt.image;
+                  imgHtml = `<div style="margin-top:8px"><img src="${src}" alt="screenshot ของแอปที่ deploy" `
+                    + `title="screenshot ที่ Visual QC เห็น" `
+                    + `style="max-width:360px;width:100%;border-radius:8px;border:1px solid #2a2a3a"></div>`;
+                }
+                vd.innerHTML = head + imgHtml;
+                toolsEl.appendChild(vd);
+                msgs.scrollTop = msgs.scrollHeight;
+                continue;
+              }
+
               if (evt.type === 'qc_verdict') {
                 const qcDiv = document.createElement('div');
                 qcDiv.className = 'cc-qc-verdict ' + (evt.skipped ? 'fail' : (evt.pass ? 'pass' : 'fail'));

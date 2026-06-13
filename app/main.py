@@ -7126,6 +7126,71 @@ def _strip_think(text: str) -> str:
     if _open != -1 and "</think>" not in cleaned.lower()[_open:]:
         cleaned = cleaned[:_open]
     return cleaned.strip()
+
+
+# ── Frontend design system injected into the Writer prompt ─────────────────
+# Consensus of 5 independent AI reviews (2026-06-13): the #1 low-effort lift
+# for UI quality is to stop letting the model freestyle CSS — pin Tailwind +
+# design tokens + a few-shot, and force a layout plan + negative constraints.
+# Applies to NEW HTML/UI. For targeted edits under a CHANGE PLAN the writer
+# must keep the existing framework (do NOT convert an existing file to Tailwind).
+_FRONTEND_DESIGN_SYSTEM = (
+    "\n=== FRONTEND DESIGN SYSTEM (mandatory for any HTML/UI you CREATE) ===\n"
+    "Goal: output must look like a senior designer made it — NOT amateur freestyle CSS.\n"
+    "When you create a new HTML page (or a brand-new UI), follow ALL of this:\n"
+    "1) STYLING: load Tailwind via CDN in <head> and style with Tailwind utility classes —\n"
+    "   <script src=\"https://cdn.tailwindcss.com\"></script>\n"
+    "   Do not hand-write large custom CSS; use Tailwind utilities (p-4, gap-4, rounded-xl, shadow-sm, etc.).\n"
+    "2) DESIGN TOKENS (use these exact values for a consistent premium look):\n"
+    "   - Font: Inter (add <link> to Google Fonts) or system-ui; body text text-slate-700.\n"
+    "   - Primary: blue-600 #2563eb · Background: white / slate-50 #f8fafc · Text: slate-800 #1e293b.\n"
+    "   - Radius: rounded-xl (0.75rem) · Shadow: shadow-sm/shadow-md · Spacing: Tailwind 4px scale.\n"
+    "   - Centered content, max width max-w-5xl mx-auto, generous padding (px-6 py-10).\n"
+    "   - Buttons: rounded-lg px-4 py-2, a clear hover AND focus state, transition.\n"
+    "3) PLAN BEFORE CODE: first jot a 3-5 line DESIGN PLAN (layout sections, components,\n"
+    "   colors, breakpoints) as a short comment, THEN write the code to match it.\n"
+    "4) RESPONSIVE: must look right at 375px (mobile) and 1280px (desktop) — use flex/grid + gap,\n"
+    "   md:/lg: breakpoints. No fixed pixel widths that overflow on mobile.\n"
+    "5) SEMANTIC HTML: <header> <main> <section> <nav> <footer> <button>; every <img> needs alt.\n"
+    "GRAPHICS / CHARACTERS / SPRITES / ICONS — read this carefully:\n"
+    "   - PREFER inline SVG with EXPLICIT coordinates (<path d=\"...\">, <circle>, <rect>, <line>) —\n"
+    "     this is the single most reliable way to draw a recognizable shape. You are far better at\n"
+    "     SVG-with-coordinates than at freehand CSS shapes.\n"
+    "   - Do NOT build characters/figures out of freehand CSS clip-path / border-radius blobs —\n"
+    "     that is exactly how a 'walking character' turns into an unrecognizable blob. Compose a\n"
+    "     figure from clear SVG primitives (head=circle, body=rect/line, limbs=line) so each part\n"
+    "     is identifiable, THEN animate with CSS @keyframes (rotate/translate the limb groups).\n"
+    "   - Do NOT use emoji as primary graphics/characters (fonts may render □ tofu).\n"
+    "   - SVG FEW-SHOT (a simple recognizable walking stick-figure — match this clarity):\n"
+    "     <svg viewBox=\"0 0 60 100\" class=\"w-24 h-40\" stroke=\"#1e293b\" stroke-width=\"3\"\n"
+    "          stroke-linecap=\"round\" fill=\"none\">\n"
+    "       <circle cx=\"30\" cy=\"14\" r=\"9\" fill=\"#1e293b\"/>           <!-- head -->\n"
+    "       <line x1=\"30\" y1=\"23\" x2=\"30\" y2=\"58\"/>                  <!-- torso -->\n"
+    "       <line x1=\"30\" y1=\"34\" x2=\"14\" y2=\"46\"/>                  <!-- arm -->\n"
+    "       <line x1=\"30\" y1=\"34\" x2=\"46\" y2=\"46\"/>                  <!-- arm -->\n"
+    "       <line x1=\"30\" y1=\"58\" x2=\"18\" y2=\"82\" class=\"leg-back\"/> <!-- leg -->\n"
+    "       <line x1=\"30\" y1=\"58\" x2=\"42\" y2=\"82\" class=\"leg-front\"/><!-- leg -->\n"
+    "     </svg>\n"
+    "     <style>@keyframes step{0%,100%{transform:rotate(18deg)}50%{transform:rotate(-18deg)}}\n"
+    "       .leg-front{transform-origin:30px 58px;animation:step .6s ease-in-out infinite}\n"
+    "       .leg-back{transform-origin:30px 58px;animation:step .6s ease-in-out infinite reverse}</style>\n"
+    "NEGATIVE CONSTRAINTS — never do these (they are the usual ugliness):\n"
+    "   - No div-soup nested >3 levels deep; avoid position:absolute unless truly needed.\n"
+    "   - No random/placeholder external image URLs that 404 — use a CSS gradient or SVG instead.\n"
+    "   - No tiny unreadable text, no clashing colors, no zero-spacing cramped layouts.\n"
+    "SELF-CHECK before finishing: is it centered, spaced (≥0.5rem gaps), readable, and does it\n"
+    "   actually match what the user asked for visually? Fix it before you stop.\n"
+    "EXAMPLE of the expected quality bar (card) — match this spacing/structure style:\n"
+    "  <div class=\"max-w-sm mx-auto bg-white rounded-xl shadow-md p-6 flex flex-col gap-3\">\n"
+    "    <h2 class=\"text-xl font-semibold text-slate-800\">Title</h2>\n"
+    "    <p class=\"text-slate-600\">Body text with comfortable line height.</p>\n"
+    "    <button class=\"self-start rounded-lg bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 focus:ring-2 focus:ring-blue-300 transition\">Action</button>\n"
+    "  </div>\n"
+    "IMPORTANT: if you are EDITING an existing file under a CHANGE PLAN, keep that file's existing\n"
+    "CSS/framework and apply only the targeted edits — do NOT rewrite it to Tailwind.\n"
+)
+
+
 _ROUTE_DECORATOR_RE = __import__("re").compile(
     r'@app\.(get|post|put|delete|patch)\(\s*["\']([^"\']+)["\']', __import__("re").IGNORECASE
 )
@@ -7743,7 +7808,170 @@ async def _deploy_and_smoke(project: str, main_src: str = "", mode: str = "deplo
                 ok, results, logs = await _run_smoke()
 
     yield {"type": "smoke_result", "ok": ok, "port": port,
-           "url": f"http://my-ener.uk:{port}/", "routes": results, "logs": logs}
+           "url": f"http://my-ener.uk:{port}/", "base": base, "routes": results, "logs": logs}
+
+
+# ── Visual Feedback Loop ───────────────────────────────────────────────────
+# All 4 independent AI reviews (2026-06-14) agreed the #1 remaining lift is to
+# give the pipeline "eyes": screenshot the deployed app and let a vision model
+# critique the real rendered UI (smoke test only checks HTTP status, not looks).
+# Everything here is FAIL-OPEN: if Playwright is not installed or vision is down,
+# we skip and inform — the existing deploy/smoke flow is never blocked.
+async def _capture_screenshot(url: str, timeout_ms: int = 15000) -> tuple[str | None, str, list[str]]:
+    """Render `url` in headless Chromium → (base64_png, note, js_errors).
+
+    Also captures console.error + uncaught pageerror DURING render — a free
+    deterministic gate that catches "HTTP 200 but the JS threw" (curl can't see
+    this). Returns (None, note, []) when Playwright is unavailable / capture fails.
+    """
+    try:
+        from playwright.async_api import async_playwright
+    except Exception:
+        return None, "ข้าม visual QC — Playwright ยังไม่ได้ติดตั้ง (pip install playwright && playwright install chromium)", []
+    js_errors: list[str] = []
+
+    def _on_console(msg):
+        try:
+            if getattr(msg, "type", "") == "error":
+                js_errors.append(f"console: {str(getattr(msg, 'text', ''))[:200]}")
+        except Exception:
+            pass
+
+    def _on_pageerror(exc):
+        try:
+            js_errors.append(f"pageerror: {str(exc)[:200]}")
+        except Exception:
+            pass
+
+    try:
+        import base64 as _b64
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"]
+            )
+            try:
+                page = await browser.new_page(viewport={"width": 1280, "height": 800})
+                page.on("console", _on_console)
+                page.on("pageerror", _on_pageerror)
+                try:
+                    await page.goto(url, wait_until="networkidle", timeout=timeout_ms)
+                except Exception:
+                    # networkidle can hang on apps with long-polling; fall back to DOM ready
+                    await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                await page.wait_for_timeout(900)  # let CSS animations/fonts settle (also lets late JS throw)
+                png = await page.screenshot(full_page=False, type="png")
+            finally:
+                await browser.close()
+        # dedupe while preserving order, cap to keep the fix prompt small
+        seen: list[str] = []
+        for e in js_errors:
+            if e not in seen:
+                seen.append(e)
+        return _b64.b64encode(png).decode(), "ok", seen[:10]
+    except Exception as exc:
+        return None, f"ถ่าย screenshot ไม่ได้: {str(exc)[:160]}", []
+
+
+def _merge_js_errors(visual: dict, js_errors: list[str]) -> dict:
+    """Prepend captured JS runtime errors as deterministic HIGH-severity issues.
+
+    These are concrete and actionable (real stack/message), so they should always
+    trigger a fix round even if the vision model said the page looked fine.
+    """
+    if not js_errors:
+        return visual
+    extra = [{
+        "severity": "high", "category": "bug",
+        "description": f"JS error ขณะรันจริง: {je}",
+        "suggested_fix": "แก้ JavaScript ที่ทำให้เกิด error นี้ (ดู message/stack ด้านบน)",
+    } for je in js_errors]
+    out = dict(visual or {})
+    out["issues"] = extra + list((visual or {}).get("issues", []))
+    out["passed"] = False
+    return out
+
+
+def _parse_visual_json(raw: str) -> dict:
+    """Tolerant parse of the vision model's critique into {passed, issues, error}."""
+    import json as _j, re as _re
+    if not raw or not raw.strip():
+        return {"passed": True, "issues": [], "error": "empty"}
+    txt = _re.sub(r"```(?:json)?", "", raw, flags=_re.IGNORECASE).replace("```", "").strip()
+    s, e = txt.find("{"), txt.rfind("}")
+    if s != -1 and e > s:
+        txt = txt[s:e + 1]
+    try:
+        data = _j.loads(txt)
+    except Exception:
+        return {"passed": True, "issues": [], "error": "parse"}
+    raw_issues = data.get("issues") if isinstance(data, dict) else None
+    norm: list[dict] = []
+    for it in (raw_issues or []):
+        if not isinstance(it, dict):
+            continue
+        sev = str(it.get("severity", "low")).lower()
+        norm.append({
+            "severity": sev if sev in ("high", "medium", "low") else "low",
+            "category": str(it.get("category", "visual")).lower()[:20],
+            "description": str(it.get("description", "")).strip()[:300],
+            "suggested_fix": str(it.get("suggested_fix", "")).strip()[:300],
+        })
+    has_blocker = any(i["severity"] in ("high", "medium") for i in norm)
+    passed = bool(data.get("passed", not has_blocker)) if isinstance(data, dict) else True
+    return {"passed": passed, "issues": norm, "error": None}
+
+
+async def _visual_critique(image_b64: str, user_request: str, context: str = "") -> dict:
+    """Send a rendered screenshot to a vision model and return structured UI issues.
+
+    Uses OpenRouter Gemini Flash (the only vision model with credit here). Always
+    returns a dict; fail-open to {passed:True} on any error so it never blocks deploy.
+    """
+    system = (
+        "You are a senior UI/UX designer and frontend QA engineer. You are shown a "
+        "screenshot of a freshly rendered web app. Critique ONLY what is visible. Be "
+        "strict but fair, and prefer concrete, actionable fixes. Respond with STRICT "
+        "JSON only — no prose, no markdown fences."
+    )
+    prompt = (
+        f"คำขอเดิมของผู้ใช้:\n{user_request[:1200]}\n\n"
+        + (f"บริบท/แผน:\n{context[:600]}\n\n" if context else "")
+        + "ตรวจ screenshot นี้ตามหมวดต่อไปนี้:\n"
+          "1) layout/alignment/spacing (เบี้ยว, ล้น, ทับกัน, ชิดเกิน)\n"
+          "2) visual hierarchy & typography (อ่านยาก, contrast ต่ำ, ปุ่มไม่เด่น)\n"
+          "3) correctness — ตรงกับคำขอของผู้ใช้ไหม\n"
+          "4) bug ที่เห็นชัด (รูปแตก, ข้อความหาย/ล้น, หน้าโล่งขาว, สีตีกัน, emoji กลายเป็น □)\n\n"
+        "ตอบเป็น JSON เท่านั้น รูปแบบ:\n"
+        '{"passed": true, "issues": [{"severity":"high|medium|low",'
+        '"category":"layout|visual|correctness|bug","description":"ปัญหาที่เห็น",'
+        '"suggested_fix":"แก้ยังไงในระดับ HTML/CSS เช่น เปลี่ยน class เป็น flex gap-4 items-center"}]}\n'
+        "passed=true เฉพาะเมื่อไม่มี issue ระดับ high หรือ medium. "
+        "ถ้าหน้าโล่ง/ขาว/พังให้ passed=false และใส่ severity=high."
+    )
+    # Gemini Flash is the ONLY vision model with credit here (no Anthropic/OpenAI
+    # credit per the project constraint) — call it directly, no Anthropic attempt.
+    or_messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": [
+            {"type": "text", "text": prompt},
+            {"type": "image_url",
+             "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
+        ]},
+    ]
+    raw = ""
+    for vis_model in ("gemini-3-flash", "gemini-flash-lite"):
+        try:
+            from app.core.openrouter_client import openrouter_chat_completions
+            data = await openrouter_chat_completions(vis_model, or_messages, max_tokens=1500)
+            raw = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
+            if raw.strip():
+                break
+        except Exception as exc:
+            last_err = str(exc)[:120]
+    else:
+        if not raw.strip():
+            return {"passed": True, "issues": [], "error": locals().get("last_err", "vision unavailable")}
+    return _parse_visual_json(raw)
 
 
 async def _load_project_memory(project: str) -> dict:
@@ -7931,6 +8159,7 @@ async def workspace_code_agent(request: Request):
         f"- exact commands to install + run (NEVER mention localhost)\n"
         f"**วิธีทดสอบ:**\n"
         f"- curl or browser URLs using https://my-ener.uk or port on my-ener.uk (NOT localhost)"
+        f"{_FRONTEND_DESIGN_SYSTEM}"
     )
 
     raw_answer = await ai_chat(
@@ -8130,6 +8359,7 @@ async def workspace_code_agent_stream(request: Request):
         f"→ reply with plain text ONLY. Do NOT use WRITE_FILE. Do NOT modify any file. Do NOT run EXEC_CMD.\n"
         f"Examples requiring NO code change: 'ขอ URL', 'ขอ link อีกรอบ', 'app อยู่ที่ไหน', 'port เท่าไร'\n"
         f"The project public URL is: http://my-ener.uk:{app_port}/\n"
+        f"{_FRONTEND_DESIGN_SYSTEM}"
     )
 
     # Fast-path: detect pure informational queries — bypass AI pipeline entirely
@@ -8596,6 +8826,68 @@ async def workspace_code_agent_stream(request: Request):
                             yield f"data: {_json.dumps(ev)}\n\n"
                         yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': 0})}\n\n"
 
+                # ── Visual QC: screenshot the running app + vision critique ──
+                # Advisory & FAIL-OPEN: never blocks 'done'. At most one fix round.
+                visual: dict | None = None
+                has_ui = any(p.lower().endswith(".html") for p in written_files) or \
+                         any(p.lower().endswith(".html") for p in written_contents)
+                if smoke and smoke.get("ok") and has_ui:
+                    shot_url = smoke.get("base") or smoke.get("url")
+                    yield f"data: {_json.dumps({'type': 'stage', 'stage': 'run', 'agent': None})}\n\n"
+                    yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '👁️ Visual QC — screenshot + vision'})}\n\n"
+                    shot_b64, shot_note, shot_errs = await _capture_screenshot(shot_url)
+                    if shot_b64:
+                        visual = _merge_js_errors(await _visual_critique(shot_b64, question, plan_summary), shot_errs)
+                        yield f"data: {_json.dumps({'type': 'visual_result', 'ok': visual.get('passed', True), 'issues': visual.get('issues', []), 'image': shot_b64})}\n\n"
+                    else:
+                        yield f"data: {_json.dumps({'type': 'visual_result', 'ok': True, 'skipped': True, 'note': shot_note, 'issues': []})}\n\n"
+                    yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': 0})}\n\n"
+
+                    # One visual fix round for high/medium issues only
+                    sev_issues = [i for i in (visual or {}).get("issues", []) if i.get("severity") in ("high", "medium")]
+                    if sev_issues:
+                        ui_files = [p for p in written_contents if p.lower().endswith((".html", ".css", ".js"))]
+                        cur_files = "\n\n".join(
+                            f"--- {p} ---\n{written_contents.get(p, '')[:4000]}" for p in ui_files[:4]
+                        )
+                        issue_lines = "\n".join(
+                            f"- [{i['severity']}/{i['category']}] {i['description']} → {i['suggested_fix']}"
+                            for i in sev_issues[:8]
+                        )
+                        yield f"data: {_json.dumps({'type': 'stage', 'stage': 'write', 'agent': 'writer', 'model': writer_model})}\n\n"
+                        yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🎨 Fixing visual issues'})}\n\n"
+                        visual_fix_q = (
+                            f"Visual QC ตรวจหน้าจอจริง (screenshot) ของแอปที่ deploy แล้ว พบปัญหา UI ต่อไปนี้:\n"
+                            f"{issue_lines}\n\n"
+                            f"ไฟล์ UI ปัจจุบัน:\n{cur_files}\n\n"
+                            f"แก้เฉพาะปัญหา visual ข้างบนด้วย <WRITE_FILE path=\"{project}/...\">...</WRITE_FILE> "
+                            f"(เขียนทั้งไฟล์เวอร์ชันที่แก้แล้ว) — คงโครงสร้าง/เนื้อหาเดิมไว้ เปลี่ยนเฉพาะ layout/style/markup "
+                            f"ที่ทำให้เกิดปัญหา ห้ามรันคำสั่งตรวจสอบ (curl/ls/docker) ระบบจะ deploy + ถ่ายรูปใหม่ให้เอง"
+                        )
+                        holder = {}
+                        async for ev in stream_turn(visual_fix_q, [], 6000, holder, writer_model, "CodeAgentWriter"):
+                            yield f"data: {_json.dumps(ev)}\n\n"
+                        yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': holder.get('tokens', 0)})}\n\n"
+                        vfa, vfe, vfc = await process_write_files(holder.get("response", ""))
+                        all_actions += vfa
+                        written_contents.update(vfc)
+                        for ev in vfe:
+                            yield f"data: {_json.dumps(ev)}\n\n"
+
+                        # Redeploy + re-screenshot + re-critique → final verdict
+                        yield f"data: {_json.dumps({'type': 'stage', 'stage': 'run', 'agent': None})}\n\n"
+                        yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🚀 Re-deploy after visual fix'})}\n\n"
+                        async for ev in _deploy_and_smoke(project, written_contents.get("main.py", main_src), "restart"):
+                            if ev.get("type") == "smoke_result":
+                                smoke = ev
+                            yield f"data: {_json.dumps(ev)}\n\n"
+                        yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': 0})}\n\n"
+                        if smoke and smoke.get("ok"):
+                            shot2, _note2, shot2_errs = await _capture_screenshot(smoke.get("base") or smoke.get("url"))
+                            if shot2:
+                                visual = _merge_js_errors(await _visual_critique(shot2, question, plan_summary), shot2_errs)
+                                yield f"data: {_json.dumps({'type': 'visual_result', 'ok': visual.get('passed', True), 'issues': visual.get('issues', []), 'image': shot2, 'final': True})}\n\n"
+
                 # ── Final summary (built locally — no extra AI call) ─
                 files_md = "\n".join(f"- {p}" for p in written_files)
                 deps_md = ", ".join(deps) if deps else "-"
@@ -8604,6 +8896,18 @@ async def workspace_code_agent_stream(request: Request):
                         f"**แอปรันอยู่แล้วที่:** {smoke['url']}\n"
                         + "\n".join(f"- GET {r['path']} → {r['status']} ✓" for r in smoke.get("routes", []))
                     )
+                    if visual is not None and not visual.get("skipped"):
+                        _vissues = visual.get("issues", [])
+                        if visual.get("passed") and not _vissues:
+                            test_block += "\n\n**👁️ Visual QC:** ผ่าน — UI ดูเรียบร้อย"
+                        else:
+                            _vlines = "\n".join(
+                                f"- [{i['severity']}] {i['description']}" for i in _vissues[:5]
+                            )
+                            _verdict = "ผ่าน (เหลือ issue เล็กน้อย)" if visual.get("passed") else "ยังมีจุดต้องปรับ"
+                            test_block += f"\n\n**👁️ Visual QC:** {_verdict}\n{_vlines}"
+                    elif visual is not None and visual.get("skipped"):
+                        test_block += f"\n\n**👁️ Visual QC:** {visual.get('note', 'ข้าม')}"
                 elif smoke:
                     test_block = (
                         f"**⚠️ Deploy แล้วแต่ smoke test ยังไม่ผ่าน** — {smoke['url']}\n"
@@ -9032,6 +9336,7 @@ async def workspace_code_agent_stream(request: Request):
                     yield f"data: {_json.dumps({'type': 'stage', 'stage': 'run', 'agent': None})}\n\n"
                     yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': msg})}\n\n"
                     st_smoke: dict | None = None
+                    st_smoke2: dict | None = None
                     async for ev in _deploy_and_smoke(
                         project, written_contents.get("main.py", main_src_disk), deploy_mode
                     ):
@@ -9095,6 +9400,64 @@ async def workspace_code_agent_stream(request: Request):
                                 f"แนะนำ: เปิดไฟล์ที่ระบุใน traceback แล้วแก้เอง หรือสั่งให้ AI แก้จุดที่เจาะจง"
                             )
                             yield f"data: {_json.dumps({'type': 'final_text', 'text': report, 'actions': [], 'exec_results': [], 'repair_iter': repair_iter + 2})}\n\n"
+
+                    # ── Visual QC for edits (FAIL-OPEN, one fix round) ──
+                    cur_smoke = st_smoke2 or st_smoke
+                    edit_has_ui = any(p.lower().endswith((".html", ".css", ".js")) for p in written_contents)
+                    if cur_smoke and cur_smoke.get("ok") and edit_has_ui:
+                        shot_url = cur_smoke.get("base") or cur_smoke.get("url")
+                        yield f"data: {_json.dumps({'type': 'stage', 'stage': 'run', 'agent': None})}\n\n"
+                        yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '👁️ Visual QC — screenshot + vision'})}\n\n"
+                        v_b64, v_note, v_errs = await _capture_screenshot(shot_url)
+                        v_visual: dict | None = None
+                        if v_b64:
+                            v_visual = _merge_js_errors(await _visual_critique(v_b64, question, ""), v_errs)
+                            yield f"data: {_json.dumps({'type': 'visual_result', 'ok': v_visual.get('passed', True), 'issues': v_visual.get('issues', []), 'image': v_b64})}\n\n"
+                        else:
+                            yield f"data: {_json.dumps({'type': 'visual_result', 'ok': True, 'skipped': True, 'note': v_note, 'issues': []})}\n\n"
+                        yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': 0})}\n\n"
+
+                        v_sev = [i for i in (v_visual or {}).get("issues", []) if i.get("severity") in ("high", "medium")]
+                        if v_sev:
+                            v_ui_files = [p for p in written_contents if p.lower().endswith((".html", ".css", ".js"))]
+                            v_cur = "\n\n".join(
+                                f"--- {p} ---\n{written_contents.get(p, '')[:4000]}" for p in v_ui_files[:4]
+                            )
+                            v_lines = "\n".join(
+                                f"- [{i['severity']}/{i['category']}] {i['description']} → {i['suggested_fix']}"
+                                for i in v_sev[:8]
+                            )
+                            yield f"data: {_json.dumps({'type': 'stage', 'stage': 'write', 'agent': 'writer', 'model': writer_model})}\n\n"
+                            yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🎨 Fixing visual issues'})}\n\n"
+                            v_fix_q = (
+                                f"Visual QC ตรวจหน้าจอจริง (screenshot) ของแอปหลัง deploy พบปัญหา UI ต่อไปนี้:\n"
+                                f"{v_lines}\n\n"
+                                f"ไฟล์ UI ปัจจุบัน:\n{v_cur}\n\n"
+                                f"แก้เฉพาะปัญหา visual ข้างบนด้วย <WRITE_FILE path=\"{project}/...\">...</WRITE_FILE> "
+                                f"(เขียนทั้งไฟล์เวอร์ชันที่แก้แล้ว) คงโครงสร้าง/เนื้อหาเดิม เปลี่ยนเฉพาะ layout/style/markup "
+                                f"ที่เป็นปัญหา ห้ามรันคำสั่งตรวจสอบ (curl/ls/docker) ระบบจะ deploy + ถ่ายรูปใหม่ให้เอง"
+                            )
+                            v_holder: dict = {}
+                            async for ev in stream_turn(v_fix_q, conv_messages, 6000, v_holder, writer_model, "CodeAgentWriter"):
+                                yield f"data: {_json.dumps(ev)}\n\n"
+                            yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': v_holder.get('tokens', 0)})}\n\n"
+                            v_a, v_e, v_c = await process_write_files(v_holder.get("response", ""))
+                            written_contents.update(v_c)
+                            for ev in v_e:
+                                yield f"data: {_json.dumps(ev)}\n\n"
+                            yield f"data: {_json.dumps({'type': 'stage', 'stage': 'run', 'agent': None})}\n\n"
+                            yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🚀 Re-deploy after visual fix'})}\n\n"
+                            v_smoke: dict | None = None
+                            async for ev in _deploy_and_smoke(project, written_contents.get("main.py", main_src_disk), "restart"):
+                                if ev.get("type") == "smoke_result":
+                                    v_smoke = ev
+                                yield f"data: {_json.dumps(ev)}\n\n"
+                            yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': 0})}\n\n"
+                            if v_smoke and v_smoke.get("ok"):
+                                v_b2, _vn2, v_b2_errs = await _capture_screenshot(v_smoke.get("base") or v_smoke.get("url"))
+                                if v_b2:
+                                    v_visual = _merge_js_errors(await _visual_critique(v_b2, question, ""), v_b2_errs)
+                                    yield f"data: {_json.dumps({'type': 'visual_result', 'ok': v_visual.get('passed', True), 'issues': v_visual.get('issues', []), 'image': v_b2, 'final': True})}\n\n"
 
         yield f"data: {_json.dumps({'type': 'done'})}\n\n"
 

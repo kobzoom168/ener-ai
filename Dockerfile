@@ -11,6 +11,11 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Visual QC needs a real headless browser in the image (the orchestrator runs
+# INSIDE this container, so chromium must live here — a host install won't help).
+# --with-deps pulls the OS libs/fonts chromium needs on Debian slim.
+RUN python -m playwright install --with-deps chromium
+
 COPY . .
 
 RUN mkdir -p /app/data
