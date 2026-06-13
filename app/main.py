@@ -7660,11 +7660,17 @@ async def _deploy_and_smoke(project: str, main_src: str = "", mode: str = "deplo
 
     async def _docker_deploy() -> dict:
         await _trusted_shell(f"docker rm -f {name} >/dev/null 2>&1 || true", 30)
+        # Pin a known-good FastAPI stack FIRST so AI-generated code written against
+        # the older API keeps working (e.g. TemplateResponse(name, context), which
+        # Starlette 1.x removed). Generated requirements use '>=' so this baseline
+        # satisfies them without being upgraded away.
+        baseline = "fastapi==0.115.6 'uvicorn[standard]==0.32.1' jinja2==3.1.4 python-multipart==0.0.12"
         run_cmd = (
             f"docker run -d --name {name} -p {port}:{port} "
             f"-v {proj_host_dir}:/app -w /app --restart on-failure:3 "
             f"--memory 256m --cpus 0.5 "
-            f"python:3.11-slim sh -c 'pip install -q -r requirements.txt && "
+            f"python:3.11-slim sh -c 'pip install -q {baseline} && "
+            f"pip install -q -r requirements.txt && "
             f"python -m uvicorn main:app --host 0.0.0.0 --port {port}'"
         )
         return await _trusted_shell(run_cmd, 60)
