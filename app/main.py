@@ -8621,6 +8621,15 @@ async def workspace_code_agent_stream(request: Request):
                 "{\"files\": [\"only_files_that_need_change\"], "
                 "\"change_plan\": {\"filename\": \"specific Thai instruction: exactly what to change in this file\"}, "
                 "\"summary\": \"one-sentence Thai description\"}\n"
+                "\n"
+                "ASK-WHEN-UNSURE — IMPORTANT:\n"
+                "If the request is genuinely AMBIGUOUS — multiple reasonable interpretations, unclear scope, "
+                "or a design decision only the user can make — do NOT guess. Instead output:\n"
+                "{\"needs_clarification\": true, \"question\": \"<short Thai question>\", "
+                "\"options\": [{\"label\": \"<short Thai choice>\", \"value\": \"<concrete instruction to act on if chosen>\"}]}\n"
+                "Give 2-4 concrete, mutually-distinct options. Only ask when it truly matters "
+                "(e.g. 'เพิ่ม animation' could mean subtle-pro vs playful-bouncy; 'ทำให้สวยขึ้น' is open-ended). "
+                "If the request is clear enough to act on, do NOT ask — just return the normal files/change_plan.\n"
                 "Be VERY specific. Good example: "
                 "\"เปลี่ยน class .char-body สีจาก #FF9000 เป็น #FF69B4, เปลี่ยน emoji 🧑 เป็น 👩 ใน div.character\"\n"
                 "Only include files that truly need editing. "
@@ -8645,6 +8654,19 @@ async def workspace_code_agent_stream(request: Request):
                 _s = _ca_text.find("{"); _e = _ca_text.rfind("}")
                 if _s != -1 and _e != -1:
                     _cp = _json.loads(_ca_text[_s:_e + 1])
+                    # Planner is unsure → ask the user with clickable options, then stop
+                    if _cp.get("needs_clarification") and _cp.get("options"):
+                        _opts = []
+                        for _o in (_cp.get("options") or [])[:4]:
+                            _lbl = str((_o or {}).get("label") or "").strip()
+                            _val = str((_o or {}).get("value") or "").strip() or _lbl
+                            if _lbl:
+                                _opts.append({"label": _lbl, "value": _val})
+                        if _opts:
+                            yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': len(_ca_text.split())})}\n\n"
+                            yield f"data: {_json.dumps({'type': 'clarify', 'question': str(_cp.get('question') or 'เลือกแนวทางที่ต้องการ'), 'options': _opts})}\n\n"
+                            yield f"data: {_json.dumps({'type': 'done'})}\n\n"
+                            return
                     change_plan = _cp.get("change_plan") or {}
                     _cp_files = [str(f) for f in (_cp.get("files") or []) if f]
                     _cp_summary = str(_cp.get("summary") or "")

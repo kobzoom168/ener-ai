@@ -467,6 +467,16 @@
       .cc-plan-notice .cc-plan-summary { color:#aab; margin-bottom:2px; }
       .cc-plan-notice .cc-plan-files { color:#789; font-style:italic; }
 
+      /* Clarify card — Planner asks the user to choose */
+      .cc-clarify { margin:6px 0;border:1px solid #3a2a55;border-radius:8px;overflow:hidden;background:#15101f; }
+      .cc-clarify-head { padding:9px 12px;font-size:12px;font-weight:600;color:#c4b5fd;background:#1c1430;border-bottom:1px solid #2a1f45;line-height:1.5; }
+      .cc-clarify-opts { display:flex;flex-direction:column;gap:6px;padding:10px 12px; }
+      .cc-clarify-opt { text-align:left;padding:9px 12px;background:#1e1832;border:1px solid #322550;border-radius:6px;color:#ddd;font-size:12px;cursor:pointer;transition:all 0.15s;font-family:inherit; }
+      .cc-clarify-opt:hover:not(:disabled) { background:#2a2148;border-color:#7c3aed;color:#fff;transform:translateX(2px); }
+      .cc-clarify-opt:disabled { opacity:0.4;cursor:default; }
+      .cc-clarify-opt.chosen { opacity:1;background:#2e2152;border-color:#a855f7;color:#fff; }
+      .cc-clarify-opt.chosen::before { content:'✓ '; color:#a855f7;font-weight:700; }
+
       .cc-response { margin-top:6px;padding-top:6px;border-top:1px solid #1a1a28; }
       .cc-streaming-text { font-size:12px;color:#ccc;line-height:1.5;white-space:pre-wrap; }
       .cc-final-text { font-size:12px;color:#ccc;line-height:1.6; }
@@ -1665,6 +1675,31 @@
 
               if (evt.type === 'stage') {
                 _agentSetStage(evt.stage, evt.agent);
+                continue;
+              }
+
+              if (evt.type === 'clarify') {
+                _stopThinkWords();
+                thinkRow.classList.add('done');
+                wordEl.textContent = '🧠 Planner ต้องการคำยืนยัน';
+                const cd = document.createElement('div');
+                cd.className = 'cc-clarify';
+                const optsHtml = (evt.options || []).map((o, i) =>
+                  `<button type="button" class="cc-clarify-opt" data-val="${escHtml(o.value || o.label)}">${escHtml(o.label)}</button>`
+                ).join('');
+                cd.innerHTML = `
+                  <div class="cc-clarify-head">🤔 ${escHtml(evt.question || 'เลือกแนวทางที่ต้องการ')}</div>
+                  <div class="cc-clarify-opts">${optsHtml}</div>`;
+                toolsEl.appendChild(cd);
+                const _origQ = question;
+                cd.querySelectorAll('.cc-clarify-opt').forEach(btn => {
+                  btn.addEventListener('click', () => {
+                    cd.querySelectorAll('.cc-clarify-opt').forEach(b => { b.disabled = true; b.classList.remove('chosen'); });
+                    btn.classList.add('chosen');
+                    askCodeAI(`${_origQ} — แนวทางที่เลือก: ${btn.dataset.val}`);
+                  });
+                });
+                msgs.scrollTop = msgs.scrollHeight;
                 continue;
               }
 
