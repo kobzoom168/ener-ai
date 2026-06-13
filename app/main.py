@@ -7350,6 +7350,10 @@ def extract_contracts(files: dict[str, str]) -> str:
 
 # ── EXEC_CMD safety net ───────────────────────────────────────────────────────
 _BLOCKED_CMD_PATTERNS = [
+    (r'(nohup\s+)?(python(3(\.\d+)?)?\s+-m\s+)?(uvicorn|gunicorn)\s+\S+:(app|application|main)\b',
+     'ห้ามรัน server เอง — ระบบ deploy แอปเป็น Docker container ให้อัตโนมัติหลังแก้ไฟล์เสร็จ '
+     'แค่แก้ไฟล์ด้วย WRITE_FILE แล้วระบบจะ deploy + ทดสอบเอง'),
+    (r'(^|\s)nohup\s', 'ห้ามรัน background process เอง — ระบบจัดการ deploy ให้อัตโนมัติ'),
     (r'rm\s+-rf\s+[/~*]', 'attempt to delete root or home directory'),
     (r':\(\)\s*{\s*:\s*\|\s*:\s*&\s*}\s*;?\s*:', 'fork bomb detected'),
     (r'mkfs\b|dd\s+if=|>\s*/dev/(sd|nvme)', 'disk manipulation command'),
@@ -8391,6 +8395,7 @@ async def workspace_code_agent_stream(request: Request):
         current_q = question
         forced_validation = False
         written_contents: dict[str, str] = {}
+        any_exec_ran = False
         yield f"data: {_json.dumps({'type': 'stage', 'stage': 'write', 'agent': 'writer', 'model': writer_model})}\n\n"
 
         while repair_iter <= MAX_REPAIR:
@@ -8421,6 +8426,8 @@ async def workspace_code_agent_stream(request: Request):
             # ── Execute EXEC_CMD tags ─────────────────────────────────
             exec_results: list[dict] = []
             exec_cmds = _EXEC_CMD_RE.findall(full_response)
+            if exec_cmds:
+                any_exec_ran = True
             if exec_cmds and project_dir:
                 exec_results, events = await process_exec_cmds(exec_cmds, project_dir)
                 for ev in events:
@@ -8552,8 +8559,9 @@ async def workspace_code_agent_stream(request: Request):
                     yield f"data: {_json.dumps({'type': 'final_text', 'text': fix_display, 'actions': fix_actions, 'exec_results': fix_exec_results, 'repair_iter': repair_iter + 1})}\n\n"
 
         # ── Auto-deploy: existing container -> restart+retest; none yet but the
-        # project is a FastAPI app -> first deploy ───────────────────────────
-        if written_contents and project:
+        # project is a FastAPI app -> first deploy. Triggers on any agent
+        # activity (file writes OR exec commands), with one log-repair round. ──
+        if project and (written_contents or any_exec_ran):
             _safe_proj = __import__("re").sub(r"[^a-zA-Z0-9_-]", "", project)
             if _safe_proj == project:
                 chk = await _trusted_shell(
@@ -8573,11 +8581,53 @@ async def workspace_code_agent_stream(request: Request):
                     msg = '🚀 Re-deploy & retest' if has_container else '🚀 First deploy & smoke test'
                     yield f"data: {_json.dumps({'type': 'stage', 'stage': 'run', 'agent': None})}\n\n"
                     yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': msg})}\n\n"
+                    st_smoke: dict | None = None
                     async for ev in _deploy_and_smoke(
                         project, written_contents.get("main.py", main_src_disk), deploy_mode
                     ):
+                        if ev.get("type") == "smoke_result":
+                            st_smoke = ev
                         yield f"data: {_json.dumps(ev)}\n\n"
                     yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': 0})}\n\n"
+
+                    # Smoke failed -> writer repairs from runtime logs, restart, retest once
+                    if st_smoke and not st_smoke.get("ok") and st_smoke.get("logs"):
+                        yield f"data: {_json.dumps({'type': 'stage', 'stage': 'write', 'agent': 'writer', 'model': writer_model})}\n\n"
+                        yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🔧 Fixing runtime errors'})}\n\n"
+                        st_route_lines = "\n".join(
+                            f"- GET {r['path']} -> {r['status']}" for r in st_smoke.get("routes", [])
+                        ) or "(แอปไม่ตอบสนองเลย)"
+                        st_fix_q = (
+                            f"แอปถูก deploy เป็น container แล้วแต่รันไม่ขึ้น/smoke test ล้มเหลว\n"
+                            f"ผลการเรียก route:\n{st_route_lines}\n\n"
+                            f"Log จาก container:\n```\n{st_smoke['logs']}\n```\n\n"
+                            f"วิเคราะห์สาเหตุจาก log แล้วแก้ไฟล์ที่เกี่ยวข้องด้วย "
+                            f"<WRITE_FILE path=\"{project}/...\">...</WRITE_FILE> (เขียนทั้งไฟล์) "
+                            f"เช่นถ้า log บอกว่า package ขาด ให้เพิ่มใน requirements.txt "
+                            f"ห้ามรันคำสั่ง server เอง — ระบบจะ deploy ใหม่ให้อัตโนมัติ"
+                        )
+                        st_holder: dict = {}
+                        async for ev in stream_turn(st_fix_q, conv_messages, 4000, st_holder, writer_model, "CodeAgentWriter"):
+                            yield f"data: {_json.dumps(ev)}\n\n"
+                        yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': st_holder.get('tokens', 0)})}\n\n"
+                        st_resp = st_holder.get('response', '')
+                        st_a, st_e, st_c = await process_write_files(st_resp)
+                        written_contents.update(st_c)
+                        for ev in st_e:
+                            yield f"data: {_json.dumps(ev)}\n\n"
+                        st_cmds = _EXEC_CMD_RE.findall(st_resp)
+                        if st_cmds and project_dir:
+                            _r2, _e2 = await process_exec_cmds(st_cmds, project_dir)
+                            for ev in _e2:
+                                yield f"data: {_json.dumps(ev)}\n\n"
+
+                        yield f"data: {_json.dumps({'type': 'stage', 'stage': 'run', 'agent': None})}\n\n"
+                        yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🚀 Re-deploy & retest'})}\n\n"
+                        async for ev in _deploy_and_smoke(
+                            project, written_contents.get("main.py", main_src_disk), "restart"
+                        ):
+                            yield f"data: {_json.dumps(ev)}\n\n"
+                        yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': 0})}\n\n"
 
         yield f"data: {_json.dumps({'type': 'done'})}\n\n"
 
