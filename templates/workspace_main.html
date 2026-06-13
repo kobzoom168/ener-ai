@@ -587,14 +587,23 @@
             <option value="">-- Select project --</option>
           </select>
           <select id="code-model-select" class="code-toolbar-select code-model-select" style="display:none">
-            <option value="featherless-coder" selected>💻 Qwen2.5 Coder 32B (Featherless)</option>
-            <option value="featherless-deepseek">⚡ DeepSeek V3 (Featherless)</option>
-            <option value="deepseek-direct">🔵 DeepSeek V4 Flash (Official)</option>
-            <option value="featherless-qwen3">🧠 Qwen3 32B (Featherless)</option>
-            <option value="featherless-abliterated">🔓 No Filter 72B (Featherless)</option>
-            <option value="sonnet">🔴 Claude Sonnet</option>
-            <option value="haiku">🟠 Claude Haiku</option>
-            <option value="groq">💚 Groq (ฟรี)</option>
+            <optgroup label="⭐ Top-tier (Featherless flat)">
+              <option value="featherless-deepseek-pro">🦾 DeepSeek V4 Pro 862B (สมอง)</option>
+              <option value="featherless-deepseek-v4">⚡ DeepSeek V4 Flash 284B</option>
+              <option value="featherless-kimi-thinking">🧠 Kimi Thinking 1T (คิวอาจเต็ม)</option>
+              <option value="featherless-qwen3-thinking">🧠 Qwen3 235B Thinking</option>
+              <option value="featherless-qwen3-coder">💻 Qwen3 Coder Next</option>
+            </optgroup>
+            <optgroup label="พื้นฐาน">
+              <option value="featherless-coder" selected>💻 Qwen2.5 Coder 32B (Featherless)</option>
+              <option value="featherless-deepseek">⚡ DeepSeek V3 (Featherless)</option>
+              <option value="deepseek-direct">🔵 DeepSeek V4 Flash (Official)</option>
+              <option value="featherless-qwen3">🧠 Qwen3 32B (Featherless)</option>
+              <option value="featherless-abliterated">🔓 No Filter 72B (Featherless)</option>
+              <option value="sonnet">🔴 Claude Sonnet</option>
+              <option value="haiku">🟠 Claude Haiku</option>
+              <option value="groq">💚 Groq (ฟรี)</option>
+            </optgroup>
           </select>
         </div>
         <div class="code-toolbar-right">
@@ -1409,7 +1418,7 @@
 
       // ── Multi-agent pipeline panel ─────────────────────────────────────
       const AGENT_ROLES = ['planner', 'writer', 'qc'];
-      const AGENT_MODEL_DEFAULTS = { planner: 'sonnet', writer: 'deepseek-direct', qc: 'haiku' };
+      const AGENT_MODEL_DEFAULTS = { planner: 'featherless-deepseek-pro', writer: 'featherless-deepseek-v4', qc: 'featherless-deepseek-pro' };
       let _agentCurrent = null;
       let _agentTokens = { planner: 0, writer: 0, qc: 0 };
 
