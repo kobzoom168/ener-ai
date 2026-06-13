@@ -472,6 +472,20 @@
       .cc-final-text { font-size:12px;color:#ccc;line-height:1.6; }
       /* Final summary: show each paragraph as its own bullet line for readability */
       .cc-final-text.markdown-body p { margin:3px 0; padding-left:14px; position:relative; }
+      /* Agent note box — styled commentary from Writer/QC/Planner */
+      .cc-agent-note { margin:4px 0;border-radius:7px;overflow:hidden;border:1px solid #2a2a40; }
+      .cc-agent-note-head { display:flex;align-items:center;gap:6px;padding:5px 10px;font-size:10px;font-weight:600;color:#aaa;background:#16162a; }
+      .cc-agent-note-head .cc-agent-dot { width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0; }
+      .cc-agent-note[data-agent="planner"] .cc-agent-note-head { color:#7c3aed;border-bottom:1px solid #2a1a50; }
+      .cc-agent-note[data-agent="writer"]  .cc-agent-note-head { color:#0ea5e9;border-bottom:1px solid #0c2a3a; }
+      .cc-agent-note[data-agent="qc"]      .cc-agent-note-head { color:#10b981;border-bottom:1px solid #0a2a20; }
+      .cc-agent-note-body { padding:8px 12px;background:#111827;font-size:12px;color:#c0c0d8;line-height:1.65; }
+      .cc-agent-note-body p { margin:3px 0; }
+      .cc-agent-note-body code { background:#1e1e35;padding:1px 5px;border-radius:3px;font-size:11px;color:#a78bfa;font-family:'JetBrains Mono','Fira Code',monospace; }
+      .cc-agent-note-body pre { background:#1e1e35;padding:10px 12px;border-radius:5px;overflow-x:auto;margin:6px 0;border:1px solid #2a2a45; }
+      .cc-agent-note-body pre code { background:none;padding:0;color:#e2e8f0;font-size:11px; }
+      .cc-agent-note-body ul,ol { padding-left:18px;margin:4px 0; }
+      .cc-agent-note-body li { margin:2px 0; }
       .cc-final-text.markdown-body p::before { content:'•'; position:absolute; left:0; color:#555; }
 
       /* Diff view */
@@ -1717,15 +1731,24 @@
               if (evt.type === 'token') {
                 streamText += evt.text;
                 tokensEl.textContent = `· ${evt.tokens || 0} tokens`;
-                // Show streaming text live
+                // Strip complete tool blocks, then strip any still-streaming unclosed WRITE_FILE
                 const clean = streamText
                   .replace(/<WRITE_FILE[^>]*>[\s\S]*?<\/WRITE_FILE>/g, '')
+                  .replace(/<WRITE_FILE[^>]*>[\s\S]*/g, '')
                   .replace(/<EXEC_CMD[^/]*\/>/g, '')
                   .replace(/<UPDATE_MEMORY[^/]*\/>/g, '')
                   .trim();
                 if (clean) {
+                  const agentLabel = _agentCurrent || 'writer';
+                  const agentIcons = { planner: '🧠 Planner', writer: '✍️ Writer', qc: '🔍 QC' };
+                  const label = agentIcons[agentLabel] || agentLabel;
                   respEl.style.display = '';
-                  respEl.innerHTML = `<div class="cc-streaming-text">${escHtml(clean).replace(/\n/g,'<br>')}</div>`;
+                  let parsed = clean;
+                  try { parsed = marked.parse(clean); } catch { parsed = escHtml(clean).replace(/\n/g,'<br>'); }
+                  respEl.innerHTML = `<div class="cc-agent-note" data-agent="${agentLabel}">
+                    <div class="cc-agent-note-head"><span class="cc-agent-dot"></span>${label}</div>
+                    <div class="cc-agent-note-body">${parsed}</div>
+                  </div>`;
                 }
                 msgs.scrollTop = msgs.scrollHeight;
               }
