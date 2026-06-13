@@ -8109,6 +8109,19 @@ async def workspace_code_agent_stream(request: Request):
         f"separate db module with a different DB filename or table schema than main.py uses\n"
         f"- Every template file you create must be rendered by a route in main.py (or extended by another "
         f"template) — never leave an unused template file\n"
+        f"\n"
+        f"SIMPLE QUERY RULE — VERY IMPORTANT:\n"
+        f"If the user asks a SHORT informational question (URL, link, port, status, file content, ≤15 words) "
+        f"→ reply with plain text ONLY. Do NOT use WRITE_FILE. Do NOT modify any file. Do NOT run EXEC_CMD.\n"
+        f"Examples requiring NO code change: 'ขอ URL', 'ขอ link อีกรอบ', 'app อยู่ที่ไหน', 'port เท่าไร'\n"
+        f"The project public URL is: http://my-ener.uk:{app_port}/\n"
+    )
+
+    # Fast-path: detect pure informational queries — bypass AI pipeline entirely
+    import re as _re
+    _INFO_QUERY = _re.compile(
+        r'\b(url|ลิงก์|link|port|ที่อยู่)\b|ขอ\s*(url|ลิงก์|link)|app\s*รัน\s*(ที่|อยู่)|เปิดที่ไหน',
+        _re.IGNORECASE,
     )
 
     clean_history = [
@@ -8124,6 +8137,15 @@ async def workspace_code_agent_stream(request: Request):
         project_dir = f"{BASE_ENER_CODE}/{project}" if project else None
         if project_dir:
             os.makedirs(project_dir, exist_ok=True)
+
+        # Fast-path: short informational queries → answer instantly, skip AI pipeline
+        if project and _INFO_QUERY.search(question) and len(question.split()) <= 12:
+            _port = _project_app_port(project)
+            _url = f"http://my-ener.uk:{_port}/"
+            _reply = f"**{project}** รันอยู่ที่ [{_url}]({_url})"
+            yield f"data: {_json.dumps({'type': 'final_text', 'text': _reply})}\n\n"
+            yield "data: {\"type\": \"done\"}\n\n"
+            return
 
         def strip_project_prefix(path: str) -> str:
             p = path.lstrip("/")
