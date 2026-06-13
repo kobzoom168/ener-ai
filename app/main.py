@@ -8606,9 +8606,62 @@ async def workspace_code_agent_stream(request: Request):
         # ════════════════════════════════════════════════════════════
         # SINGLE-TURN + AUTO-REPAIR mode (edits, follow-ups, plan fallback)
         # ════════════════════════════════════════════════════════════
+
+        # ── Change Analysis Planner: for modification tasks, analyse what specifically needs changing ──
+        change_plan: dict[str, str] = {}
+        if project and (project_files or "").strip():
+            plan_model = planner_model or writer_model
+            yield f"data: {_json.dumps({'type': 'stage', 'stage': 'plan', 'agent': 'planner', 'model': plan_model})}\n\n"
+            yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🔍 Analysing required changes'})}\n\n"
+            _ca_system = (
+                "You are a senior software architect analysing what specific code changes are needed.\n"
+                "Given the user's request and the existing project files listed below, "
+                "determine the MINIMAL, TARGETED changes required. "
+                "Output ONLY a raw JSON object (no markdown, no code fences, no explanation):\n"
+                "{\"files\": [\"only_files_that_need_change\"], "
+                "\"change_plan\": {\"filename\": \"specific Thai instruction: exactly what to change in this file\"}, "
+                "\"summary\": \"one-sentence Thai description\"}\n"
+                "Be VERY specific. Good example: "
+                "\"เปลี่ยน class .char-body สีจาก #FF9000 เป็น #FF69B4, เปลี่ยน emoji 🧑 เป็น 👩 ใน div.character\"\n"
+                "Only include files that truly need editing. "
+                "Files NOT in 'files' will NOT be touched by the writer.\n"
+                f"{file_ctx}"
+            )
+            _ca_text = ""
+            try:
+                async for _tok in stream_chat_response(
+                    question, [], _ca_system, model=plan_model,
+                    agent="CodeAgentChangeAnalysis", max_tokens=600
+                ):
+                    _ca_text += _tok
+                _s = _ca_text.find("{"); _e = _ca_text.rfind("}")
+                if _s != -1 and _e != -1:
+                    _cp = _json.loads(_ca_text[_s:_e + 1])
+                    change_plan = _cp.get("change_plan") or {}
+                    _cp_files = [str(f) for f in (_cp.get("files") or []) if f]
+                    _cp_summary = str(_cp.get("summary") or "")
+                    if change_plan and _cp_files:
+                        yield f"data: {_json.dumps({'type': 'plan_done', 'files': _cp_files, 'dependencies': [], 'summary': _cp_summary})}\n\n"
+            except Exception:
+                change_plan = {}
+            yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': len(_ca_text.split())})}\n\n"
+
         repair_iter = 0
         conv_messages = clean_history[:]
-        current_q = question
+        # Inject change plan into the writer's question so it makes targeted edits only
+        if change_plan:
+            _plan_lines = "\n".join(f"- {_f}: {_inst}" for _f, _inst in change_plan.items())
+            current_q = (
+                f"User request: {question}\n\n"
+                f"CHANGE PLAN — make ONLY these specific targeted changes, nothing else:\n{_plan_lines}\n\n"
+                f"CRITICAL RULES:\n"
+                f"- Keep ALL other existing content exactly as-is\n"
+                f"- Do NOT rewrite files from scratch\n"
+                f"- Do NOT add features not mentioned above\n"
+                f"- Make minimal, precise edits as specified per file"
+            )
+        else:
+            current_q = question
         forced_validation = False
         written_contents: dict[str, str] = {}
         any_exec_ran = False
