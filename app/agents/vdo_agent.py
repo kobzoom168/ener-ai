@@ -28,8 +28,8 @@ _ASS_HEADER = (
     "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, "
     "Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
     "Style: Default,Loma,64,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,0,0,1,5,3,2,70,70,540,0\n"
-    "Style: Title,Loma,46,&H00A5B4FC,&H00111111,&H64000000,-1,0,0,0,100,100,0,0,1,4,2,8,70,70,250,0\n"
-    "Style: Brand,Loma,34,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,1,0,1,2,1,8,70,70,160,0\n\n"
+    "Style: Title,Loma,54,&H00A5B4FC,&H00111111,&H64000000,-1,0,0,0,100,100,0,0,1,5,3,8,70,70,250,0\n"
+    "Style: Brand,Loma,40,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,1,0,1,3,2,8,70,70,160,0\n\n"
     "[Events]\n"
     "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
 )
@@ -391,18 +391,23 @@ async def _fetch_stock_video(query: str, idx: int = 0) -> str | None:
             )
         if r.status_code >= 300:
             return None
-        best = None
+        # prefer the clip whose aspect is closest to true 9:16 so it fills the frame
+        # with minimal crop (avoids the zoomed/"pulled" look from cropping 4:5 or square).
+        target = 1920 / 1080  # h/w for 9:16 ≈ 1.778
+        best, best_score = None, None
         for v in (r.json().get("videos") or []):
-            if (v.get("duration") or 0) < 2:
+            vw, vh = v.get("width") or 0, v.get("height") or 0
+            if (v.get("duration") or 0) < 2 or vw <= 0 or vh < vw:
                 continue
             files = [f for f in (v.get("video_files") or [])
                      if f.get("file_type") == "video/mp4" and f.get("link")
                      and (f.get("height") or 0) >= (f.get("width") or 0)]  # portrait only
             if not files:
                 continue
-            files.sort(key=lambda f: abs((f.get("width") or 0) - 1080))
-            best = files[0]
-            break
+            score = abs((vh / vw) - target)
+            if best is None or score < best_score:
+                files.sort(key=lambda f: abs((f.get("width") or 0) - 1080))
+                best, best_score = files[0], score
         if not best:
             return None
         os.makedirs(VDO_DIR, exist_ok=True)
