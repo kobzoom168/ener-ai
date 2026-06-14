@@ -1254,6 +1254,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (name === 'files') loadFiles();
     if (name === 'system') loadSystem();
     if (name === 'benchmark') loadBenchmark();
+    if (name === 'autopost') loadAutopost();
     if (name === 'code' && typeof initCodeAssistantPanel === 'function') initCodeAssistantPanel();
     if (name === 'office') {
       initOfficeRightPanel();
@@ -2226,6 +2227,209 @@ document.addEventListener('DOMContentLoaded', function() {
       createProject();
     }
   });
+
+  // ===== Auto Post =====
+  const AP_DAYS = ['จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส', 'อา']; // 0=Mon..6=Sun
+  let _apChannels = [];
+  let _apSchedules = [];
+
+  function apPlatformIcon(p) {
+    p = (p || '').toLowerCase();
+    if (p.includes('face')) return '📘';
+    if (p.includes('you')) return '▶️';
+    if (p.includes('tik')) return '🎵';
+    if (p.includes('insta')) return '📷';
+    return '🔗';
+  }
+
+  async function loadAutopost() {
+    const schDiv = document.getElementById('autopost-schedules');
+    if (schDiv) schDiv.innerHTML = '<div style="color:var(--muted-foreground);font-size:13px">กำลังโหลด…</div>';
+    try {
+      const data = await api('/workspace/autopost/data');
+      _apChannels = data.channels || [];
+      _apSchedules = data.schedules || [];
+      renderApChannels(data);
+      renderApPlatforms();
+      renderApDays();
+      renderApSchedules(_apSchedules);
+      renderApLog(data.log || []);
+    } catch (e) {
+      if (schDiv) schDiv.innerHTML = '<div style="color:#f87171">โหลดไม่สำเร็จ: ' + escapeHtml(e.message) + '</div>';
+    }
+  }
+
+  function renderApChannels(data) {
+    const div = document.getElementById('autopost-channels');
+    if (!div) return;
+    if (!_apChannels.length) {
+      const err = data.channels_error ? (' (' + escapeHtml(data.channels_error) + ')') : '';
+      div.innerHTML = '<div style="font-size:13px;color:#fbbf24">⚠️ ยังไม่มีช่องทางใน Postiz' + err + ' — เชื่อม Facebook/YouTube/TikTok ใน Postiz ก่อน</div>';
+      return;
+    }
+    div.innerHTML = '<div style="font-size:13px;color:var(--muted-foreground);margin-bottom:6px">ช่องทางที่เชื่อมแล้ว:</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+      _apChannels.map(c => '<span style="background:#1f2430;border:1px solid var(--border);border-radius:20px;padding:4px 12px;font-size:13px">' + apPlatformIcon(c.platform) + ' ' + escapeHtml(c.name || c.platform || '?') + '</span>').join('') +
+      '</div>';
+  }
+
+  function renderApPlatforms(selected) {
+    const div = document.getElementById('ap-platforms');
+    if (!div) return;
+    selected = selected || [];
+    if (!_apChannels.length) {
+      div.innerHTML = '<span style="font-size:13px;color:var(--muted-foreground)">— ไม่มีช่องทาง —</span>';
+      return;
+    }
+    div.innerHTML = _apChannels.map(c => {
+      const on = selected.length ? selected.includes(c.id) : (c.platform || '').toLowerCase().includes('face');
+      return '<label style="display:flex;align-items:center;gap:6px;background:#1f2430;border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px;cursor:pointer">' +
+        '<input type="checkbox" class="ap-plat" value="' + escapeHtml(c.id) + '"' + (on ? ' checked' : '') + '> ' +
+        apPlatformIcon(c.platform) + ' ' + escapeHtml(c.name || c.platform || '?') + '</label>';
+    }).join('');
+  }
+
+  function renderApDays(selected) {
+    const div = document.getElementById('ap-days');
+    if (!div) return;
+    const sel = selected || [0, 1, 2, 3, 4, 5, 6];
+    div.innerHTML = AP_DAYS.map((d, i) =>
+      '<label style="display:flex;align-items:center;gap:4px;font-size:13px;background:#1f2430;border:1px solid var(--border);border-radius:8px;padding:5px 9px;cursor:pointer">' +
+      '<input type="checkbox" class="ap-day" value="' + i + '"' + (sel.includes(i) ? ' checked' : '') + '> ' + d + '</label>').join('');
+  }
+
+  function _apFormBody() {
+    return {
+      id: document.getElementById('ap-id').value || '',
+      label: document.getElementById('ap-label').value || '',
+      content_type: document.getElementById('ap-content').value || 'mystery',
+      topic: document.getElementById('ap-topic').value || '',
+      platforms: Array.from(document.querySelectorAll('.ap-plat:checked')).map(x => x.value),
+      time: document.getElementById('ap-time').value || '18:00',
+      days: Array.from(document.querySelectorAll('.ap-day:checked')).map(x => parseInt(x.value, 10)),
+      enabled: document.getElementById('ap-enabled').checked,
+    };
+  }
+
+  function resetAutopostForm() {
+    document.getElementById('ap-id').value = '';
+    document.getElementById('ap-label').value = '';
+    document.getElementById('ap-content').value = 'mystery';
+    document.getElementById('ap-topic').value = '';
+    document.getElementById('ap-time').value = '18:00';
+    document.getElementById('ap-enabled').checked = true;
+    document.getElementById('autopost-form-title').textContent = '➕ ตั้งตารางโพสต์ใหม่';
+    renderApPlatforms();
+    renderApDays();
+    const m = document.getElementById('ap-form-msg'); if (m) m.textContent = '';
+  }
+
+  async function saveAutopost() {
+    const body = _apFormBody();
+    if (!body.platforms.length) { showToast('เลือกช่องทางอย่างน้อย 1'); return; }
+    try {
+      await api('/workspace/autopost/save', { method: 'POST', body: JSON.stringify(body) });
+      showToast('บันทึกตารางแล้ว ✅');
+      resetAutopostForm();
+      loadAutopost();
+    } catch (e) { showToast('บันทึกไม่สำเร็จ: ' + e.message); }
+  }
+
+  async function runAutopostNow() {
+    const body = _apFormBody();
+    if (!body.platforms.length) { showToast('เลือกช่องทางอย่างน้อย 1'); return; }
+    const m = document.getElementById('ap-form-msg');
+    if (m) m.textContent = '⏳ กำลังสร้างคลิป + โพสต์… (~1-2 นาที) ดูผลที่ประวัติด้านล่าง';
+    try {
+      await api('/workspace/autopost/run', { method: 'POST', body: JSON.stringify(body) });
+      showToast('เริ่มสร้างคลิปแล้ว — รอสักครู่');
+      setTimeout(loadAutopost, 90000);
+    } catch (e) { showToast('สั่งรันไม่สำเร็จ: ' + e.message); }
+  }
+
+  function editAutopost(id) {
+    const j = _apSchedules.find(s => s.id === id);
+    if (!j) return;
+    document.getElementById('ap-id').value = j.id;
+    document.getElementById('ap-label').value = j.label || '';
+    document.getElementById('ap-content').value = j.content_type || 'mystery';
+    document.getElementById('ap-topic').value = j.topic || '';
+    document.getElementById('ap-time').value = j.time || '18:00';
+    document.getElementById('ap-enabled').checked = j.enabled !== false;
+    document.getElementById('autopost-form-title').textContent = '✏️ แก้ไข: ' + (j.label || '');
+    renderApPlatforms(j.platforms || []);
+    renderApDays(j.days || [0, 1, 2, 3, 4, 5, 6]);
+    document.getElementById('panel-autopost').scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  async function deleteAutopost(id) {
+    if (!confirm('ลบตารางนี้?')) return;
+    try {
+      await api('/workspace/autopost/delete', { method: 'POST', body: JSON.stringify({ id }) });
+      loadAutopost();
+    } catch (e) { showToast('ลบไม่สำเร็จ: ' + e.message); }
+  }
+
+  async function runAutopostId(id) {
+    try {
+      await api('/workspace/autopost/run', { method: 'POST', body: JSON.stringify({ id }) });
+      showToast('เริ่มสร้าง+โพสต์แล้ว — รอ ~1-2 นาที');
+      setTimeout(loadAutopost, 90000);
+    } catch (e) { showToast('รันไม่สำเร็จ: ' + e.message); }
+  }
+
+  function renderApSchedules(list) {
+    const div = document.getElementById('autopost-schedules');
+    if (!div) return;
+    if (!list.length) {
+      div.innerHTML = '<div style="color:var(--muted-foreground);font-size:13px">ยังไม่มีตาราง — ตั้งด้านบนได้เลย</div>';
+      return;
+    }
+    div.innerHTML = list.map(j => {
+      const plats = (j.platforms || []).map(pid => {
+        const c = _apChannels.find(x => x.id === pid);
+        return c ? (apPlatformIcon(c.platform) + ' ' + escapeHtml(c.name || '')) : '🔗';
+      }).join(', ');
+      const days = (j.days && j.days.length === 7) ? 'ทุกวัน' : (j.days || []).map(d => AP_DAYS[d]).join(',');
+      const ctype = j.content_type === 'news' ? '📰 ข่าว' : '🔮 สายมู';
+      const topic = j.topic ? escapeHtml(j.topic) : '(AI สุ่มเอง)';
+      const onoff = j.enabled !== false;
+      const id = escapeHtml(j.id);
+      return '<div class="surface" style="border:1px solid var(--border);border-radius:10px;padding:12px;display:flex;justify-content:space-between;align-items:center;gap:12px;' + (onoff ? '' : 'opacity:.5') + '">' +
+        '<div style="font-size:13px;line-height:1.6">' +
+          '<div style="font-weight:600">' + (onoff ? '🟢' : '⚪') + ' ' + escapeHtml(j.label || '(ไม่มีชื่อ)') + '</div>' +
+          '<div style="color:var(--muted-foreground)">' + ctype + ' · ' + topic + '</div>' +
+          '<div style="color:var(--muted-foreground)">⏰ ' + escapeHtml(j.time || '') + ' · ' + days + ' · ' + (plats || '—') + '</div>' +
+          (j.last_run ? '<div style="color:var(--muted-foreground);font-size:12px">ล่าสุด: ' + escapeHtml(j.last_run) + '</div>' : '') +
+        '</div>' +
+        '<div style="display:flex;gap:6px;flex-shrink:0">' +
+          '<button class="panel-action" onclick="runAutopostId(\'' + id + '\')" title="โพสต์เดี๋ยวนี้">▶</button>' +
+          '<button class="panel-action" onclick="editAutopost(\'' + id + '\')" title="แก้ไข">✏️</button>' +
+          '<button class="panel-action" onclick="deleteAutopost(\'' + id + '\')" title="ลบ">🗑️</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  function renderApLog(log) {
+    const div = document.getElementById('autopost-log');
+    if (!div) return;
+    if (!log.length) { div.innerHTML = '<div style="color:var(--muted-foreground);font-size:13px">ยังไม่มีประวัติ</div>'; return; }
+    div.innerHTML = log.map(e =>
+      '<div style="font-size:12.5px;background:#1f2430;border:1px solid var(--border);border-radius:8px;padding:8px 10px">' +
+        (e.ok ? '✅' : '❌') + ' <b>' + escapeHtml(e.label || '') + '</b> · ' + escapeHtml(e.at || '') +
+        (e.src === 'manual' ? ' <span style="color:#a78bfa">(ทดสอบ)</span>' : '') +
+        '<div style="color:var(--muted-foreground);margin-top:2px">' + escapeHtml((e.title ? ('📿 ' + e.title + ' — ') : '') + (e.msg || '')) + '</div>' +
+      '</div>').join('');
+  }
+
+  window.loadAutopost = loadAutopost;
+  window.saveAutopost = saveAutopost;
+  window.runAutopostNow = runAutopostNow;
+  window.resetAutopostForm = resetAutopostForm;
+  window.editAutopost = editAutopost;
+  window.deleteAutopost = deleteAutopost;
+  window.runAutopostId = runAutopostId;
 
   window.showPanel = showPanel;
   window.openBuildingFloor = openBuildingFloor;

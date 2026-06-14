@@ -357,4 +357,20 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
         id="news_discovery",
         replace_existing=True,
     )
+
+    async def run_autopost_due():
+        from app.agents import autopost
+        try:
+            await autopost.run_due()
+        except Exception:
+            pass
+
+    scheduler.add_job(
+        run_autopost_due,
+        CronTrigger(minute="*", timezone=_BANGKOK),
+        id="autopost_due",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
     return scheduler

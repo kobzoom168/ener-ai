@@ -5481,6 +5481,7 @@ WORKSPACE_TOOLS = [
     ("files", "📁 Files"),
     ("benchmark", "🏆 Benchmark"),
     ("code", "💻 Code"),
+    ("autopost", "🚀 Auto Post"),
     ("system", "⚙️ System"),
 ]
 
@@ -6885,6 +6886,87 @@ async def workspace_vdo_post(request: Request):
     from app.agents.postiz_client import post_video
     ok, msg = await post_video(path, caption, integration_id=integration_id, when=when)
     return JSONResponse({"ok": ok, "message": msg, "when": when})
+
+
+@app.get("/workspace/autopost/data")
+async def workspace_autopost_data(request: Request):
+    """Auto-post panel data: schedules, connected channels, recent run log."""
+    await _require_admin(request)
+    from app.agents import autopost
+    from app.agents.postiz_client import list_integrations
+    schedules = await autopost.load_schedules()
+    log = await autopost.get_log()
+    channels, err = await list_integrations()
+    chans = [{"id": c.get("id"), "name": c.get("name"),
+              "platform": (c.get("identifier") or c.get("providerIdentifier") or "")}
+             for c in (channels or [])]
+    return JSONResponse({"ok": True, "schedules": schedules, "channels": chans,
+                         "channels_error": err, "log": log[:30]})
+
+
+def _autopost_job_from_body(body: dict) -> dict:
+    import re as _re, time as _t
+    job = {
+        "id": str(body.get("id") or "").strip() or f"ap_{int(_t.time())}",
+        "label": (str(body.get("label") or "").strip()[:80] or "คลิปออโต้"),
+        "content_type": "news" if str(body.get("content_type")) == "news" else "mystery",
+        "topic": str(body.get("topic") or "").strip()[:200],
+        "platforms": [str(x) for x in (body.get("platforms") or []) if str(x).strip()],
+        "time": str(body.get("time") or "18:00").strip()[:5],
+        "days": [int(d) for d in (body.get("days") or [])
+                 if str(d).isdigit() and 0 <= int(d) <= 6] or [0, 1, 2, 3, 4, 5, 6],
+        "enabled": bool(body.get("enabled", True)),
+        "last_run": "",
+    }
+    if not _re.fullmatch(r"[0-2]\d:[0-5]\d", job["time"]):
+        job["time"] = "18:00"
+    return job
+
+
+@app.post("/workspace/autopost/save")
+async def workspace_autopost_save(request: Request):
+    await _require_admin(request)
+    body = await request.json()
+    from app.agents import autopost
+    job = _autopost_job_from_body(body)
+    schedules = await autopost.load_schedules()
+    for i, s in enumerate(schedules):
+        if s.get("id") == job["id"]:
+            job["last_run"] = s.get("last_run", "")  # preserve dedupe state on edit
+            schedules[i] = job
+            break
+    else:
+        schedules.append(job)
+    await autopost.save_schedules(schedules)
+    return JSONResponse({"ok": True, "schedule": job})
+
+
+@app.post("/workspace/autopost/delete")
+async def workspace_autopost_delete(request: Request):
+    await _require_admin(request)
+    body = await request.json()
+    jid = str(body.get("id") or "").strip()
+    from app.agents import autopost
+    schedules = [s for s in await autopost.load_schedules() if s.get("id") != jid]
+    await autopost.save_schedules(schedules)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/workspace/autopost/run")
+async def workspace_autopost_run(request: Request):
+    """Render + post one clip now (background task — UI polls the log for the result)."""
+    await _require_admin(request)
+    body = await request.json()
+    from app.agents import autopost
+    jid = str(body.get("id") or "").strip()
+    job = None
+    if jid:
+        job = next((s for s in await autopost.load_schedules() if s.get("id") == jid), None)
+    if job is None:
+        job = _autopost_job_from_body(body)
+    import asyncio as _aio
+    _aio.create_task(autopost.run_job(job, source="manual"))
+    return JSONResponse({"ok": True, "queued": True})
 
 
 @app.get("/vdo/file/{name}")
