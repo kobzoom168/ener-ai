@@ -7963,49 +7963,124 @@ def _parse_visual_json(raw: str) -> dict:
     return {"passed": passed, "issues": norm, "error": None}
 
 
-async def _visual_critique(image_b64: str, user_request: str, context: str = "") -> dict:
-    """Send a rendered screenshot to a vision model and return structured UI issues.
+async def _extract_design_spec(reference_b64: str, mime: str = "image/png") -> str:
+    """Read a reference website screenshot and return a terse rebuild spec (text).
 
-    Uses OpenRouter Gemini Flash (the only vision model with credit here). Always
-    returns a dict; fail-open to {passed:True} on any error so it never blocks deploy.
+    The writer model is text-only (it cannot see the image), so we turn the reference
+    into a concrete HTML+Tailwind spec it can build toward. Fail-open: returns "".
     """
     system = (
-        "You are a DESIGN DIRECTOR at a top-tier product studio (Stripe/Linear/Vercel "
-        "caliber) reviewing a screenshot of a rendered web app. Your bar is high: judge "
-        "whether this looks PREMIUM and intentionally designed, not merely 'not broken'. "
-        "An amateur-but-functional page should FAIL. Be strict, specific, and give fixes "
-        "in Tailwind terms. Respond with STRICT JSON only — no prose, no markdown fences."
+        "You are a senior frontend engineer reverse-engineering a reference web design "
+        "from a screenshot so another developer can rebuild it in HTML + Tailwind. "
+        "Describe ONLY what is visible, concretely and tersely. No preamble."
     )
     prompt = (
-        f"คำขอเดิมของผู้ใช้:\n{user_request[:1200]}\n\n"
-        + (f"บริบท/แผน:\n{context[:600]}\n\n" if context else "")
-        + "ประเมิน screenshot นี้ด้วยมาตรฐาน 'จะ ship ที่ startup สาย design ได้ไหม' ตามหมวด:\n"
-          "1) bug/ชัดเจน — รูปแตก, ข้อความหาย/ล้น, ทับกัน, หน้าโล่งขาว, emoji กลายเป็น □, blob รูปทรงมั่ว\n"
-          "2) layout & spacing — whitespace พอไหม (หรือแน่น/โล่งเกิน), alignment, จังหวะ section, grid สม่ำเสมอ\n"
-          "3) typography & hierarchy — type scale ชัดไหม, heading เด่น, body อ่านง่าย, contrast พอ (>=4.5:1)\n"
-          "4) color & polish — accent เดียวใช้พอดีไหม (ไม่ใช่สีรุ้ง), depth/shadow/border เนียน, ปุ่มดูกดได้, hover state\n"
-          "5) premium feel — โดยรวมดู 'มี designer ทำ' หรือดู 'เขียนเอง/template ฟรี'\n"
-          "6) correctness — ตรงกับคำขอผู้ใช้ไหม\n\n"
-        "ให้ issue ที่ทำให้หน้าดู amateur เป็น severity=medium อย่างน้อย (เช่น spacing แน่น, type ไม่มี hierarchy, "
-        "สีจืด/ตีกัน, ปุ่มแบนไม่มี state). bug ที่เห็นชัด = high.\n"
-        "ตอบเป็น JSON เท่านั้น รูปแบบ:\n"
-        '{"passed": true, "issues": [{"severity":"high|medium|low",'
-        '"category":"layout|typography|color|polish|bug|correctness","description":"ปัญหาที่เห็น",'
-        '"suggested_fix":"แก้ระดับ Tailwind เช่น เพิ่ม py-20 ที่ section, ใช้ text-4xl font-bold ที่ h1, '
-        'ใช้ accent indigo-600 ปุ่มเดียว"}]}\n'
-        "passed=true เฉพาะเมื่อหน้าดูพรีเมียมจริงและไม่มี issue ระดับ high/medium. "
-        "ถ้าหน้าแค่ 'ใช้ได้แต่ธรรมดา' ให้ passed=false พร้อม issue medium ที่ระบุว่าจะทำให้พรีเมียมขึ้นยังไง. "
-        "ถ้าหน้าโล่ง/ขาว/พัง = passed=false, severity=high."
+        "สรุป design spec ของหน้าเว็บในรูปนี้ ให้ dev เอาไปสร้างใหม่ด้วย HTML+Tailwind (ตอบ bullet สั้นๆ):\n"
+        "- LAYOUT: โครง section จากบนลงล่าง (เช่น navbar, hero แบบไหน, feature grid กี่คอลัมน์, footer)\n"
+        "- PALETTE: สีพื้นหลัง/accent/ข้อความ เป็น hex โดยประมาณ\n"
+        "- TYPOGRAPHY: ฟอนต์ (sans/serif/แนวไหน), heading ใหญ่แค่ไหนเทียบ body, น้ำหนัก\n"
+        "- COMPONENTS: ปุ่ม/การ์ด/nav/form/รูป — radius, shadow, border, ลักษณะ\n"
+        "- SPACING/DENSITY: โปร่ง/แน่น, จัดกลาง/ชิดซ้าย, max-width โดยประมาณ\n"
+        "- STYLE: ความรู้สึกรวม (minimal, corporate, playful, dark, gradient ฯลฯ)"
     )
-    # Gemini Flash is the ONLY vision model with credit here (no Anthropic/OpenAI
-    # credit per the project constraint) — call it directly, no Anthropic attempt.
     or_messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": [
             {"type": "text", "text": prompt},
-            {"type": "image_url",
-             "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
+            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{reference_b64}"}},
         ]},
+    ]
+    for vis_model in ("gemini-3-flash", "gemini-flash-lite"):
+        try:
+            from app.core.openrouter_client import openrouter_chat_completions
+            data = await openrouter_chat_completions(vis_model, or_messages, max_tokens=900)
+            raw = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
+            if raw.strip():
+                return raw.strip()[:2500]
+        except Exception:
+            continue
+    return ""
+
+
+async def _visual_critique(
+    image_b64: str, user_request: str, context: str = "",
+    reference_b64: str | None = None, reference_mime: str = "image/png",
+) -> dict:
+    """Send a rendered screenshot to a vision model and return structured UI issues.
+
+    If `reference_b64` is given (clone-by-reference), the model is shown TWO images —
+    the TARGET reference design and the CURRENT rendered page — and reports how CURRENT
+    differs from TARGET. Otherwise it critiques against a generic premium bar.
+    Uses OpenRouter Gemini Flash (the only vision model with credit here). Always
+    returns a dict; fail-open to {passed:True} on any error so it never blocks deploy.
+    """
+    if reference_b64:
+        system = (
+            "You are a meticulous frontend engineer doing a pixel-diff review. You are shown "
+            "TWO images: the FIRST is the TARGET reference design the user wants to clone, the "
+            "SECOND is the CURRENT page we built. List concretely how CURRENT differs from "
+            "TARGET and how to change CURRENT to match it. Respond with STRICT JSON only."
+        )
+        prompt = (
+            f"คำขอผู้ใช้: {user_request[:600]}\n\n"
+            "รูปที่ 1 = TARGET (ดีไซน์ต้นแบบที่ต้องทำให้เหมือน), รูปที่ 2 = CURRENT (หน้าที่เราสร้าง)\n"
+            "เทียบ CURRENT กับ TARGET แล้วชี้ความต่างที่ต้องแก้ ตามหมวด:\n"
+            "- LAYOUT: section/ลำดับ/ตำแหน่ง องค์ประกอบที่ขาดหรือเกินจาก TARGET\n"
+            "- COLOR: สีพื้น/accent/ข้อความ ต่างจาก TARGET ไหม (ระบุ hex/Tailwind ที่ควรใช้)\n"
+            "- TYPOGRAPHY: ขนาด/น้ำหนัก/ฟอนต์ heading & body ต่างไหม\n"
+            "- COMPONENTS: ปุ่ม/การ์ด/nav/รูป ทรง-radius-shadow ต่างไหม, อันไหนยังไม่มี\n"
+            "- SPACING/DENSITY: โปร่ง/แน่น, จัดกลาง/ชิด, max-width ต่างไหม\n"
+            "อย่าเรียกร้อง asset จริง (โลโก้/รูปถ่าย/ฟอนต์ลิขสิทธิ์) ที่ก็อปไม่ได้ — โฟกัสโครงสร้าง สี typography spacing.\n"
+            "ตอบเป็น JSON เท่านั้น รูปแบบ:\n"
+            '{"passed": true, "issues": [{"severity":"high|medium|low",'
+            '"category":"layout|color|typography|components|spacing","description":"ต่างจาก TARGET ยังไง",'
+            '"suggested_fix":"แก้ระดับ Tailwind ให้เหมือน TARGET เช่น เปลี่ยน hero เป็น 2 คอลัมน์, accent เป็น emerald-600"}]}\n'
+            "severity=high ถ้าต่างจาก TARGET แบบเห็นชัด (โครง/สีหลักผิด), medium ถ้าต่างพอควร, low ถ้าใกล้แล้ว.\n"
+            "passed=true เฉพาะเมื่อ CURRENT ใกล้เคียง TARGET มากแล้ว (ไม่มี high/medium)."
+        )
+        user_content = [
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {"url": f"data:{reference_mime};base64,{reference_b64}"}},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
+        ]
+    else:
+        system = (
+            "You are a DESIGN DIRECTOR at a top-tier product studio (Stripe/Linear/Vercel "
+            "caliber) reviewing a screenshot of a rendered web app. Your bar is high: judge "
+            "whether this looks PREMIUM and intentionally designed, not merely 'not broken'. "
+            "An amateur-but-functional page should FAIL. Be strict, specific, and give fixes "
+            "in Tailwind terms. Respond with STRICT JSON only — no prose, no markdown fences."
+        )
+        prompt = (
+            f"คำขอเดิมของผู้ใช้:\n{user_request[:1200]}\n\n"
+            + (f"บริบท/แผน:\n{context[:600]}\n\n" if context else "")
+            + "ประเมิน screenshot นี้ด้วยมาตรฐาน 'จะ ship ที่ startup สาย design ได้ไหม' ตามหมวด:\n"
+              "1) bug/ชัดเจน — รูปแตก, ข้อความหาย/ล้น, ทับกัน, หน้าโล่งขาว, emoji กลายเป็น □, blob รูปทรงมั่ว\n"
+              "2) layout & spacing — whitespace พอไหม (หรือแน่น/โล่งเกิน), alignment, จังหวะ section, grid สม่ำเสมอ\n"
+              "3) typography & hierarchy — type scale ชัดไหม, heading เด่น, body อ่านง่าย, contrast พอ (>=4.5:1)\n"
+              "4) color & polish — accent เดียวใช้พอดีไหม (ไม่ใช่สีรุ้ง), depth/shadow/border เนียน, ปุ่มดูกดได้, hover state\n"
+              "5) premium feel — โดยรวมดู 'มี designer ทำ' หรือดู 'เขียนเอง/template ฟรี'\n"
+              "6) correctness — ตรงกับคำขอผู้ใช้ไหม\n\n"
+            "ให้ issue ที่ทำให้หน้าดู amateur เป็น severity=medium อย่างน้อย (เช่น spacing แน่น, type ไม่มี hierarchy, "
+            "สีจืด/ตีกัน, ปุ่มแบนไม่มี state). bug ที่เห็นชัด = high.\n"
+            "ตอบเป็น JSON เท่านั้น รูปแบบ:\n"
+            '{"passed": true, "issues": [{"severity":"high|medium|low",'
+            '"category":"layout|typography|color|polish|bug|correctness","description":"ปัญหาที่เห็น",'
+            '"suggested_fix":"แก้ระดับ Tailwind เช่น เพิ่ม py-20 ที่ section, ใช้ text-4xl font-bold ที่ h1, '
+            'ใช้ accent indigo-600 ปุ่มเดียว"}]}\n'
+            "passed=true เฉพาะเมื่อหน้าดูพรีเมียมจริงและไม่มี issue ระดับ high/medium. "
+            "ถ้าหน้าแค่ 'ใช้ได้แต่ธรรมดา' ให้ passed=false พร้อม issue medium ที่ระบุว่าจะทำให้พรีเมียมขึ้นยังไง. "
+            "ถ้าหน้าโล่ง/ขาว/พัง = passed=false, severity=high."
+        )
+        user_content = [
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
+        ]
+    # Gemini Flash is the ONLY vision model with credit here (no Anthropic/OpenAI
+    # credit per the project constraint) — call it directly, no Anthropic attempt.
+    or_messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user_content},
     ]
     raw = ""
     for vis_model in ("gemini-3-flash", "gemini-flash-lite"):
@@ -8325,6 +8400,8 @@ async def workspace_code_agent_stream(request: Request):
     messages   = body.get("messages", [])
     server_ctx = body.get("server_context", {})
     project_files = body.get("project_files", "")
+    reference_b64  = (body.get("reference_image") or "").strip() or None  # clone-by-reference target
+    reference_mime = body.get("reference_mime") or "image/png"
     if not question:
         raise HTTPException(400, "question required")
 
@@ -8411,6 +8488,22 @@ async def workspace_code_agent_stream(request: Request):
         f"{_FRONTEND_DESIGN_SYSTEM}"
     )
 
+    # Clone-by-reference: the user pasted a screenshot of a site to copy. The writer is
+    # a text model and can't see it, so extract a text design-spec and inject it; the
+    # vision critic will later compare the rendered page against the reference image.
+    if reference_b64:
+        _ref_spec = await _extract_design_spec(reference_b64, reference_mime)
+        if _ref_spec:
+            system += (
+                "\n=== REFERENCE DESIGN TO CLONE (user pasted a screenshot of a site to copy) ===\n"
+                "Build the UI to CLOSELY MATCH this reference. A vision critic will compare your\n"
+                "rendered page against the original screenshot and send back the differences to fix.\n"
+                "Reproduce its layout, color palette, typography, components and spacing. You cannot\n"
+                "copy real assets (logos / photos / paid fonts) — substitute inline SVG, CSS\n"
+                "gradients, or similar-style Google Fonts. Spec extracted from the reference:\n"
+                f"{_ref_spec}\n"
+            )
+
     # Fast-path: detect pure informational queries — bypass AI pipeline entirely
     import re as _re
     _INFO_QUERY = _re.compile(
@@ -8433,7 +8526,7 @@ async def workspace_code_agent_stream(request: Request):
             os.makedirs(project_dir, exist_ok=True)
 
         # Fast-path: short informational queries → answer instantly, skip AI pipeline
-        if project and _INFO_QUERY.search(question) and len(question.split()) <= 12:
+        if not reference_b64 and project and _INFO_QUERY.search(question) and len(question.split()) <= 12:
             _port = _project_app_port(project)
             _url = f"http://my-ener.uk:{_port}/"
             _reply = f"**{project}** รันอยู่ที่ [{_url}]({_url})"
@@ -8886,7 +8979,7 @@ async def workspace_code_agent_stream(request: Request):
                     yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '👁️ Visual QC — screenshot + vision'})}\n\n"
                     shot_b64, shot_note, shot_errs = await _capture_screenshot(shot_url)
                     if shot_b64:
-                        visual = _merge_js_errors(await _visual_critique(shot_b64, question, plan_summary), shot_errs)
+                        visual = _merge_js_errors(await _visual_critique(shot_b64, question, plan_summary, reference_b64, reference_mime), shot_errs)
                         yield f"data: {_json.dumps({'type': 'visual_result', 'ok': visual.get('passed', True), 'issues': visual.get('issues', []), 'image': shot_b64})}\n\n"
                     else:
                         yield f"data: {_json.dumps({'type': 'visual_result', 'ok': True, 'skipped': True, 'note': shot_note, 'issues': []})}\n\n"
@@ -8939,7 +9032,7 @@ async def workspace_code_agent_stream(request: Request):
                         shotn, _noten, shotn_errs = await _capture_screenshot(smoke.get("base") or smoke.get("url"))
                         if not shotn:
                             break
-                        visual = _merge_js_errors(await _visual_critique(shotn, question, plan_summary), shotn_errs)
+                        visual = _merge_js_errors(await _visual_critique(shotn, question, plan_summary, reference_b64, reference_mime), shotn_errs)
                         _still = [i for i in visual.get("issues", []) if i.get("severity") in ("high", "medium")]
                         _is_final = (_vround == 1) or not _still
                         yield f"data: {_json.dumps({'type': 'visual_result', 'ok': visual.get('passed', True), 'issues': visual.get('issues', []), 'image': shotn, 'final': _is_final})}\n\n"
@@ -9467,7 +9560,7 @@ async def workspace_code_agent_stream(request: Request):
                         v_b64, v_note, v_errs = await _capture_screenshot(shot_url)
                         v_visual: dict | None = None
                         if v_b64:
-                            v_visual = _merge_js_errors(await _visual_critique(v_b64, question, ""), v_errs)
+                            v_visual = _merge_js_errors(await _visual_critique(v_b64, question, "", reference_b64, reference_mime), v_errs)
                             yield f"data: {_json.dumps({'type': 'visual_result', 'ok': v_visual.get('passed', True), 'issues': v_visual.get('issues', []), 'image': v_b64})}\n\n"
                         else:
                             yield f"data: {_json.dumps({'type': 'visual_result', 'ok': True, 'skipped': True, 'note': v_note, 'issues': []})}\n\n"
@@ -9518,7 +9611,7 @@ async def workspace_code_agent_stream(request: Request):
                             v_bn, _vnn, v_bn_errs = await _capture_screenshot(v_smoke.get("base") or v_smoke.get("url"))
                             if not v_bn:
                                 break
-                            v_visual = _merge_js_errors(await _visual_critique(v_bn, question, ""), v_bn_errs)
+                            v_visual = _merge_js_errors(await _visual_critique(v_bn, question, "", reference_b64, reference_mime), v_bn_errs)
                             _v_still = [i for i in v_visual.get("issues", []) if i.get("severity") in ("high", "medium")]
                             _v_final = (_ver == 1) or not _v_still
                             yield f"data: {_json.dumps({'type': 'visual_result', 'ok': v_visual.get('passed', True), 'issues': v_visual.get('issues', []), 'image': v_bn, 'final': _v_final})}\n\n"

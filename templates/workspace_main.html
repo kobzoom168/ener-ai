@@ -702,7 +702,11 @@
             <div class="code-chat-input-box">
               <div id="code-image-preview" class="cc-image-preview" style="display:none">
                 <img id="code-image-preview-img" src="" alt="pasted image">
-                <span style="font-size:11px;color:#888">รูปแนบ — AI จะดูรูปนี้ประกอบ</span>
+                <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:#cbd5e1;cursor:pointer">
+                  <input type="checkbox" id="code-clone-toggle" checked style="cursor:pointer">
+                  🎨 ลอกดีไซน์จากรูปนี้ (clone → สร้างเว็บให้เหมือน)
+                </label>
+                <span id="code-clone-hint" style="font-size:11px;color:#888">ติ๊กออก = แค่ให้ AI ดูรูปประกอบ (วิเคราะห์/แก้ code)</span>
                 <button type="button" class="cc-img-remove" onclick="clearPastedImage()">×</button>
               </div>
               <textarea id="code-question-input" rows="2" placeholder="ถามเกี่ยวกับ code... (Enter ส่ง, Shift+Enter ขึ้นบรรทัดใหม่, วางรูปได้)"></textarea>
@@ -1533,6 +1537,16 @@
         const fileContent = monacoEditor ? monacoEditor.getValue().substring(0, 8000) : '';
         const history = collectChatHistory();
 
+        // Clone-by-reference: pasted image + clone toggle ON → build a site like it
+        // (route through the full agent-stream pipeline). Toggle OFF → one-shot vision.
+        const refImageB64 = _pastedImageBase64;
+        const refImageMime = _pastedImageMime;
+        const _cloneToggle = document.getElementById('code-clone-toggle');
+        const cloneMode = !!refImageB64 && (_cloneToggle ? _cloneToggle.checked : false);
+        const effQuestion = (cloneMode && !question)
+          ? 'สร้างเว็บใหม่ให้หน้าตา/เลย์เอาต์เหมือนรูปดีไซน์ที่แนบมา (clone ให้ใกล้เคียงที่สุด)'
+          : question;
+
         let projectFiles = '';
         if (currentProject) {
           try {
@@ -1548,7 +1562,7 @@
         const _imgThumb = _pastedImageBase64
           ? `<div class="cc-msg-image"><img src="data:${_pastedImageMime};base64,${_pastedImageBase64}" alt="pasted image"></div>`
           : '';
-        msgs.innerHTML += `<div class="code-chat-user">${_imgThumb}${escHtml(question)}</div>`;
+        msgs.innerHTML += `<div class="code-chat-user">${_imgThumb}${escHtml(effQuestion)}</div>`;
 
         // Build AI response container (Claude Code style)
         const rid = 'ai-' + Date.now();
@@ -1596,8 +1610,8 @@
           return row;
         }
 
-        // ── Pasted image: one-shot vision request ───────────────────────────
-        if (_pastedImageBase64) {
+        // ── Pasted image (clone OFF): one-shot vision request ────────────────
+        if (_pastedImageBase64 && !cloneMode) {
           const imgB64 = _pastedImageBase64;
           const imgMime = _pastedImageMime;
           clearPastedImage();
@@ -1686,14 +1700,16 @@
           return;
         }
 
+        if (cloneMode) clearPastedImage();
         try {
           const res = await fetch('/workspace/code/agent-stream', {
             method: 'POST',
             headers: {'Content-Type':'application/json'},
             body: JSON.stringify({
-              question, file_path: currentFilePath, file_content: fileContent,
+              question: effQuestion, file_path: currentFilePath, file_content: fileContent,
               project: currentProject, model: selectedModel, models: getAgentModels(),
               messages: history, server_context: serverContext, project_files: projectFiles,
+              reference_image: cloneMode ? refImageB64 : '', reference_mime: refImageMime,
             }),
           });
 
