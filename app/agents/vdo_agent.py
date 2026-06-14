@@ -283,9 +283,32 @@ async def _gen_bg_images(prompts: list[str]) -> list[str]:
     return [p for p in results if p]
 
 
+# Background music: quiet bed mixed under the narration. Drop a file here (or set env).
+BGM_PATH = os.environ.get("VDO_BGM_PATH", "/app/data/bgm/default.wav")
+BGM_VOLUME = os.environ.get("VDO_BGM_VOLUME", "0.10")
+
+
+def _audio_filter(voice_idx: int, bgm_idx: int | None, duration: float) -> tuple[str, str]:
+    """Build the ffmpeg audio graph: narration full + BGM quiet underneath (fade out).
+
+    Returns (filtergraph_or_empty, audio_map). amix halves levels, so we boost x2 after
+    to keep the voice at full loudness with the music sitting low under it.
+    """
+    if bgm_idx is None:
+        return "", f"{voice_idx}:a"
+    fade_st = max(0.0, duration - 1.5)
+    fc = (
+        f"[{bgm_idx}:a]volume={BGM_VOLUME},afade=t=out:st={fade_st:.2f}:d=1.5[bgm];"
+        f"[{voice_idx}:a][bgm]amix=inputs=2:duration=first:dropout_transition=0[mix];"
+        f"[mix]volume=2.0[aout]"
+    )
+    return fc, "[aout]"
+
+
 def _render(audio_path: str, ass_path: str, duration: float, out_path: str,
             bg_images: list[str] | None = None) -> tuple[bool, str]:
     imgs = [p for p in (bg_images or []) if p and os.path.exists(p)]
+    bgm = BGM_PATH if os.path.exists(BGM_PATH) else None
     if imgs:
         # slideshow of the images, each with a slow Ken Burns zoom (camera motion),
         # darkened for caption readability. 1 image = 1 zooming segment.
@@ -297,6 +320,10 @@ def _render(audio_path: str, ass_path: str, duration: float, out_path: str,
         for p in imgs:
             cmd += ["-loop", "1", "-t", f"{seg:.2f}", "-i", p]
         cmd += ["-i", audio_path]
+        voice_idx, bgm_idx = n, None
+        if bgm:
+            cmd += ["-stream_loop", "-1", "-i", bgm]
+            bgm_idx = n + 1
         chains = []
         for i in range(n):
             chains.append(
@@ -308,17 +335,26 @@ def _render(audio_path: str, ass_path: str, duration: float, out_path: str,
         fc = (";".join(chains) +
               f";{cat}concat=n={n}:v=1:a=0,eq=brightness=-0.20:saturation=1.1,"
               f"subtitles={ass_path}[vout]")
-        cmd += ["-filter_complex", fc, "-map", "[vout]", "-map", f"{n}:a",
+        fc_a, amap = _audio_filter(voice_idx, bgm_idx, duration)
+        if fc_a:
+            fc += ";" + fc_a
+        cmd += ["-filter_complex", fc, "-map", "[vout]", "-map", amap,
                 "-r", str(fps), "-c:v", "libx264", "-preset", "veryfast",
                 "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-shortest", out_path]
     else:
-        bg = f"color=c=0x0f172a:s=1080x1920:d={duration:.2f}"
-        cmd = [
-            "ffmpeg", "-y", "-f", "lavfi", "-i", bg, "-i", audio_path,
-            "-vf", f"subtitles={ass_path}",
-            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "128k", "-shortest", out_path,
-        ]
+        cmd = ["ffmpeg", "-y", "-f", "lavfi", "-i",
+               f"color=c=0x0f172a:s=1080x1920:d={duration:.2f}", "-i", audio_path]
+        voice_idx, bgm_idx = 1, None
+        if bgm:
+            cmd += ["-stream_loop", "-1", "-i", bgm]
+            bgm_idx = 2
+        fc = f"[0:v]subtitles={ass_path}[vout]"
+        fc_a, amap = _audio_filter(voice_idx, bgm_idx, duration)
+        if fc_a:
+            fc += ";" + fc_a
+        cmd += ["-filter_complex", fc, "-map", "[vout]", "-map", amap,
+                "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "128k", "-shortest", out_path]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         if r.returncode == 0 and os.path.exists(out_path):
@@ -403,10 +439,10 @@ async def generate_mystery_script(topic: str = "", title: str = "", summary: str
     """
     system = (
         "คุณคือครีเอเตอร์คอนเทนต์สายมู/ลึกลับของเพจ 'Ener Scan ตรวจพลังพระ หิน เครื่องราง' "
-        "เขียนบทคลิปสั้นแนวตั้งภาษาไทย เล่าแบบเพื่อนเล่าให้เพื่อนฟัง ภาษาบ้านๆ เป็นกันเอง "
-        "(เช่น รู้ไหม, บอกเลย, จะเล่าให้ฟัง, เชื่อไหมว่า) ไม่ทางการ ไม่แข็ง แต่ห้ามหยาบคาย "
+        "เขียนบทคลิปสั้นแนวตั้งภาษาไทย แนวสายมู/พลังงาน/ความเชื่อ พูดแบบเพื่อนสนิทเล่าให้กันฟัง "
+        "ดิบๆ จริงใจ ใช้สรรพนาม กู/มึง ได้เลย (เช่น มึงรู้ไหม, กูจะเล่าให้ฟัง, เชื่อกูดิ, มึงลองคิดดู) "
         "สำคัญสุด: ต้องมี 'หักมุม/ตบหลัง' — สร้างความสงสัยไว้ตอนต้น แล้วเฉลยพลิกความคาดหมายตอนจบ "
-        "ให้คนดูร้องเฮ้ย/อึ้ง/คิดตาม เคารพความเชื่อ ไม่ลบหลู่ ไม่การันตีโชคลาภ/รักษาโรค "
+        "ให้คนดูร้องเฮ้ย/อึ้ง/คิดตาม เคารพความเชื่อ ไม่ลบหลู่สิ่งศักดิ์สิทธิ์ ไม่การันตีโชคลาภ/รักษาโรค "
         "ห้ามใส่เครื่องหมายคำพูด \" \" หรือ ' ' ในบทพากย์ ตอบ JSON เท่านั้น"
     )
     if title:
