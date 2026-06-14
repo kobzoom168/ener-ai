@@ -623,8 +623,7 @@ async def _render_clip(title: str, lines: list[str], bg_images: list[str] | None
         try:
             from app.agents import talkinghead
             if talkinghead.enabled():
-                audio_url = f"{talkinghead.PUBLIC_BASE}/vdo/audio/{os.path.basename(mp3)}"
-                pip_video = await talkinghead.generate_talking_head(audio_url, base + "_pip.mp4")
+                pip_video = await talkinghead.generate_talking_head(mp3, base + "_pip.mp4")
         except Exception:
             pip_video = None
 
