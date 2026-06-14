@@ -1825,9 +1825,31 @@ document.addEventListener('DOMContentLoaded', function() {
         <div><strong>${escapeHtml(item.title || '')}</strong></div>
         <div class="news-meta">${escapeHtml(item.source || '')} ${item.fetched_at ? '• ' + escapeHtml(item.fetched_at) : ''}</div>
         <div style="margin-top:10px;">${escapeHtml(item.summary || '')}</div>
-        ${item.url ? `<div class="row-actions"><a class="secondary-btn" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">Open</a></div>` : ''}
+        <div class="row-actions">
+          ${item.url ? `<a class="secondary-btn" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">Open</a>` : ''}
+          <button class="secondary-btn vdo-btn" data-title="${escapeHtml(item.title || '')}" data-summary="${escapeHtml(item.summary || '')}">🎬 ทำคลิป</button>
+        </div>
       </div>
     `).join('');
+    list.querySelectorAll('.vdo-btn').forEach((b) => {
+      b.addEventListener('click', () => makeVdo(b.dataset.title || '', b.dataset.summary || '', b));
+    });
+  }
+
+  async function makeVdo(title, summary, btn) {
+    if (!title) return;
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ กำลังทำคลิป…'; }
+    showToast('🎬 กำลังทำคลิป (บท→เสียง→วิดีโอ) ~30-60 วิ…');
+    try {
+      const data = await api('/workspace/vdo/make', { method: 'POST', body: JSON.stringify({ title, summary }) });
+      if (data.ok && data.telegram) showToast('✅ ส่งคลิปเข้า Telegram แล้ว (' + (data.duration || '?') + ' วิ)');
+      else if (data.ok) showToast('⚠️ render ได้ แต่ส่ง Telegram ไม่ได้: ' + (data.error || ''));
+      else showToast('❌ ' + (data.error || 'ทำคลิปไม่สำเร็จ'));
+    } catch (e) {
+      showToast((e && e.message) || 'ทำคลิปไม่สำเร็จ');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '🎬 ทำคลิป'; }
+    }
   }
 
   async function fetchNews() {

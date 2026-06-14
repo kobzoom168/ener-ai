@@ -6801,6 +6801,34 @@ async def workspace_brainstorm(request: Request):
     return JSONResponse(result)
 
 
+@app.post("/workspace/vdo/make")
+async def workspace_vdo_make(request: Request):
+    """ener-vdo: render a news item into a funny Thai short → send to Telegram preview."""
+    await _require_admin(request)
+    body = await request.json()
+    title = str(body.get("title") or "").strip()
+    summary = str(body.get("summary") or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="title required")
+    from app.agents.vdo_agent import make_news_short
+
+    res = await make_news_short(title, summary)
+    if not res.get("ok"):
+        return JSONResponse({"ok": False, "error": res.get("error", "render failed")})
+    try:
+        cap = f"🎬 พรีวิวคลิป (ยังไม่โพสต์)\n\n{res.get('caption', '')}\n\n📰 {title[:120]}"
+        with open(res["mp4"], "rb") as fh:
+            await telegram_app.bot.send_video(
+                chat_id=settings.telegram_chat_id, video=fh, caption=cap[:1000]
+            )
+    except Exception as exc:
+        return JSONResponse({"ok": True, "telegram": False, "duration": res.get("duration"),
+                             "caption": res.get("caption"),
+                             "error": f"render ok แต่ส่ง Telegram ไม่ได้: {str(exc)[:200]}"})
+    return JSONResponse({"ok": True, "telegram": True, "duration": res.get("duration"),
+                         "caption": res.get("caption"), "lines": res.get("lines")})
+
+
 @app.get("/workspace/news")
 async def workspace_news(request: Request):
     await _require_admin(request)
