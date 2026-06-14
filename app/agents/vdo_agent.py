@@ -14,7 +14,7 @@ import subprocess
 import time
 
 VDO_DIR = "/app/data/vdo"
-SCRIPT_MODEL = "deepseek/deepseek-v4-flash"  # cheap, decent Thai for v1
+SCRIPT_MODEL = "google/gemini-3.5-flash"  # strong Thai, low hallucination, cheap
 
 _ASS_HEADER = (
     "[Script Info]\n"
