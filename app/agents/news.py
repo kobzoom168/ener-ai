@@ -302,6 +302,12 @@ def _detect_category(topic_text: str) -> str:
     return "ai"
 
 
+# Telegram digest focuses on AI / IT-dev / Thai-business / security (tech-adjacent).
+# Mystery (UAP/ancient) and generic world news are excluded — they were the off-topic
+# noise (Piri Reis map etc.). Edit this set to retune what the morning digest sends.
+_DIGEST_CATEGORIES = {"ai", "tools", "security", "business"}
+
+
 def _mystery_emoji(topic_text: str) -> str:
     if any(word in topic_text for word in ["ufo", "uap", "alien", "extraterrestrial"]):
         return "👽"
@@ -518,7 +524,9 @@ async def fetch_and_summarize(force: bool = False, _agent_triggered_by: str = "m
                         }
                         cached_item["priority"] = _derive_priority(cached_item)
                         cached_items.append(cached_item)
-                    return _format_news_message(cached_items) + "\n\n📦 (จาก cache วันนี้)"
+                    cached_items = [c for c in cached_items if c.get("category") in _DIGEST_CATEGORIES]
+                    if cached_items:
+                        return _format_news_message(cached_items) + "\n\n📦 (จาก cache วันนี้)"
 
     items: list[dict[str, str]] = []
     seen_links: set[str] = set()
@@ -575,8 +583,8 @@ async def fetch_and_summarize(force: bool = False, _agent_triggered_by: str = "m
 
             today_str = _date.today().strftime("%d %B %Y")
             search_queries = [
-                f"ข่าวเทคโนโลยี AI ความมั่นคงไซเบอร์ ธุรกิจไทย น่าสนใจ วันนี้ {today_str}",
-                f"UFO UAP alien sighting darkweb cybercrime mystery news today {today_str}",
+                f"latest AI machine learning LLM developer tools tech product news today {today_str}",
+                f"ข่าว AI เทคโนโลยี IT ซอฟต์แวร์ สตาร์ทอัพไทย ความมั่นคงไซเบอร์ น่าสนใจวันนี้ {today_str}",
             ]
 
             for search_query in search_queries:
@@ -611,6 +619,8 @@ async def fetch_and_summarize(force: bool = False, _agent_triggered_by: str = "m
         except Exception:
             pass
 
+    # Keep only the focused tech categories for the digest (drop mystery/world noise)
+    items = [it for it in items if it.get("category") in _DIGEST_CATEGORIES]
     items = _pick_top_items(items)
 
     if not items:
