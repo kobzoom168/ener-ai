@@ -177,9 +177,16 @@ def _wrap_thai(text: str, max_chars: int = 26) -> str:
 
     out: list[str] = []
     if words:
+        # Balance rows so the last line isn't a lonely orphan: aim for even widths.
+        total = sum(len(w) for w in words if w.strip())
+        rows = max(1, (total + max_chars - 1) // max_chars)
+        target = total / rows
         line = ""
         for w in words:
             if not w.strip():  # whitespace token — keep attached
+                line += w
+                continue
+            if w and all(c in _NO_LINE_START for c in w):  # ๆ ฯ . , — glue to prev line
                 line += w
                 continue
             if len(w) > max_chars:  # single overlong word: cluster-safe split it
@@ -191,11 +198,17 @@ def _wrap_thai(text: str, max_chars: int = 26) -> str:
                     out.append(w[:c].strip())
                     w = w[c:]
                 line = w
-            elif len((line + w).strip()) <= max_chars or not line.strip():
-                line += w
-            else:
+                continue
+            if not line.strip():
+                line = w
+            elif len((line + w).strip()) > max_chars:
                 out.append(line.strip())
                 line = w
+            elif len(line.strip()) >= target and len(out) < rows - 1:
+                out.append(line.strip())  # break early to keep rows even
+                line = w
+            else:
+                line += w
         if line.strip():
             out.append(line.strip())
         return "\\N".join(out)
@@ -390,8 +403,10 @@ async def generate_mystery_script(topic: str = "", title: str = "", summary: str
     """
     system = (
         "คุณคือครีเอเตอร์คอนเทนต์สายมู/ลึกลับของเพจ 'Ener Scan ตรวจพลังพระ หิน เครื่องราง' "
-        "เขียนบทคลิปสั้นแนวตั้งภาษาไทย น่าสนใจ ชวนติดตาม เล่าเรื่องสนุกแต่ให้ความรู้ "
-        "เคารพความเชื่อ ไม่ลบหลู่ ไม่การันตีโชคลาภ/รักษาโรค ไม่ชวนเชื่องมงายเกินจริง "
+        "เขียนบทคลิปสั้นแนวตั้งภาษาไทย เล่าแบบเพื่อนเล่าให้เพื่อนฟัง ภาษาบ้านๆ เป็นกันเอง "
+        "(เช่น รู้ไหม, บอกเลย, จะเล่าให้ฟัง, เชื่อไหมว่า) ไม่ทางการ ไม่แข็ง แต่ห้ามหยาบคาย "
+        "สำคัญสุด: ต้องมี 'หักมุม/ตบหลัง' — สร้างความสงสัยไว้ตอนต้น แล้วเฉลยพลิกความคาดหมายตอนจบ "
+        "ให้คนดูร้องเฮ้ย/อึ้ง/คิดตาม เคารพความเชื่อ ไม่ลบหลู่ ไม่การันตีโชคลาภ/รักษาโรค "
         "ห้ามใส่เครื่องหมายคำพูด \" \" หรือ ' ' ในบทพากย์ ตอบ JSON เท่านั้น"
     )
     if title:
@@ -406,10 +421,10 @@ async def generate_mystery_script(topic: str = "", title: str = "", summary: str
         )
     prompt = (
         f"{body}\n\n"
-        "รูปแบบบท:\n"
-        "- เปิดด้วย hook สะดุดใจ 1 ประโยคใน 3 วิแรก\n"
-        "- เล่า 3-5 ประโยคสั้น (ที่มา/ตำนาน/ความเชื่อ/เกร็ดน่ารู้)\n"
-        "- ปิดด้วยประโยคชวนคิด/ชวนติดตาม (ไม่การันตีผล)\n"
+        "รูปแบบบท (สไตล์เล่าให้เพื่อนฟัง + หักมุมตอนจบ):\n"
+        "- เปิดด้วย hook สะดุดใจ ชวนสงสัย 1 ประโยคใน 3 วิแรก (เช่น เชื่อไหมว่า.../รู้ไหมว่า...)\n"
+        "- เล่า 3-4 ประโยคสั้น ค่อยๆ ปูเรื่อง สร้างปม/ความน่าฉงน (ที่มา/ตำนาน/ความเชื่อ/เกร็ด)\n"
+        "- ปิดด้วยประโยค 'หักมุม' พลิกความคาดหมาย ตบหลังให้คนดูอึ้ง/ยิ้ม/คิดตาม (ไม่การันตีผล)\n"
         'ตอบ JSON เท่านั้น: {"title": "หัวข้อสั้น", "lines": ["ประโยคสั้นๆ", "..."], '
         '"caption": "แคปชั่นโพสต์ + #แฮชแท็ก เช่น #สายมู #เครื่องราง #ความเชื่อ #ลึกลับ", '
         '"image_prompts": ["ภาพพื้นหลัง 3 ฉากเป็นภาษาอังกฤษให้เข้ากับเรื่อง ไล่ตามเนื้อหา (ไม่มีตัวหนังสือในภาพ)", "...", "..."]}'
