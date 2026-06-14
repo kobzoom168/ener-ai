@@ -532,6 +532,10 @@ async def fetch_and_summarize(force: bool = False, _agent_triggered_by: str = "m
     seen_links: set[str] = set()
 
     all_feeds = await _get_all_feeds()
+    # Followed social accounts (X via nitter): the user explicitly follows them, so
+    # their posts BYPASS the topic keyword filter (else most of e.g. @elonmusk would
+    # be dropped) — but are capped per account so they don't flood the digest.
+    social_sources = {s for s, u in all_feeds.items() if "nitter.net" in u}
     feed_jobs = []
     ordered_sources = []
     for source, feed_url in all_feeds.items():
@@ -544,8 +548,11 @@ async def fetch_and_summarize(force: bool = False, _agent_triggered_by: str = "m
         if feed is None or isinstance(feed, Exception):
             continue
         entries = list(getattr(feed, "entries", []))
+        is_social = source in social_sources
         if source == "news.ycombinator.com":
             entries = entries[:20]
+        if is_social:
+            entries = entries[:4]  # cap followed-account posts so they don't flood
         for entry in entries:
             title = (entry.get("title") or "").strip()
             link = (entry.get("link") or "").strip()
@@ -559,7 +566,7 @@ async def fetch_and_summarize(force: bool = False, _agent_triggered_by: str = "m
                 upvotes = _extract_upvotes(entry)
                 if upvotes is not None and upvotes <= 100:
                     continue
-            if not _matches_topic(topic_text):
+            if not is_social and not _matches_topic(topic_text):
                 continue
             if link in seen_links:
                 continue
@@ -572,8 +579,10 @@ async def fetch_and_summarize(force: bool = False, _agent_triggered_by: str = "m
                     "source": source,
                     "summary_source": clean_summary[:1200],
                     "topic_text": topic_text,
-                    "match_score": _keyword_score(topic_text),
+                    # followed accounts get a small boost so _pick_top_items keeps them
+                    "match_score": _keyword_score(topic_text) + (4 if is_social else 0),
                     "category": _detect_category(topic_text),
+                    "is_social": is_social,
                 }
             )
 
@@ -619,8 +628,9 @@ async def fetch_and_summarize(force: bool = False, _agent_triggered_by: str = "m
         except Exception:
             pass
 
-    # Keep only the focused tech categories for the digest (drop mystery/world noise)
-    items = [it for it in items if it.get("category") in _DIGEST_CATEGORIES]
+    # Keep only the focused tech categories for the digest (drop mystery/world noise),
+    # but always keep posts from followed social accounts.
+    items = [it for it in items if it.get("category") in _DIGEST_CATEGORIES or it.get("is_social")]
     items = _pick_top_items(items)
 
     if not items:
