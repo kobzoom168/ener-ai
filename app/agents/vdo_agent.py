@@ -157,16 +157,18 @@ def _cluster_cut(s: str, max_chars: int) -> int:
     return cut if cut > 1 else max_chars
 
 
-def _wrap_thai(text: str, max_chars: int = 26) -> str:
-    """Wrap a line to the video width using ASS \\N breaks.
+def _wrap_rows(text: str, max_chars: int = 26) -> list[str]:
+    """Split a line into display rows (Thai word-boundary aware), returned as a list.
 
     Best: pythainlp word segmentation -> break at real Thai word boundaries.
     Fallback (pythainlp absent): cluster-safe char cut so a break never orphans a Thai
     vowel/tone-mark from the consonant it attaches to.
     """
     s = (text or "").strip()
+    if not s:
+        return []
     if len(s) <= max_chars:
-        return s
+        return [s]
 
     words = None
     try:
@@ -211,7 +213,7 @@ def _wrap_thai(text: str, max_chars: int = 26) -> str:
                 line += w
         if line.strip():
             out.append(line.strip())
-        return "\\N".join(out)
+        return out
 
     while len(s) > max_chars:
         sp = s.rfind(" ", 0, max_chars + 1)
@@ -220,7 +222,12 @@ def _wrap_thai(text: str, max_chars: int = 26) -> str:
         s = s[cut:].lstrip()
     if s.strip():
         out.append(s.strip())
-    return "\\N".join(out)
+    return out
+
+
+def _wrap_thai(text: str, max_chars: int = 26) -> str:
+    """Wrap a line to the video width using ASS \\N breaks (rows joined)."""
+    return "\\N".join(_wrap_rows(text, max_chars))
 
 
 def _concat_audio(parts: list[str], out_path: str) -> bool:
@@ -278,7 +285,12 @@ def _synth_lines(lines: list[str], base: str, out_mp3: str) -> tuple[list[tuple[
 
 
 def _build_ass(title: str, segments: list[tuple[str, float]], ass_path: str) -> None:
-    """Caption track timed line-by-line to the per-line audio durations (voice-synced)."""
+    """Caption track: one short row on screen at a time, voice-synced.
+
+    Each spoken line is timed to its real audio duration, then split into single display
+    rows whose on-screen time is shared across the line's segment by row length — so the
+    caption advances row-by-row in step with the narration (never a multi-row block).
+    """
     total = sum(d for _, d in segments) or 1.0
     events = []
     # persistent small title at top for the whole clip
@@ -287,9 +299,16 @@ def _build_ass(title: str, segments: list[tuple[str, float]], ass_path: str) -> 
     )
     t = 0.0
     for ln, d in segments:
-        st, en = t, t + d
-        t = en
-        events.append(f"Dialogue: 0,{_ass_ts(st)},{_ass_ts(en)},Default,,0,0,0,,{_wrap_thai(_ass_escape(ln), 24)}")
+        rows = _wrap_rows(_ass_escape(ln), 22) or [_ass_escape(ln)]
+        chars = sum(len(r) for r in rows) or 1
+        rt = t
+        for j, row in enumerate(rows):
+            rd = d * (len(row) / chars)
+            st = rt
+            en = (t + d) if j == len(rows) - 1 else (rt + rd)  # last row absorbs rounding
+            events.append(f"Dialogue: 0,{_ass_ts(st)},{_ass_ts(en)},Default,,0,0,0,,{row}")
+            rt = en
+        t += d
     with open(ass_path, "w", encoding="utf-8") as f:
         f.write(_ASS_HEADER + "\n".join(events) + "\n")
 
