@@ -7136,22 +7136,45 @@ def _strip_think(text: str) -> str:
 # must keep the existing framework (do NOT convert an existing file to Tailwind).
 _FRONTEND_DESIGN_SYSTEM = (
     "\n=== FRONTEND DESIGN SYSTEM (mandatory for any HTML/UI you CREATE) ===\n"
-    "Goal: output must look like a senior designer made it — NOT amateur freestyle CSS.\n"
-    "When you create a new HTML page (or a brand-new UI), follow ALL of this:\n"
-    "1) STYLING: load Tailwind via CDN in <head> and style with Tailwind utility classes —\n"
-    "   <script src=\"https://cdn.tailwindcss.com\"></script>\n"
-    "   Do not hand-write large custom CSS; use Tailwind utilities (p-4, gap-4, rounded-xl, shadow-sm, etc.).\n"
-    "2) DESIGN TOKENS (use these exact values for a consistent premium look):\n"
-    "   - Font: Inter (add <link> to Google Fonts) or system-ui; body text text-slate-700.\n"
-    "   - Primary: blue-600 #2563eb · Background: white / slate-50 #f8fafc · Text: slate-800 #1e293b.\n"
-    "   - Radius: rounded-xl (0.75rem) · Shadow: shadow-sm/shadow-md · Spacing: Tailwind 4px scale.\n"
-    "   - Centered content, max width max-w-5xl mx-auto, generous padding (px-6 py-10).\n"
-    "   - Buttons: rounded-lg px-4 py-2, a clear hover AND focus state, transition.\n"
-    "3) PLAN BEFORE CODE: first jot a 3-5 line DESIGN PLAN (layout sections, components,\n"
-    "   colors, breakpoints) as a short comment, THEN write the code to match it.\n"
-    "4) RESPONSIVE: must look right at 375px (mobile) and 1280px (desktop) — use flex/grid + gap,\n"
-    "   md:/lg: breakpoints. No fixed pixel widths that overflow on mobile.\n"
-    "5) SEMANTIC HTML: <header> <main> <section> <nav> <footer> <button>; every <img> needs alt.\n"
+    "You are a SENIOR product designer + frontend engineer. Output must look like a\n"
+    "top-tier modern SaaS (Stripe / Linear / Vercel quality): calm, spacious, premium\n"
+    "— NEVER amateur freestyle CSS. A clean, generic-but-polished page beats a clever\n"
+    "but messy one. Aim for 'I'd ship this at a design-driven startup.'\n"
+    "\n"
+    "AESTHETIC DIRECTION (keep the whole page cohesive):\n"
+    "  - Clean LIGHT theme, ONE accent color used sparingly, lots of whitespace, crisp\n"
+    "    type, subtle depth (soft shadow + 1px border), restrained tasteful motion.\n"
+    "  - Pick ONE accent: indigo-600 #4f46e5 · blue-600 #2563eb · emerald-600 #059669\n"
+    "    · violet-600 #7c3aed. Use it ONLY for primary actions, links, key highlights;\n"
+    "    everything else is neutral slate. Do NOT scatter many bright colors.\n"
+    "SETUP (always): Tailwind CDN <script src=\"https://cdn.tailwindcss.com\"></script>;\n"
+    "  Inter via Google Fonts (<link> wght 400;500;600;700);\n"
+    "  <body class=\"bg-slate-50 text-slate-700 antialiased\">.\n"
+    "TYPE SCALE (rhythm > size):\n"
+    "  - Hero h1: text-4xl md:text-6xl font-bold tracking-tight text-slate-900\n"
+    "  - Section h2: text-3xl md:text-4xl font-bold tracking-tight text-slate-900\n"
+    "  - Card title: text-lg font-semibold text-slate-900 · Body: text-base/relaxed text-slate-600\n"
+    "  - Meta: text-sm text-slate-500 · Eyebrow over a heading: text-sm font-semibold uppercase tracking-wider <accent>\n"
+    "SPACING & LAYOUT: section rhythm py-16 md:py-24; content max-w-6xl mx-auto px-6;\n"
+    "  generous gaps (grid gap-6 md:gap-8); let it breathe — never cram.\n"
+    "DEPTH & SHAPE: cards = bg-white rounded-2xl border border-slate-200 shadow-sm\n"
+    "  hover:shadow-md transition p-6/p-8; prefer border + SOFT shadow over heavy shadows.\n"
+    "  Radius: rounded-xl (small) · rounded-2xl (cards) · rounded-full (pills/avatars).\n"
+    "COLOR: backgrounds neutral (white / slate-50); accent only on CTAs/links/active.\n"
+    "  A subtle hero gradient is fine (bg-gradient-to-b from-white to-slate-50) — never garish.\n"
+    "BUTTONS (always provide both): \n"
+    "  - Primary: inline-flex items-center gap-2 rounded-xl bg-<accent> px-5 py-2.5 text-white\n"
+    "    font-medium shadow-sm hover:brightness-110 focus-visible:ring-2 focus-visible:ring-<accent>/40 transition\n"
+    "  - Secondary: ...border border-slate-300 bg-white text-slate-700 hover:bg-slate-50\n"
+    "POLISH (this is what reads as 'designed'):\n"
+    "  - Micro-interactions: transition on hover for cards/buttons/links.\n"
+    "  - Icons: inline SVG (Lucide/Heroicons style: stroke-width 2, w-5 h-5, currentColor) inside a\n"
+    "    tinted chip (bg-<accent>/10 text-<accent> rounded-lg p-2) — never emoji as an icon.\n"
+    "  - Consistent alignment, optical centering, generous empty space (it is a feature, not waste).\n"
+    "PLAN BEFORE CODE: jot a 3-5 line DESIGN PLAN (sections, chosen accent, type scale) as a\n"
+    "  comment, THEN build to match it.\n"
+    "RESPONSIVE: perfect at 375px and 1280px — flex/grid + gap + md:/lg:. No overflow, no fixed px widths.\n"
+    "SEMANTIC HTML: <header> <main> <section> <nav> <footer> <button>; every <img> needs alt.\n"
     "GRAPHICS / CHARACTERS / SPRITES / ICONS — read this carefully:\n"
     "   - PREFER inline SVG with EXPLICIT coordinates (<path d=\"...\">, <circle>, <rect>, <line>) —\n"
     "     this is the single most reliable way to draw a recognizable shape. You are far better at\n"
@@ -7175,17 +7198,36 @@ _FRONTEND_DESIGN_SYSTEM = (
     "       .leg-front{transform-origin:30px 58px;animation:step .6s ease-in-out infinite}\n"
     "       .leg-back{transform-origin:30px 58px;animation:step .6s ease-in-out infinite reverse}</style>\n"
     "NEGATIVE CONSTRAINTS — never do these (they are the usual ugliness):\n"
-    "   - No div-soup nested >3 levels deep; avoid position:absolute unless truly needed.\n"
-    "   - No random/placeholder external image URLs that 404 — use a CSS gradient or SVG instead.\n"
-    "   - No tiny unreadable text, no clashing colors, no zero-spacing cramped layouts.\n"
-    "SELF-CHECK before finishing: is it centered, spaced (≥0.5rem gaps), readable, and does it\n"
-    "   actually match what the user asked for visually? Fix it before you stop.\n"
-    "EXAMPLE of the expected quality bar (card) — match this spacing/structure style:\n"
-    "  <div class=\"max-w-sm mx-auto bg-white rounded-xl shadow-md p-6 flex flex-col gap-3\">\n"
-    "    <h2 class=\"text-xl font-semibold text-slate-800\">Title</h2>\n"
-    "    <p class=\"text-slate-600\">Body text with comfortable line height.</p>\n"
-    "    <button class=\"self-start rounded-lg bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 focus:ring-2 focus:ring-blue-300 transition\">Action</button>\n"
-    "  </div>\n"
+    "   - No more than ONE accent hue; no rainbow of bright colors competing for attention.\n"
+    "   - No pure-black text/borders on white (use slate-900 / slate-200), no harsh #000 on #fff.\n"
+    "   - No tiny (<14px) or low-contrast text — body must be >= text-slate-600 on a light bg.\n"
+    "   - No cramped / zero-gap layouts, no div-soup nested >3 deep, avoid position:absolute unless needed.\n"
+    "   - No random/placeholder external image URLs that 404 — use a CSS gradient or inline SVG instead.\n"
+    "PREMIUM FEW-SHOT — copy this hero + feature-grid quality bar (indigo accent shown):\n"
+    "  <section class=\"relative bg-gradient-to-b from-white to-slate-50\">\n"
+    "    <div class=\"max-w-6xl mx-auto px-6 py-20 md:py-28 text-center\">\n"
+    "      <p class=\"text-sm font-semibold uppercase tracking-wider text-indigo-600\">Energy Intelligence</p>\n"
+    "      <h1 class=\"mt-4 text-4xl md:text-6xl font-bold tracking-tight text-slate-900\">Smart energy, managed by AI</h1>\n"
+    "      <p class=\"mt-5 max-w-2xl mx-auto text-lg text-slate-600\">Plan and cut energy cost in real time with precise machine-learning forecasts.</p>\n"
+    "      <div class=\"mt-8 flex items-center justify-center gap-3\">\n"
+    "        <a href=\"#\" class=\"inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-white font-medium shadow-sm hover:brightness-110 focus-visible:ring-2 focus-visible:ring-indigo-600/40 transition\">Get started</a>\n"
+    "        <a href=\"#\" class=\"inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-5 py-2.5 text-slate-700 font-medium hover:bg-slate-50 transition\">Live demo</a>\n"
+    "      </div>\n"
+    "    </div>\n"
+    "  </section>\n"
+    "  <section class=\"max-w-6xl mx-auto px-6 py-16 md:py-24 grid sm:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8\">\n"
+    "    <article class=\"bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition p-6\">\n"
+    "      <div class=\"inline-flex bg-indigo-600/10 text-indigo-600 rounded-lg p-2\">\n"
+    "        <svg class=\"w-5 h-5\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M13 10V3L4 14h7v7l9-11h-7z\"/></svg>\n"
+    "      </div>\n"
+    "      <h3 class=\"mt-4 text-lg font-semibold text-slate-900\">Real-time analysis</h3>\n"
+    "      <p class=\"mt-2 text-slate-600\">AI reads your energy data continuously and surfaces what matters.</p>\n"
+    "    </article>\n"
+    "    <!-- repeat 2 more <article> cards with different icon + copy -->\n"
+    "  </section>\n"
+    "SELF-CHECK before finishing — would this pass at a top design-driven startup? whitespace\n"
+    "  generous? exactly ONE accent? type hierarchy clear? hover states present? everything aligned?\n"
+    "  Does it match what the user asked for visually? Fix it before you stop.\n"
     "IMPORTANT: if you are EDITING an existing file under a CHANGE PLAN, keep that file's existing\n"
     "CSS/framework and apply only the targeted edits — do NOT rewrite it to Tailwind.\n"
 )
@@ -7928,25 +7970,32 @@ async def _visual_critique(image_b64: str, user_request: str, context: str = "")
     returns a dict; fail-open to {passed:True} on any error so it never blocks deploy.
     """
     system = (
-        "You are a senior UI/UX designer and frontend QA engineer. You are shown a "
-        "screenshot of a freshly rendered web app. Critique ONLY what is visible. Be "
-        "strict but fair, and prefer concrete, actionable fixes. Respond with STRICT "
-        "JSON only — no prose, no markdown fences."
+        "You are a DESIGN DIRECTOR at a top-tier product studio (Stripe/Linear/Vercel "
+        "caliber) reviewing a screenshot of a rendered web app. Your bar is high: judge "
+        "whether this looks PREMIUM and intentionally designed, not merely 'not broken'. "
+        "An amateur-but-functional page should FAIL. Be strict, specific, and give fixes "
+        "in Tailwind terms. Respond with STRICT JSON only — no prose, no markdown fences."
     )
     prompt = (
         f"คำขอเดิมของผู้ใช้:\n{user_request[:1200]}\n\n"
         + (f"บริบท/แผน:\n{context[:600]}\n\n" if context else "")
-        + "ตรวจ screenshot นี้ตามหมวดต่อไปนี้:\n"
-          "1) layout/alignment/spacing (เบี้ยว, ล้น, ทับกัน, ชิดเกิน)\n"
-          "2) visual hierarchy & typography (อ่านยาก, contrast ต่ำ, ปุ่มไม่เด่น)\n"
-          "3) correctness — ตรงกับคำขอของผู้ใช้ไหม\n"
-          "4) bug ที่เห็นชัด (รูปแตก, ข้อความหาย/ล้น, หน้าโล่งขาว, สีตีกัน, emoji กลายเป็น □)\n\n"
+        + "ประเมิน screenshot นี้ด้วยมาตรฐาน 'จะ ship ที่ startup สาย design ได้ไหม' ตามหมวด:\n"
+          "1) bug/ชัดเจน — รูปแตก, ข้อความหาย/ล้น, ทับกัน, หน้าโล่งขาว, emoji กลายเป็น □, blob รูปทรงมั่ว\n"
+          "2) layout & spacing — whitespace พอไหม (หรือแน่น/โล่งเกิน), alignment, จังหวะ section, grid สม่ำเสมอ\n"
+          "3) typography & hierarchy — type scale ชัดไหม, heading เด่น, body อ่านง่าย, contrast พอ (>=4.5:1)\n"
+          "4) color & polish — accent เดียวใช้พอดีไหม (ไม่ใช่สีรุ้ง), depth/shadow/border เนียน, ปุ่มดูกดได้, hover state\n"
+          "5) premium feel — โดยรวมดู 'มี designer ทำ' หรือดู 'เขียนเอง/template ฟรี'\n"
+          "6) correctness — ตรงกับคำขอผู้ใช้ไหม\n\n"
+        "ให้ issue ที่ทำให้หน้าดู amateur เป็น severity=medium อย่างน้อย (เช่น spacing แน่น, type ไม่มี hierarchy, "
+        "สีจืด/ตีกัน, ปุ่มแบนไม่มี state). bug ที่เห็นชัด = high.\n"
         "ตอบเป็น JSON เท่านั้น รูปแบบ:\n"
         '{"passed": true, "issues": [{"severity":"high|medium|low",'
-        '"category":"layout|visual|correctness|bug","description":"ปัญหาที่เห็น",'
-        '"suggested_fix":"แก้ยังไงในระดับ HTML/CSS เช่น เปลี่ยน class เป็น flex gap-4 items-center"}]}\n'
-        "passed=true เฉพาะเมื่อไม่มี issue ระดับ high หรือ medium. "
-        "ถ้าหน้าโล่ง/ขาว/พังให้ passed=false และใส่ severity=high."
+        '"category":"layout|typography|color|polish|bug|correctness","description":"ปัญหาที่เห็น",'
+        '"suggested_fix":"แก้ระดับ Tailwind เช่น เพิ่ม py-20 ที่ section, ใช้ text-4xl font-bold ที่ h1, '
+        'ใช้ accent indigo-600 ปุ่มเดียว"}]}\n'
+        "passed=true เฉพาะเมื่อหน้าดูพรีเมียมจริงและไม่มี issue ระดับ high/medium. "
+        "ถ้าหน้าแค่ 'ใช้ได้แต่ธรรมดา' ให้ passed=false พร้อม issue medium ที่ระบุว่าจะทำให้พรีเมียมขึ้นยังไง. "
+        "ถ้าหน้าโล่ง/ขาว/พัง = passed=false, severity=high."
     )
     # Gemini Flash is the ONLY vision model with credit here (no Anthropic/OpenAI
     # credit per the project constraint) — call it directly, no Anthropic attempt.
@@ -8843,9 +8892,11 @@ async def workspace_code_agent_stream(request: Request):
                         yield f"data: {_json.dumps({'type': 'visual_result', 'ok': True, 'skipped': True, 'note': shot_note, 'issues': []})}\n\n"
                     yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': 0})}\n\n"
 
-                    # One visual fix round for high/medium issues only
-                    sev_issues = [i for i in (visual or {}).get("issues", []) if i.get("severity") in ("high", "medium")]
-                    if sev_issues:
+                    # Up to 2 visual fix rounds: fix high/medium issues → redeploy → re-critique
+                    for _vround in range(2):
+                        sev_issues = [i for i in (visual or {}).get("issues", []) if i.get("severity") in ("high", "medium")]
+                        if not sev_issues:
+                            break
                         ui_files = [p for p in written_contents if p.lower().endswith((".html", ".css", ".js"))]
                         cur_files = "\n\n".join(
                             f"--- {p} ---\n{written_contents.get(p, '')[:4000]}" for p in ui_files[:4]
@@ -8855,14 +8906,15 @@ async def workspace_code_agent_stream(request: Request):
                             for i in sev_issues[:8]
                         )
                         yield f"data: {_json.dumps({'type': 'stage', 'stage': 'write', 'agent': 'writer', 'model': writer_model})}\n\n"
-                        yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🎨 Fixing visual issues'})}\n\n"
+                        yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': f'🎨 ยกระดับ UI (รอบ {_vround + 1}/2)'})}\n\n"
                         visual_fix_q = (
-                            f"Visual QC ตรวจหน้าจอจริง (screenshot) ของแอปที่ deploy แล้ว พบปัญหา UI ต่อไปนี้:\n"
+                            f"Visual QC (มาตรฐาน design director) ตรวจหน้าจอจริงของแอป พบจุดที่ยังไม่พรีเมียมพอ:\n"
                             f"{issue_lines}\n\n"
                             f"ไฟล์ UI ปัจจุบัน:\n{cur_files}\n\n"
-                            f"แก้เฉพาะปัญหา visual ข้างบนด้วย <WRITE_FILE path=\"{project}/...\">...</WRITE_FILE> "
-                            f"(เขียนทั้งไฟล์เวอร์ชันที่แก้แล้ว) — คงโครงสร้าง/เนื้อหาเดิมไว้ เปลี่ยนเฉพาะ layout/style/markup "
-                            f"ที่ทำให้เกิดปัญหา ห้ามรันคำสั่งตรวจสอบ (curl/ls/docker) ระบบจะ deploy + ถ่ายรูปใหม่ให้เอง"
+                            f"ยกระดับให้ดูเหมือน Stripe/Linear/Vercel: whitespace มากขึ้น, type hierarchy ชัด, accent เดียว, "
+                            f"depth/hover เนียน. แก้ด้วย <WRITE_FILE path=\"{project}/...\">...</WRITE_FILE> "
+                            f"(เขียนทั้งไฟล์ที่แก้แล้ว) คงเนื้อหา/โครงสร้างเดิม เปลี่ยนเฉพาะ layout/style/markup. "
+                            f"ห้ามรันคำสั่งตรวจสอบ (curl/ls/docker) ระบบจะ deploy + ถ่ายรูปใหม่ให้เอง"
                         )
                         holder = {}
                         async for ev in stream_turn(visual_fix_q, [], 6000, holder, writer_model, "CodeAgentWriter"):
@@ -8874,7 +8926,7 @@ async def workspace_code_agent_stream(request: Request):
                         for ev in vfe:
                             yield f"data: {_json.dumps(ev)}\n\n"
 
-                        # Redeploy + re-screenshot + re-critique → final verdict
+                        # Redeploy + re-screenshot + re-critique
                         yield f"data: {_json.dumps({'type': 'stage', 'stage': 'run', 'agent': None})}\n\n"
                         yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🚀 Re-deploy after visual fix'})}\n\n"
                         async for ev in _deploy_and_smoke(project, written_contents.get("main.py", main_src), "restart"):
@@ -8882,11 +8934,15 @@ async def workspace_code_agent_stream(request: Request):
                                 smoke = ev
                             yield f"data: {_json.dumps(ev)}\n\n"
                         yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': 0})}\n\n"
-                        if smoke and smoke.get("ok"):
-                            shot2, _note2, shot2_errs = await _capture_screenshot(smoke.get("base") or smoke.get("url"))
-                            if shot2:
-                                visual = _merge_js_errors(await _visual_critique(shot2, question, plan_summary), shot2_errs)
-                                yield f"data: {_json.dumps({'type': 'visual_result', 'ok': visual.get('passed', True), 'issues': visual.get('issues', []), 'image': shot2, 'final': True})}\n\n"
+                        if not (smoke and smoke.get("ok")):
+                            break  # app broke during the fix — stop, smoke failure is reported below
+                        shotn, _noten, shotn_errs = await _capture_screenshot(smoke.get("base") or smoke.get("url"))
+                        if not shotn:
+                            break
+                        visual = _merge_js_errors(await _visual_critique(shotn, question, plan_summary), shotn_errs)
+                        _still = [i for i in visual.get("issues", []) if i.get("severity") in ("high", "medium")]
+                        _is_final = (_vround == 1) or not _still
+                        yield f"data: {_json.dumps({'type': 'visual_result', 'ok': visual.get('passed', True), 'issues': visual.get('issues', []), 'image': shotn, 'final': _is_final})}\n\n"
 
                 # ── Final summary (built locally — no extra AI call) ─
                 files_md = "\n".join(f"- {p}" for p in written_files)
@@ -9417,8 +9473,11 @@ async def workspace_code_agent_stream(request: Request):
                             yield f"data: {_json.dumps({'type': 'visual_result', 'ok': True, 'skipped': True, 'note': v_note, 'issues': []})}\n\n"
                         yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': 0})}\n\n"
 
-                        v_sev = [i for i in (v_visual or {}).get("issues", []) if i.get("severity") in ("high", "medium")]
-                        if v_sev:
+                        # Up to 2 visual fix rounds → premium polish
+                        for _ver in range(2):
+                            v_sev = [i for i in (v_visual or {}).get("issues", []) if i.get("severity") in ("high", "medium")]
+                            if not v_sev:
+                                break
                             v_ui_files = [p for p in written_contents if p.lower().endswith((".html", ".css", ".js"))]
                             v_cur = "\n\n".join(
                                 f"--- {p} ---\n{written_contents.get(p, '')[:4000]}" for p in v_ui_files[:4]
@@ -9428,14 +9487,15 @@ async def workspace_code_agent_stream(request: Request):
                                 for i in v_sev[:8]
                             )
                             yield f"data: {_json.dumps({'type': 'stage', 'stage': 'write', 'agent': 'writer', 'model': writer_model})}\n\n"
-                            yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': '🎨 Fixing visual issues'})}\n\n"
+                            yield f"data: {_json.dumps({'type': 'thinking_start', 'msg': f'🎨 ยกระดับ UI (รอบ {_ver + 1}/2)'})}\n\n"
                             v_fix_q = (
-                                f"Visual QC ตรวจหน้าจอจริง (screenshot) ของแอปหลัง deploy พบปัญหา UI ต่อไปนี้:\n"
+                                f"Visual QC (มาตรฐาน design director) ตรวจหน้าจอจริงของแอป พบจุดที่ยังไม่พรีเมียมพอ:\n"
                                 f"{v_lines}\n\n"
                                 f"ไฟล์ UI ปัจจุบัน:\n{v_cur}\n\n"
-                                f"แก้เฉพาะปัญหา visual ข้างบนด้วย <WRITE_FILE path=\"{project}/...\">...</WRITE_FILE> "
-                                f"(เขียนทั้งไฟล์เวอร์ชันที่แก้แล้ว) คงโครงสร้าง/เนื้อหาเดิม เปลี่ยนเฉพาะ layout/style/markup "
-                                f"ที่เป็นปัญหา ห้ามรันคำสั่งตรวจสอบ (curl/ls/docker) ระบบจะ deploy + ถ่ายรูปใหม่ให้เอง"
+                                f"ยกระดับให้ดูเหมือน Stripe/Linear/Vercel: whitespace มากขึ้น, type hierarchy ชัด, accent เดียว, "
+                                f"depth/hover เนียน. แก้ด้วย <WRITE_FILE path=\"{project}/...\">...</WRITE_FILE> "
+                                f"(เขียนทั้งไฟล์ที่แก้แล้ว) คงเนื้อหา/โครงสร้างเดิม เปลี่ยนเฉพาะ layout/style/markup. "
+                                f"ห้ามรันคำสั่งตรวจสอบ (curl/ls/docker) ระบบจะ deploy + ถ่ายรูปใหม่ให้เอง"
                             )
                             v_holder: dict = {}
                             async for ev in stream_turn(v_fix_q, conv_messages, 6000, v_holder, writer_model, "CodeAgentWriter"):
@@ -9453,11 +9513,15 @@ async def workspace_code_agent_stream(request: Request):
                                     v_smoke = ev
                                 yield f"data: {_json.dumps(ev)}\n\n"
                             yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': 0})}\n\n"
-                            if v_smoke and v_smoke.get("ok"):
-                                v_b2, _vn2, v_b2_errs = await _capture_screenshot(v_smoke.get("base") or v_smoke.get("url"))
-                                if v_b2:
-                                    v_visual = _merge_js_errors(await _visual_critique(v_b2, question, ""), v_b2_errs)
-                                    yield f"data: {_json.dumps({'type': 'visual_result', 'ok': v_visual.get('passed', True), 'issues': v_visual.get('issues', []), 'image': v_b2, 'final': True})}\n\n"
+                            if not (v_smoke and v_smoke.get("ok")):
+                                break
+                            v_bn, _vnn, v_bn_errs = await _capture_screenshot(v_smoke.get("base") or v_smoke.get("url"))
+                            if not v_bn:
+                                break
+                            v_visual = _merge_js_errors(await _visual_critique(v_bn, question, ""), v_bn_errs)
+                            _v_still = [i for i in v_visual.get("issues", []) if i.get("severity") in ("high", "medium")]
+                            _v_final = (_ver == 1) or not _v_still
+                            yield f"data: {_json.dumps({'type': 'visual_result', 'ok': v_visual.get('passed', True), 'issues': v_visual.get('issues', []), 'image': v_bn, 'final': _v_final})}\n\n"
 
         yield f"data: {_json.dumps({'type': 'done'})}\n\n"
 
