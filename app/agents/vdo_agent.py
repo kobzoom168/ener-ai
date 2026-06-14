@@ -223,17 +223,72 @@ def _wrap_thai(text: str, max_chars: int = 26) -> str:
     return "\\N".join(out)
 
 
-def _build_ass(title: str, lines: list[str], duration: float, ass_path: str) -> None:
-    n = max(1, len(lines))
-    per = max(1.0, duration / n)
+def _concat_audio(parts: list[str], out_path: str) -> bool:
+    """Concatenate mp3 segments into one mp3 (re-encoded for gapless joins)."""
+    parts = [p for p in parts if p and os.path.exists(p)]
+    if not parts:
+        return False
+    cmd = ["ffmpeg", "-y"]
+    for p in parts:
+        cmd += ["-i", p]
+    n = len(parts)
+    fc = "".join(f"[{i}:a]" for i in range(n)) + f"concat=n={n}:v=0:a=1[a]"
+    cmd += ["-filter_complex", fc, "-map", "[a]", "-c:a", "libmp3lame", "-q:a", "4", out_path]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+        return r.returncode == 0 and os.path.exists(out_path)
+    except Exception:
+        return False
+
+
+def _synth_lines(lines: list[str], base: str, out_mp3: str) -> tuple[list[tuple[str, float]], float]:
+    """Synthesize each line separately → measure → concat into out_mp3.
+
+    Per-line timing is what lets the subtitle for each line appear exactly while that line
+    is spoken (one line at a time), instead of an even split that drifts off the audio.
+    Returns ([(line, duration)…], total_duration).
+    """
+    segs: list[tuple[str, float]] = []
+    parts: list[str] = []
+    for i, ln in enumerate(lines):
+        ln = (ln or "").strip()
+        if not ln:
+            continue
+        p = f"{base}_seg{i}.mp3"
+        _synth_voice(ln, p)
+        d = _audio_duration(p)
+        if d <= 0:
+            try:
+                os.remove(p)
+            except Exception:
+                pass
+            continue
+        parts.append(p)
+        segs.append((ln, d))
+    if not parts:
+        return [], 0.0
+    _concat_audio(parts, out_mp3)
+    for p in parts:
+        try:
+            os.remove(p)
+        except Exception:
+            pass
+    total = _audio_duration(out_mp3) or sum(d for _, d in segs)
+    return segs, total
+
+
+def _build_ass(title: str, segments: list[tuple[str, float]], ass_path: str) -> None:
+    """Caption track timed line-by-line to the per-line audio durations (voice-synced)."""
+    total = sum(d for _, d in segments) or 1.0
     events = []
     # persistent small title at top for the whole clip
     events.append(
-        f"Dialogue: 0,{_ass_ts(0)},{_ass_ts(duration)},Title,,0,0,0,,{_wrap_thai(_ass_escape(title)[:80], 30)}"
+        f"Dialogue: 0,{_ass_ts(0)},{_ass_ts(total)},Title,,0,0,0,,{_wrap_thai(_ass_escape(title)[:80], 30)}"
     )
-    for i, ln in enumerate(lines):
-        st = i * per
-        en = min(duration, (i + 1) * per)
+    t = 0.0
+    for ln, d in segments:
+        st, en = t, t + d
+        t = en
         events.append(f"Dialogue: 0,{_ass_ts(st)},{_ass_ts(en)},Default,,0,0,0,,{_wrap_thai(_ass_escape(ln), 24)}")
     with open(ass_path, "w", encoding="utf-8") as f:
         f.write(_ASS_HEADER + "\n".join(events) + "\n")
@@ -373,18 +428,15 @@ async def make_news_short(title: str, summary: str) -> dict:
 
     script = await generate_script(title, summary)
     lines = script["lines"]
-    narration = " ".join(lines)
 
     try:
-        await asyncio.to_thread(_synth_voice, narration, mp3)
+        segments, duration = await asyncio.to_thread(_synth_lines, lines, base, mp3)
     except Exception as exc:
         return {"ok": False, "error": f"TTS ล้มเหลว: {str(exc)[:200]}"}
-
-    duration = await asyncio.to_thread(_audio_duration, mp3)
-    if duration <= 0:
+    if not segments or duration <= 0:
         return {"ok": False, "error": "อ่านความยาวเสียงไม่ได้"}
 
-    await asyncio.to_thread(_build_ass, title, lines, duration, ass)
+    await asyncio.to_thread(_build_ass, title, segments, ass)
     ok, err = await asyncio.to_thread(_render, mp3, ass, duration, mp4)
     if not ok:
         return {"ok": False, "error": f"render ล้มเหลว: {err}"}
@@ -410,13 +462,12 @@ async def _render_clip(title: str, lines: list[str], bg_images: list[str] | None
     if not lines:
         return {"ok": False, "error": "ไม่มีบทพากย์"}
     try:
-        await asyncio.to_thread(_synth_voice, " ".join(lines), mp3)
+        segments, duration = await asyncio.to_thread(_synth_lines, lines, base, mp3)
     except Exception as exc:
         return {"ok": False, "error": f"TTS ล้มเหลว: {str(exc)[:200]}"}
-    duration = await asyncio.to_thread(_audio_duration, mp3)
-    if duration <= 0:
+    if not segments or duration <= 0:
         return {"ok": False, "error": "อ่านความยาวเสียงไม่ได้"}
-    await asyncio.to_thread(_build_ass, title, lines, duration, ass)
+    await asyncio.to_thread(_build_ass, title, segments, ass)
     ok, err = await asyncio.to_thread(_render, mp3, ass, duration, mp4, bg_images)
     if not ok and bg_images:
         # the slideshow/zoom render broke → retry plain solid so the clip still ships
