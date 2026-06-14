@@ -5599,6 +5599,7 @@ _MEDIA_CREDITS_CACHE: dict = {"at": 0.0, "data": {"elevenlabs": None, "did": Non
 
 async def _media_credit_stats() -> dict:
     """ElevenLabs + D-ID remaining credits for the AI Media widget (cached ~60s)."""
+    import os
     now = time.time()
     if now - _MEDIA_CREDITS_CACHE["at"] < 60 and _MEDIA_CREDITS_CACHE["data"]:
         return _MEDIA_CREDITS_CACHE["data"]
