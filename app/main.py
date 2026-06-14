@@ -19,7 +19,7 @@ from contextlib import asynccontextmanager
 import httpx
 import psutil
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile, WebSocket
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from telegram import Update
@@ -6815,18 +6815,34 @@ async def workspace_vdo_make(request: Request):
     res = await make_news_short(title, summary)
     if not res.get("ok"):
         return JSONResponse({"ok": False, "error": res.get("error", "render failed")})
+    import os as _os2
+    fname = _os2.path.basename(res["mp4"])
+    video_url = f"https://my-ener.uk/vdo/file/{fname}"
     try:
-        cap = f"🎬 พรีวิวคลิป (ยังไม่โพสต์)\n\n{res.get('caption', '')}\n\n📰 {title[:120]}"
+        cap = f"🎬 พรีวิวคลิป (ยังไม่โพสต์)\n\n{res.get('caption', '')}\n\n📰 {title[:120]}\n{video_url}"
         with open(res["mp4"], "rb") as fh:
             await telegram_app.bot.send_video(
                 chat_id=settings.telegram_chat_id, video=fh, caption=cap[:1000]
             )
     except Exception as exc:
         return JSONResponse({"ok": True, "telegram": False, "duration": res.get("duration"),
-                             "caption": res.get("caption"),
+                             "caption": res.get("caption"), "video_url": video_url,
                              "error": f"render ok แต่ส่ง Telegram ไม่ได้: {str(exc)[:200]}"})
     return JSONResponse({"ok": True, "telegram": True, "duration": res.get("duration"),
-                         "caption": res.get("caption"), "lines": res.get("lines")})
+                         "caption": res.get("caption"), "lines": res.get("lines"),
+                         "video_url": video_url})
+
+
+@app.get("/vdo/file/{name}")
+async def vdo_file(name: str):
+    """Serve a rendered short by filename (public so Postiz/n8n can fetch it to post)."""
+    import os as _os3, re as _re3
+    if not _re3.fullmatch(r"vdo_\d+\.mp4", name or ""):
+        raise HTTPException(status_code=404, detail="not found")
+    path = _os3.path.join("/app/data/vdo", name)
+    if not _os3.path.exists(path):
+        raise HTTPException(status_code=404, detail="not found")
+    return FileResponse(path, media_type="video/mp4", filename=name)
 
 
 @app.get("/workspace/news")
