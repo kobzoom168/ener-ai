@@ -544,11 +544,9 @@ def _render(audio_path: str, ass_path: str, duration: float, out_path: str,
 
 
 def _overlay_pip(base_mp4: str, pip_mp4: str, out_path: str) -> tuple[bool, str]:
-    """Overlay the talking head as a compact square PIP stuck to the bottom-left corner,
-    sitting below the centred subtitle so it never covers it. Keeps the base clip audio."""
-    fc = ("[1:v]crop='min(iw,ih)':'min(iw,ih)':'(iw-min(iw,ih))/2':'(ih-min(iw,ih))/2',"
-          "scale=320:320,setsar=1,pad=328:328:4:4:color=0x101010[pip];"
-          "[0:v][pip]overlay=x=24:y=H-h-70[v]")
+    """Overlay the talking head keeping its natural proportions (no squish), flush to the
+    very bottom-left corner with no gap, sitting below the centred subtitle. Keeps base audio."""
+    fc = "[1:v]scale=330:-2,setsar=1[pip];[0:v][pip]overlay=x=0:y=H-h[v]"
     cmd = ["ffmpeg", "-y", "-i", base_mp4, "-i", pip_mp4,
            "-filter_complex", fc, "-map", "[v]", "-map", "0:a",
            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
