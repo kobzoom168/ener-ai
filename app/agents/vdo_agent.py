@@ -80,6 +80,29 @@ async def generate_script(title: str, summary: str) -> dict:
 
 
 def _synth_voice(text: str, out_path: str) -> str:
+    """TTS to MP3. Uses the cloned ElevenLabs voice if configured, else gTTS (fail-open)."""
+    key = os.environ.get("ELEVENLABS_API_KEY", "").strip()
+    voice = os.environ.get("ELEVENLABS_VOICE_ID", "").strip()
+    if key and voice:
+        try:
+            import httpx
+            model = os.environ.get("ELEVENLABS_MODEL", "eleven_multilingual_v2")
+            r = httpx.post(
+                f"https://api.elevenlabs.io/v1/text-to-speech/{voice}",
+                headers={"xi-api-key": key, "Content-Type": "application/json"},
+                json={
+                    "text": text,
+                    "model_id": model,
+                    "voice_settings": {"stability": 0.5, "similarity_boost": 0.8, "style": 0.0},
+                },
+                timeout=120,
+            )
+            if r.status_code < 300 and r.content:
+                with open(out_path, "wb") as fh:
+                    fh.write(r.content)
+                return out_path
+        except Exception:
+            pass  # fall through to gTTS
     from gtts import gTTS
     gTTS(text=text, lang="th").save(out_path)
     return out_path
