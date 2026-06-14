@@ -27,9 +27,9 @@ _ASS_HEADER = (
     "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, "
     "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, "
     "Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-    "Style: Default,Loma,64,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,0,0,1,5,3,2,70,70,540,0\n"
-    "Style: Title,Loma,54,&H00A5B4FC,&H00111111,&H64000000,-1,0,0,0,100,100,0,0,1,5,3,8,70,70,250,0\n"
-    "Style: Brand,Loma,40,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,1,0,1,3,2,8,70,70,160,0\n\n"
+    "Style: Default,Loma,72,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,0,0,1,5,3,2,70,70,540,0\n"
+    "Style: Title,Loma,62,&H00A5B4FC,&H00111111,&H64000000,-1,0,0,0,100,100,0,0,1,5,3,8,70,70,250,0\n"
+    "Style: Brand,Loma,46,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,1,0,1,3,2,8,70,70,170,0\n\n"
     "[Events]\n"
     "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
 )
@@ -302,7 +302,7 @@ def _build_ass(title: str, segments: list[tuple[str, float]], ass_path: str) -> 
     events = []
     # persistent small title at top for the whole clip
     events.append(
-        f"Dialogue: 0,{_ass_ts(0)},{_ass_ts(total)},Title,,0,0,0,,{_wrap_thai(_ass_escape(title)[:80], 30)}"
+        f"Dialogue: 0,{_ass_ts(0)},{_ass_ts(total)},Title,,0,0,0,,{_wrap_thai(_ass_escape(title)[:80], 24)}"
     )
     handle, web = _ass_escape(VDO_BRAND_HANDLE)[:20], _ass_escape(VDO_BRAND_WEB)[:30]
     brand_parts = []
@@ -316,7 +316,7 @@ def _build_ass(title: str, segments: list[tuple[str, float]], ass_path: str) -> 
         )
     t = 0.0
     for ln, d in segments:
-        rows = _wrap_rows(_ass_escape(ln), 22) or [_ass_escape(ln)]
+        rows = _wrap_rows(_ass_escape(ln), 19) or [_ass_escape(ln)]
         chars = sum(len(r) for r in rows) or 1
         rt = t
         for j, row in enumerate(rows):
