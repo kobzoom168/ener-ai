@@ -29,7 +29,7 @@ _ASS_HEADER = (
     "Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
     "Style: Default,Loma,72,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,0,0,1,5,3,2,70,70,540,0\n"
     "Style: Title,Loma,62,&H00A5B4FC,&H00111111,&H64000000,-1,0,0,0,100,100,0,0,1,5,3,8,70,70,250,0\n"
-    "Style: Brand,Loma,46,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,1,0,1,3,2,8,70,70,170,0\n\n"
+    "Style: Brand,Loma,52,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,1,0,1,3,2,8,70,70,250,0\n\n"
     "[Events]\n"
     "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
 )
@@ -300,10 +300,7 @@ def _build_ass(title: str, segments: list[tuple[str, float]], ass_path: str) -> 
     """
     total = sum(d for _, d in segments) or 1.0
     events = []
-    # persistent small title at top for the whole clip
-    events.append(
-        f"Dialogue: 0,{_ass_ts(0)},{_ass_ts(total)},Title,,0,0,0,,{_wrap_thai(_ass_escape(title)[:80], 24)}"
-    )
+    # brand logo only (no topic title) as the persistent header
     handle, web = _ass_escape(VDO_BRAND_HANDLE)[:20], _ass_escape(VDO_BRAND_WEB)[:30]
     brand_parts = []
     if handle:
