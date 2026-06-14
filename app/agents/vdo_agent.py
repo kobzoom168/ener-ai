@@ -338,6 +338,60 @@ async def _gen_bg_images(prompts: list[str]) -> list[str]:
     return [p for p in results if p]
 
 
+async def _fetch_stock_video(query: str, idx: int = 0) -> str | None:
+    """Find + download a real vertical stock video for `query` from Pexels. Fail-open None."""
+    key = os.environ.get("PEXELS_API_KEY", "").strip()
+    query = (query or "").strip()
+    if not key or not query:
+        return None
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.get(
+                "https://api.pexels.com/videos/search",
+                headers={"Authorization": key},
+                params={"query": query, "orientation": "portrait",
+                        "size": "medium", "per_page": 8},
+            )
+        if r.status_code >= 300:
+            return None
+        best = None
+        for v in (r.json().get("videos") or []):
+            if (v.get("duration") or 0) < 2:
+                continue
+            files = [f for f in (v.get("video_files") or [])
+                     if f.get("file_type") == "video/mp4" and f.get("link")
+                     and (f.get("height") or 0) >= (f.get("width") or 0)]  # portrait only
+            if not files:
+                continue
+            files.sort(key=lambda f: abs((f.get("width") or 0) - 1080))
+            best = files[0]
+            break
+        if not best:
+            return None
+        os.makedirs(VDO_DIR, exist_ok=True)
+        path = os.path.join(VDO_DIR, f"sv_{int(time.time())}_{idx}.mp4")
+        async with httpx.AsyncClient(timeout=120, follow_redirects=True) as c:
+            async with c.stream("GET", best["link"]) as resp:
+                if resp.status_code >= 300:
+                    return None
+                with open(path, "wb") as fh:
+                    async for chunk in resp.aiter_bytes(65536):
+                        fh.write(chunk)
+        return path if os.path.exists(path) and os.path.getsize(path) > 10000 else None
+    except Exception:
+        return None
+
+
+async def _fetch_stock_videos(queries: list[str]) -> list[str]:
+    """Fetch several stock clips in parallel; returns the local paths that succeeded."""
+    queries = [str(q).strip() for q in (queries or []) if str(q).strip()][:3]
+    if not queries:
+        return []
+    results = await asyncio.gather(*[_fetch_stock_video(q, i) for i, q in enumerate(queries)])
+    return [p for p in results if p]
+
+
 # Background music: quiet bed mixed under the narration. Drop a file here (or set env).
 BGM_PATH = os.environ.get("VDO_BGM_PATH", "/app/data/bgm/default.wav")
 BGM_VOLUME = os.environ.get("VDO_BGM_VOLUME", "0.10")
@@ -361,10 +415,42 @@ def _audio_filter(voice_idx: int, bgm_idx: int | None, duration: float) -> tuple
 
 
 def _render(audio_path: str, ass_path: str, duration: float, out_path: str,
-            bg_images: list[str] | None = None) -> tuple[bool, str]:
+            bg_images: list[str] | None = None,
+            bg_videos: list[str] | None = None) -> tuple[bool, str]:
     imgs = [p for p in (bg_images or []) if p and os.path.exists(p)]
+    vids = [p for p in (bg_videos or []) if p and os.path.exists(p)]
     bgm = BGM_PATH if os.path.exists(BGM_PATH) else None
-    if imgs:
+    fps = 25
+    if vids:
+        # real stock-video slideshow: each clip filled to its segment (looped if short),
+        # cropped to 9:16, darkened for caption readability. Source audio is dropped.
+        n = len(vids)
+        seg = max(1.0, duration / n)
+        cmd = ["ffmpeg", "-y"]
+        for p in vids:
+            cmd += ["-stream_loop", "-1", "-t", f"{seg:.2f}", "-i", p]
+        cmd += ["-i", audio_path]
+        voice_idx, bgm_idx = n, None
+        if bgm:
+            cmd += ["-stream_loop", "-1", "-i", bgm]
+            bgm_idx = n + 1
+        chains = []
+        for i in range(n):
+            chains.append(
+                f"[{i}:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+                f"fps={fps},setpts=PTS-STARTPTS,setsar=1[v{i}]"
+            )
+        cat = "".join(f"[v{i}]" for i in range(n))
+        fc = (";".join(chains) +
+              f";{cat}concat=n={n}:v=1:a=0,eq=brightness=-0.18:saturation=1.05,"
+              f"subtitles={ass_path}[vout]")
+        fc_a, amap = _audio_filter(voice_idx, bgm_idx, duration)
+        if fc_a:
+            fc += ";" + fc_a
+        cmd += ["-filter_complex", fc, "-map", "[vout]", "-map", amap,
+                "-r", str(fps), "-c:v", "libx264", "-preset", "veryfast",
+                "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-shortest", out_path]
+    elif imgs:
         # slideshow of the images, each with a slow Ken Burns zoom (camera motion),
         # darkened for caption readability. 1 image = 1 zooming segment.
         n = len(imgs)
@@ -452,13 +538,15 @@ async def make_news_short(title: str, summary: str) -> dict:
             "duration": round(duration, 1)}
 
 
-async def _render_clip(title: str, lines: list[str], bg_images: list[str] | None = None) -> dict:
-    """Shared render: lines -> gTTS -> ASS captions -> MP4 (optional bg image slideshow)."""
+async def _render_clip(title: str, lines: list[str], bg_images: list[str] | None = None,
+                       bg_videos: list[str] | None = None) -> dict:
+    """Shared render: lines -> TTS -> ASS captions -> MP4 (stock-video or image slideshow)."""
     os.makedirs(VDO_DIR, exist_ok=True)
     stamp = int(time.time())
     base = os.path.join(VDO_DIR, f"vdo_{stamp}")
     mp3, ass, mp4 = base + ".mp3", base + ".ass", base + ".mp4"
     bg_images = [p for p in (bg_images or []) if p]
+    bg_videos = [p for p in (bg_videos or []) if p]
     if not lines:
         return {"ok": False, "error": "ไม่มีบทพากย์"}
     try:
@@ -468,13 +556,13 @@ async def _render_clip(title: str, lines: list[str], bg_images: list[str] | None
     if not segments or duration <= 0:
         return {"ok": False, "error": "อ่านความยาวเสียงไม่ได้"}
     await asyncio.to_thread(_build_ass, title, segments, ass)
-    ok, err = await asyncio.to_thread(_render, mp3, ass, duration, mp4, bg_images)
-    if not ok and bg_images:
+    ok, err = await asyncio.to_thread(_render, mp3, ass, duration, mp4, bg_images, bg_videos)
+    if not ok and (bg_videos or bg_images):
         # the slideshow/zoom render broke → retry plain solid so the clip still ships
-        ok, err = await asyncio.to_thread(_render, mp3, ass, duration, mp4, None)
+        ok, err = await asyncio.to_thread(_render, mp3, ass, duration, mp4, None, None)
     if not ok:
         return {"ok": False, "error": f"render ล้มเหลว: {err}"}
-    for p in [mp3, ass] + bg_images:
+    for p in [mp3, ass] + bg_images + bg_videos:
         try:
             os.remove(p)
         except Exception:
@@ -514,9 +602,10 @@ async def generate_mystery_script(topic: str = "", title: str = "", summary: str
         "- ปิดด้วยประโยค 'หักมุม' พลิกความคาดหมาย ตบหลังให้คนดูอึ้ง/ยิ้ม/คิดตาม (ไม่การันตีผล)\n"
         'ตอบ JSON เท่านั้น: {"title": "หัวข้อสั้น", "lines": ["ประโยคสั้นๆ", "..."], '
         '"caption": "แคปชั่นโพสต์ + #แฮชแท็ก เช่น #สายมู #เครื่องราง #ความเชื่อ #ลึกลับ", '
-        '"image_prompts": ["ภาพพื้นหลัง 3 ฉากเป็นภาษาอังกฤษให้เข้ากับเรื่อง ไล่ตามเนื้อหา (ไม่มีตัวหนังสือในภาพ)", "...", "..."]}'
+        '"image_prompts": ["ภาพพื้นหลัง 3 ฉากเป็นภาษาอังกฤษให้เข้ากับเรื่อง ไล่ตามเนื้อหา (ไม่มีตัวหนังสือในภาพ)", "...", "..."], '
+        '"video_queries": ["คำค้นวิดีโอสต็อกจริงสั้นๆ เป็นภาษาอังกฤษ 1-3 คำ ให้เข้ากับฉาก เช่น temple incense smoke / candle dark ritual / foggy forest night", "...", "..."]}'
     )
-    data = _parse_json(await _or_chat(SCRIPT_MODEL, system, prompt, 900))
+    data = _parse_json(await _or_chat(SCRIPT_MODEL, system, prompt, 1000))
     lines = [_strip_quotes(str(x)) for x in (data.get("lines") or []) if str(x).strip()][:8]
     lines = [x for x in lines if x]
     out_title = _strip_quotes(str(data.get("title") or title or topic or "เรื่องลึกลับ"))[:60]
@@ -526,15 +615,26 @@ async def generate_mystery_script(topic: str = "", title: str = "", summary: str
     image_prompts = [str(x).strip()[:300] for x in (data.get("image_prompts") or []) if str(x).strip()][:3]
     if not image_prompts:
         image_prompts = [out_title]
-    return {"title": out_title, "lines": lines, "caption": caption, "image_prompts": image_prompts}
+    video_queries = [str(x).strip()[:80] for x in (data.get("video_queries") or []) if str(x).strip()][:3]
+    return {"title": out_title, "lines": lines, "caption": caption,
+            "image_prompts": image_prompts, "video_queries": video_queries}
 
 
 async def make_mystery_short(topic: str = "", title: str = "", summary: str = "") -> dict:
-    """สายมู short: AI picks/retells a mystery topic -> Thai short MP4 (3 zooming bg images)."""
+    """สายมู short: AI picks/retells a mystery topic -> Thai short MP4.
+
+    Background: prefer real stock video (Pexels) for true motion; fall back to AI images.
+    """
     script = await generate_mystery_script(topic, title, summary)
-    bgs = await _gen_bg_images(script.get("image_prompts") or [script["title"]])
-    r = await _render_clip(script["title"], script["lines"], bgs)
+    videos = await _fetch_stock_videos(script.get("video_queries") or [])
+    if videos:
+        bg_kind, bg_count = "video", len(videos)
+        r = await _render_clip(script["title"], script["lines"], bg_videos=videos)
+    else:
+        bgs = await _gen_bg_images(script.get("image_prompts") or [script["title"]])
+        bg_kind, bg_count = "image", len(bgs)
+        r = await _render_clip(script["title"], script["lines"], bg_images=bgs)
     if r.get("ok"):
         r.update({"caption": script["caption"], "lines": script["lines"], "title": script["title"],
-                  "bg_count": len(bgs)})
+                  "bg_count": bg_count, "bg_kind": bg_kind})
     return r
