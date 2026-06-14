@@ -9330,7 +9330,9 @@ async def workspace_code_agent_stream(request: Request):
         # ls/cat) must not silently report success — QC + Visual QC are gated on
         # written_contents, so without this the user just sees a misleading "done".
         if reference_b64 and not written_contents:
-            yield f"data: {_json.dumps({'type': 'final_text', 'text': '⚠️ Clone ยังไม่สำเร็จ — Writer ยังไม่ได้เขียนไฟล์หน้าเว็บ (แค่ตรวจโครงสร้าง). ลองกดส่งใหม่อีกครั้ง หรือพิมพ์กำกับว่า \"เขียน templates/index.html ใหม่ให้เหมือนรูป\" เพื่อบังคับให้ลงมือเขียน', 'actions': [], 'exec_results': []})}\n\n"
+            _clone_warn = ("⚠️ Clone ยังไม่สำเร็จ — Writer ยังไม่ได้เขียนไฟล์หน้าเว็บ (แค่ตรวจโครงสร้าง) "
+                           "ลองกดส่งใหม่อีกครั้ง หรือพิมพ์กำกับว่า: เขียน templates/index.html ใหม่ให้เหมือนรูป")
+            yield f"data: {_json.dumps({'type': 'final_text', 'text': _clone_warn, 'actions': [], 'exec_results': []})}\n\n"
 
         # ════════════════════════════════════════════════════════════
         # VERIFY LOOP — QC technical review + Planner acceptance judgment.
