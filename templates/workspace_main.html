@@ -696,6 +696,7 @@
             <button type="button" class="code-preset-btn" data-preset="หา bug และ fix ใน code นี้ ใช้ WRITE_FILE เพื่อ save fix">🐛 หา Bug</button>
             <button type="button" class="code-preset-btn" data-preset="สร้าง complete project ที่ครบ flow: main file + requirements + README พร้อม run ได้ทันที ใน project นี้">🚀 Complete</button>
             <button type="button" class="code-preset-btn" data-preset="ทดสอบ project นี้บน server ใช้ EXEC_CMD เพื่อ: 1) เช็ค syntax ทุก .py ด้วย python -m py_compile 2) เช็ค imports ด้วย python -c 3) แสดงไฟล์ทั้งหมด แล้วสรุปว่า project พร้อม deploy ไหม">🔬 Test</button>
+            <button type="button" id="btn-ai-review" onclick="runAIReview()" style="background:linear-gradient(135deg,#059669,#0ea5e9);color:#fff;border:none;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap">🎓 รีวิว</button>
             <button type="button" id="btn-agent-loop" onclick="startAgentLoop()" style="background:linear-gradient(135deg,#7c3aed,#4a9eff);color:#fff;border:none;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap">🤖 Agent</button>
           </div>
           <div class="code-chat-input-area">
@@ -2126,6 +2127,88 @@
         }
         loadServerContext();
       };
+      // ── AI Reviewer: on-demand scorecard + send selected fixes to Planner ──
+      async function runAIReview() {
+        if (!currentProject) { codeToast('เลือกโปรเจกต์ก่อนรีวิว'); return; }
+        const msgs = document.getElementById('code-chat-messages');
+        if (!msgs) return;
+        const hist = collectChatHistory();
+        const lastUser = [...hist].reverse().find(m => m.role === 'user');
+        const ctx = lastUser ? String(lastUser.content || '').slice(0, 400) : '';
+        const card = document.createElement('div');
+        card.className = 'code-chat-ai cc-style';
+        card.innerHTML = `<div class="cc-think-row"><span class="cc-dot cc-dot-thinking"></span><span class="cc-think-word">🎓 AI กำลังรีวิว UI + code...</span></div>`;
+        msgs.appendChild(card);
+        msgs.scrollTop = msgs.scrollHeight;
+        try {
+          const res = await fetch('/workspace/code/review', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ project: currentProject, models: getAgentModels(), context: ctx }),
+          });
+          const d = await res.json();
+          if (!d.ok) throw new Error(d.error || 'review failed');
+          renderScorecard(card, d);
+        } catch (e) {
+          card.innerHTML = `<div class="code-chat-error">❌ รีวิวไม่สำเร็จ: ${escHtml(e.message || '')}</div>`;
+        }
+        msgs.scrollTop = msgs.scrollHeight;
+      }
+
+      function renderScorecard(card, d) {
+        const dimLabels = { visual: '🎨 Visual', ux: '🧭 UX', code: '🧱 Code', a11y: '♿ A11y', perf: '⚡ Perf', correctness: '✅ ตรง req' };
+        const total = d.total || 0;
+        const tColor = total >= 88 ? '#10b981' : total >= 72 ? '#3b82f6' : total >= 55 ? '#f59e0b' : '#ef4444';
+        let bars = '';
+        for (const k of ['visual', 'ux', 'code', 'a11y', 'perf', 'correctness']) {
+          const sc = (d.scores || {})[k] || 0, mx = (d.max || {})[k] || 1;
+          const pct = Math.round(sc / mx * 100);
+          bars += `<div style="display:flex;align-items:center;gap:8px;margin:3px 0;font-size:12px">
+            <span style="width:84px;color:#cbd5e1">${dimLabels[k] || k}</span>
+            <span style="flex:1;height:7px;background:#1e293b;border-radius:4px;overflow:hidden"><span style="display:block;height:100%;width:${pct}%;background:${tColor}"></span></span>
+            <span style="width:46px;text-align:right;color:#94a3b8">${sc}/${mx}</span></div>`;
+        }
+        const sugg = d.suggestions || [];
+        const sevDot = s => s === 'high' ? '🔴' : s === 'med' ? '🟠' : '⚪';
+        let items = '';
+        sugg.forEach((s, i) => {
+          items += `<label style="display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-top:1px solid #1e293b;cursor:pointer">
+            <input type="checkbox" class="rv-sg" data-i="${i}" checked style="margin-top:3px;cursor:pointer">
+            <span style="font-size:12px;line-height:1.4">
+              <span>${sevDot(s.severity)} <b style="color:#e2e8f0">${escHtml(s.title || '')}</b> <span style="color:#64748b">[${escHtml(s.dim || '')}]</span></span>
+              ${s.fix ? `<br><span style="color:#94a3b8">↳ ${escHtml(s.fix)}</span>` : ''}
+            </span></label>`;
+        });
+        const imgHtml = d.image ? `<img src="data:image/png;base64,${d.image}" style="max-width:300px;width:100%;border-radius:8px;border:1px solid #2a2a3a;margin-top:6px">` : '';
+        const noteHtml = d.note ? `<div style="font-size:11px;color:#f59e0b;margin-top:4px">${escHtml(d.note)}</div>` : '';
+        card.innerHTML = `
+          <div class="cc-final-text" style="border:1px solid #1e293b;border-radius:10px;padding:12px;background:#0b1220">
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+              <div style="font-size:30px;font-weight:800;color:${tColor}">${total}<span style="font-size:14px;color:#64748b">/100</span></div>
+              <div style="color:#cbd5e1;font-weight:600">🎓 AI Review — ${escHtml(d.verdict || '')}</div>
+            </div>
+            ${bars}
+            ${noteHtml}
+            <div style="margin-top:10px;font-size:12px;color:#cbd5e1;font-weight:600">ข้อเสนอ (${sugg.length}) — ติ๊กที่จะแก้:</div>
+            ${items || '<div style="font-size:12px;color:#64748b;padding:6px 0">ไม่มีข้อเสนอ — เยี่ยม!</div>'}
+            ${imgHtml}
+            <div style="margin-top:10px;display:flex;gap:8px">
+              ${sugg.length ? `<button type="button" class="rv-send" style="background:linear-gradient(135deg,#059669,#0ea5e9);color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;font-size:12px;font-weight:600">✅ ส่งให้ Planner แก้</button>` : ''}
+            </div>
+          </div>`;
+        const sendBtn = card.querySelector('.rv-send');
+        if (sendBtn) {
+          sendBtn.addEventListener('click', () => {
+            const checked = [...card.querySelectorAll('.rv-sg:checked')].map(cb => sugg[+cb.dataset.i]).filter(Boolean);
+            if (!checked.length) { codeToast('เลือกอย่างน้อย 1 ข้อ'); return; }
+            const lines = checked.map(s => `- [${s.dim}] ${s.title}: ${s.fix}`).join('\n');
+            const q = `ปรับปรุงโปรเจกต์ตามผลรีวิว AI ต่อไปนี้ ทำให้ครบทุกข้อ (เขียนไฟล์จริงด้วย WRITE_FILE):\n${lines}`;
+            sendBtn.disabled = true; sendBtn.textContent = '⏳ ส่งให้ Planner แล้ว';
+            askCodeAI(q);
+          });
+        }
+      }
+      window.runAIReview = runAIReview;
+
       window.loadExplorer = loadExplorer;
       window.selectProject = selectProject;
       window.toggleProject = toggleProject;

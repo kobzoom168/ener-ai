@@ -8098,6 +8098,194 @@ async def _visual_critique(
     return _parse_visual_json(raw)
 
 
+# ── AI Reviewer: on-demand scorecard (visual via Gemini + code via DeepSeek) ──
+def _review_tolerant_json(raw: str) -> dict:
+    import json as _j, re as _re
+    if not raw or not raw.strip():
+        return {}
+    txt = _re.sub(r"```(?:json)?", "", raw, flags=_re.IGNORECASE).replace("```", "").strip()
+    s, e = txt.find("{"), txt.rfind("}")
+    if s != -1 and e > s:
+        txt = txt[s:e + 1]
+    try:
+        d = _j.loads(txt)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _read_project_for_review(proj_dir: str, cap_total: int = 14000) -> str:
+    """Concatenate the project's UI + code files (capped) for the code reviewer."""
+    import os
+    if not os.path.isdir(proj_dir):
+        return ""
+    picked: list[str] = []
+    for root, _dirs, files in os.walk(proj_dir):
+        rp = root.replace("\\", "/")
+        if "__pycache__" in rp or "/.git" in rp:
+            continue
+        for fn in files:
+            if fn.lower().endswith((".py", ".html", ".css", ".js")):
+                picked.append(os.path.join(root, fn))
+
+    def _rank(p: str) -> int:
+        pl = p.lower()
+        if pl.endswith(".html"):
+            return 0
+        if pl.endswith(".css"):
+            return 1
+        if pl.endswith("main.py"):
+            return 2
+        if pl.endswith(".py"):
+            return 3
+        return 4
+
+    blocks: list[str] = []
+    total = 0
+    for p in sorted(picked, key=_rank):
+        try:
+            with open(p, "r", encoding="utf-8", errors="replace") as fh:
+                c = fh.read()
+        except Exception:
+            continue
+        rel = os.path.relpath(p, proj_dir).replace("\\", "/")
+        snippet = c[: max(0, cap_total - total)]
+        if not snippet:
+            break
+        blocks.append(f"===== {rel} ({c.count(chr(10)) + 1} lines) =====\n{snippet}")
+        total += len(snippet)
+        if total >= cap_total:
+            break
+    return "\n\n".join(blocks)
+
+
+async def _review_visual(image_b64: str, user_ctx: str = "") -> dict:
+    """Gemini scores the rendered UI (visual + ux) and proposes improvements."""
+    system = (
+        "You are a design director scoring a web UI from a screenshot. Be honest and "
+        "calibrated: 90+ world-class, 70s decent, 50s amateur, under 40 broken. Reward real "
+        "design quality, punish amateur looks. Respond with STRICT JSON only — no prose."
+    )
+    prompt = (
+        f"บริบท/สิ่งที่แอปควรเป็น: {user_ctx[:400]}\n\n"
+        "ให้คะแนน UI จาก screenshot นี้แบบตรงไปตรงมา แล้วเสนอสิ่งที่ควรปรับเพื่อยกระดับ\n"
+        "ตอบ JSON เท่านั้น:\n"
+        '{"visual": <0-25>, "ux": <0-20>, "suggestions": [{"dim":"visual","severity":"high|med|low","title":"สั้นๆ","fix":"ทำอะไร ระดับ Tailwind/markup"}]}\n'
+        "visual = ความสวย/พรีเมียม/typography/สี/spacing/depth. "
+        "ux = ลำดับสายตา/ปุ่มเด่น/อ่านง่าย/ความรู้สึก responsive. "
+        "เสนอ 2-5 ข้อ impact สูงสุด เรียงสำคัญก่อน"
+    )
+    or_messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": [
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
+        ]},
+    ]
+    for vis_model in ("gemini-3-flash", "gemini-flash-lite"):
+        try:
+            from app.core.openrouter_client import openrouter_chat_completions
+            data = await openrouter_chat_completions(vis_model, or_messages, max_tokens=1200)
+            raw = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
+            if raw.strip():
+                return _review_tolerant_json(raw)
+        except Exception:
+            continue
+    return {}
+
+
+async def _review_code(files_text: str, user_ctx: str = "", model: str = "featherless-deepseek-pro") -> dict:
+    """DeepSeek reviews the code (quality/a11y/perf/correctness) and proposes fixes."""
+    from app.core.ai import stream_chat_response
+    system = (
+        "You are a strict senior code reviewer (frontend + backend). Score honestly and "
+        "calibrated. Report concrete, actionable improvements. Respond with STRICT JSON only."
+    )
+    prompt = (
+        f"บริบท: {user_ctx[:400]}\n\n"
+        f"โค้ดโปรเจกต์:\n{files_text[:14000]}\n\n"
+        "ให้คะแนนแล้วเสนอปรับปรุง ตอบ JSON เท่านั้น:\n"
+        '{"code": <0-20>, "a11y": <0-15>, "perf": <0-10>, "correctness": <0-10>, "suggestions": [{"dim":"code|a11y|perf|correctness","severity":"high|med|low","title":"สั้นๆ","fix":"คอนกรีต ทำตรงไหน"}]}\n'
+        "code = คุณภาพ/อ่านง่าย/โครงสร้าง/ไม่ซ้ำซ้อน. a11y = semantic HTML, alt, label, focus, contrast. "
+        "perf = น้ำหนัก/asset/query/render. correctness = ตรง requirement ไม่มี bug ชัด. เสนอ 2-5 ข้อ impact สูง"
+    )
+    raw = ""
+    try:
+        async for tok in stream_chat_response(prompt, [], system, model=model, agent="CodeReview", max_tokens=1400):
+            raw += tok
+    except Exception:
+        return {}
+    return _review_tolerant_json(_strip_think(raw))
+
+
+@app.post("/workspace/code/review")
+async def workspace_code_review(request: Request):
+    """On-demand AI Reviewer: scorecard (Gemini visual + DeepSeek code) + ranked suggestions."""
+    await _require_admin(request)
+    import asyncio as _aio, re as _re2
+    body = await request.json()
+    project = (body.get("project") or "").strip()
+    user_ctx = str(body.get("context") or "")[:500]
+    models_cfg = body.get("models") or {}
+    code_model = str(models_cfg.get("qc") or models_cfg.get("planner") or "").strip() or "featherless-deepseek-pro"
+    if not project:
+        raise HTTPException(400, "project required")
+    safe = _re2.sub(r"[^a-zA-Z0-9_-]", "", project)
+    if safe != project:
+        raise HTTPException(400, "bad project")
+
+    files_text = _read_project_for_review(f"{BASE_ENER_CODE}/{safe}")
+    port = _project_app_port(safe)
+    img, note, _errs = await _capture_screenshot(f"http://host.docker.internal:{port}/")
+
+    vis, code = await _aio.gather(
+        _review_visual(img, user_ctx) if img else _aio.sleep(0, result={}),
+        _review_code(files_text, user_ctx, code_model) if files_text else _aio.sleep(0, result={}),
+    )
+
+    def _cs(v, mx: int) -> int:
+        try:
+            return max(0, min(int(round(float(v))), mx))
+        except Exception:
+            return 0
+
+    scores = {
+        "visual": _cs(vis.get("visual"), 25), "ux": _cs(vis.get("ux"), 20),
+        "code": _cs(code.get("code"), 20), "a11y": _cs(code.get("a11y"), 15),
+        "perf": _cs(code.get("perf"), 10), "correctness": _cs(code.get("correctness"), 10),
+    }
+    maxes = {"visual": 25, "ux": 20, "code": 20, "a11y": 15, "perf": 10, "correctness": 10}
+    total = sum(scores.values())
+
+    suggestions: list[dict] = []
+    for s in (vis.get("suggestions") or []) + (code.get("suggestions") or []):
+        if not isinstance(s, dict):
+            continue
+        sev = str(s.get("severity", "med")).lower()
+        sev = "high" if "high" in sev else ("low" if "low" in sev else "med")
+        title = str(s.get("title", "")).strip()[:160]
+        fix = str(s.get("fix", "")).strip()[:400]
+        if title or fix:
+            suggestions.append({"dim": str(s.get("dim", "general")).lower()[:14], "severity": sev,
+                                "title": title, "fix": fix})
+    suggestions = suggestions[:12]
+
+    if total >= 88:
+        verdict = "เยี่ยม — ระดับ production"
+    elif total >= 72:
+        verdict = "ดี — มีจุดยกระดับ"
+    elif total >= 55:
+        verdict = "พอใช้ — ควรปรับหลายจุด"
+    else:
+        verdict = "ต้องปรับปรุงมาก"
+
+    return JSONResponse({
+        "ok": True, "scores": scores, "max": maxes, "total": total, "verdict": verdict,
+        "image": img or "", "note": ("" if img else note),
+        "suggestions": suggestions, "reviewed": {"visual": bool(img), "code": bool(files_text)},
+    })
+
+
 async def _load_project_memory(project: str) -> dict:
     """Load all memory entries for a project."""
     async with get_db() as db:
