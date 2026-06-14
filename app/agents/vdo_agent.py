@@ -28,8 +28,8 @@ _ASS_HEADER = (
     "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, "
     "Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
     "Style: Default,Loma,64,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,0,0,1,5,3,2,70,70,540,0\n"
-    "Style: Title,Loma,46,&H00A5B4FC,&H00111111,&H64000000,-1,0,0,0,100,100,0,0,1,4,2,8,70,70,90,0\n"
-    "Style: Brand,Loma,34,&H70FFFFFF,&H50000000,&H64000000,0,0,0,0,100,100,0,0,1,2,1,2,40,40,52,0\n\n"
+    "Style: Title,Loma,46,&H00A5B4FC,&H00111111,&H64000000,-1,0,0,0,100,100,0,0,1,4,2,8,70,70,250,0\n"
+    "Style: Brand,Loma,32,&H60FFFFFF,&H50000000,&H64000000,0,0,0,0,100,100,1,0,1,2,1,8,70,70,160,0\n\n"
     "[Events]\n"
     "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
 )
