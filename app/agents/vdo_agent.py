@@ -691,7 +691,8 @@ async def generate_mystery_script(topic: str = "", title: str = "", summary: str
         'ตอบ JSON เท่านั้น: {"title": "หัวข้อสั้น", "lines": ["ประโยคสั้นๆ", "..."], '
         '"caption": "แคปชั่นโพสต์ + #แฮชแท็ก เช่น #สายมู #เครื่องราง #ความเชื่อ #ลึกลับ", '
         '"image_prompts": ["ภาพพื้นหลัง 3 ฉากเป็นภาษาอังกฤษให้เข้ากับเรื่อง ไล่ตามเนื้อหา (ไม่มีตัวหนังสือในภาพ)", "...", "..."], '
-        '"video_queries": ["คำค้นวิดีโอสต็อกจริงสั้นๆ ภาษาอังกฤษ 1-3 คำ เน้นบรรยากาศไทย/เอเชีย ใส่คำว่า Thai หรือ Thailand เมื่อเข้ากับเรื่อง เช่น Thai temple, Thai monk, Thailand misty forest, incense smoke shrine, Thai river mist", "...", "..."]}'
+        '"video_queries": ["คำค้นวิดีโอสต็อกจริงสั้นๆ ภาษาอังกฤษ 1-3 คำ เน้นบรรยากาศไทย/เอเชีย ใส่คำว่า Thai หรือ Thailand เมื่อเข้ากับเรื่อง เช่น Thai temple, Thai monk, Thailand misty forest, incense smoke shrine, Thai river mist", "...", "..."], '
+        '"ai_video_prompt": "พรอมต์ภาษาอังกฤษ 1 ประโยค สำหรับ AI สร้างวิดีโอ \\"ฉากเด็ด\\" ที่สต็อกไม่มี (เช่น พญานาค/ของขลังเรืองแสง/ควันวนรอบพระ) cinematic ขลังๆ"}'
     )
     data = _parse_json(await _or_chat(SCRIPT_MODEL, system, prompt, 1000))
     lines = [_strip_quotes(str(x)) for x in (data.get("lines") or []) if str(x).strip()][:8]
@@ -704,8 +705,10 @@ async def generate_mystery_script(topic: str = "", title: str = "", summary: str
     if not image_prompts:
         image_prompts = [out_title]
     video_queries = [str(x).strip()[:80] for x in (data.get("video_queries") or []) if str(x).strip()][:3]
+    ai_video_prompt = str(data.get("ai_video_prompt") or "").strip()[:300]
     return {"title": out_title, "lines": lines, "caption": caption,
-            "image_prompts": image_prompts, "video_queries": video_queries}
+            "image_prompts": image_prompts, "video_queries": video_queries,
+            "ai_video_prompt": ai_video_prompt}
 
 
 async def _bg_item(video_query: str, image_prompt: str, idx: int) -> tuple[str, str] | None:
@@ -741,7 +744,22 @@ async def make_mystery_short(topic: str = "", title: str = "", summary: str = ""
         vq = vqs[i] if i < len(vqs) else (vqs[0] if vqs else "")
         ip = imps[i] if i < len(imps) else (imps[0] if imps else script["title"])
         slots.append((vq, ip, i))
-    items = await asyncio.gather(*[_bg_item(vq, ip, i) for vq, ip, i in slots])
+    items = list(await asyncio.gather(*[_bg_item(vq, ip, i) for vq, ip, i in slots]))
+
+    # one "hero" slot rendered by AI video (naga / glowing relic) when fal.ai is configured;
+    # the rest stay free Thai stock. Place it as the middle scene for impact.
+    try:
+        from app.agents import aivideo
+        hero = script.get("ai_video_prompt") or ""
+        if aivideo.enabled() and hero:
+            hv = await aivideo.generate_ai_video(hero, os.path.join(VDO_DIR, f"hero_{int(time.time())}.mp4"))
+            if hv:
+                pos = 1 if len(items) >= 2 else 0
+                items.insert(pos, (hv, "video"))
+                items = items[:3]
+    except Exception:
+        pass
+
     items = [it for it in items if it]
 
     r = await _render_clip(script["title"], script["lines"], bg_items=items, face_pip=face_pip)
