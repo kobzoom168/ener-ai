@@ -159,16 +159,61 @@ def _build_ass(title: str, lines: list[str], duration: float, ass_path: str) -> 
         f.write(_ASS_HEADER + "\n".join(events) + "\n")
 
 
-def _render(audio_path: str, ass_path: str, duration: float, out_path: str) -> tuple[bool, str]:
-    bg = f"color=c=0x0f172a:s=1080x1920:d={duration:.2f}"
-    cmd = [
-        "ffmpeg", "-y",
-        "-f", "lavfi", "-i", bg,
-        "-i", audio_path,
-        "-vf", f"subtitles={ass_path}",
-        "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "128k", "-shortest", out_path,
-    ]
+async def _gen_bg_image(prompt: str) -> str | None:
+    """Generate a topical 9:16 background image via OpenRouter (Gemini image). Fail-open."""
+    try:
+        import base64 as _b64
+        import httpx
+        from app.core.openrouter_client import get_openrouter_api_key, openrouter_base_url
+        key = await get_openrouter_api_key()
+        if not key:
+            return None
+        body = {
+            "model": "google/gemini-2.5-flash-image",
+            "modalities": ["image", "text"],
+            "messages": [{"role": "user", "content": (
+                f"{prompt}. Vertical 9:16 cinematic atmospheric background, dark and moody, "
+                "mysterious mood, high quality. ABSOLUTELY NO text, no words, no letters, no captions."
+            )}],
+        }
+        async with httpx.AsyncClient(timeout=90) as c:
+            r = await c.post(openrouter_base_url() + "/chat/completions",
+                             headers={"Authorization": "Bearer " + key}, json=body)
+        if r.status_code >= 300:
+            return None
+        imgs = ((r.json().get("choices") or [{}])[0].get("message") or {}).get("images") or []
+        url = (imgs[0].get("image_url") or {}).get("url") if imgs else ""
+        if not url or "base64," not in url:
+            return None
+        os.makedirs(VDO_DIR, exist_ok=True)
+        path = os.path.join(VDO_DIR, f"bg_{int(time.time())}.png")
+        with open(path, "wb") as f:
+            f.write(_b64.b64decode(url.split("base64,", 1)[1]))
+        return path
+    except Exception:
+        return None
+
+
+def _render(audio_path: str, ass_path: str, duration: float, out_path: str,
+            bg_image: str | None = None) -> tuple[bool, str]:
+    if bg_image and os.path.exists(bg_image):
+        # still image → fill 1080x1920, darken for caption readability, burn subs
+        vf = ("scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+              f"eq=brightness=-0.20:saturation=1.1,subtitles={ass_path}")
+        cmd = [
+            "ffmpeg", "-y", "-loop", "1", "-i", bg_image, "-i", audio_path,
+            "-vf", vf, "-t", f"{duration:.2f}",
+            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "128k", "-shortest", out_path,
+        ]
+    else:
+        bg = f"color=c=0x0f172a:s=1080x1920:d={duration:.2f}"
+        cmd = [
+            "ffmpeg", "-y", "-f", "lavfi", "-i", bg, "-i", audio_path,
+            "-vf", f"subtitles={ass_path}",
+            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "128k", "-shortest", out_path,
+        ]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=240)
         if r.returncode == 0 and os.path.exists(out_path):
@@ -214,8 +259,8 @@ async def make_news_short(title: str, summary: str) -> dict:
             "duration": round(duration, 1)}
 
 
-async def _render_clip(title: str, lines: list[str]) -> dict:
-    """Shared render: lines -> gTTS -> ASS captions -> MP4. Returns {ok, mp4, duration, error}."""
+async def _render_clip(title: str, lines: list[str], bg_image: str | None = None) -> dict:
+    """Shared render: lines -> gTTS -> ASS captions -> MP4 (optional bg image). Fail-open bg."""
     os.makedirs(VDO_DIR, exist_ok=True)
     stamp = int(time.time())
     base = os.path.join(VDO_DIR, f"vdo_{stamp}")
@@ -230,12 +275,16 @@ async def _render_clip(title: str, lines: list[str]) -> dict:
     if duration <= 0:
         return {"ok": False, "error": "อ่านความยาวเสียงไม่ได้"}
     await asyncio.to_thread(_build_ass, title, lines, duration, ass)
-    ok, err = await asyncio.to_thread(_render, mp3, ass, duration, mp4)
+    ok, err = await asyncio.to_thread(_render, mp3, ass, duration, mp4, bg_image)
+    if not ok and bg_image:
+        # bg image broke the render → retry on the plain solid background
+        ok, err = await asyncio.to_thread(_render, mp3, ass, duration, mp4, None)
     if not ok:
         return {"ok": False, "error": f"render ล้มเหลว: {err}"}
-    for p in (mp3, ass):
+    for p in (mp3, ass, bg_image or ""):
         try:
-            os.remove(p)
+            if p:
+                os.remove(p)
         except Exception:
             pass
     return {"ok": True, "mp4": mp4, "duration": round(duration, 1)}
@@ -269,7 +318,8 @@ async def generate_mystery_script(topic: str = "", title: str = "", summary: str
         "- เล่า 3-5 ประโยคสั้น (ที่มา/ตำนาน/ความเชื่อ/เกร็ดน่ารู้)\n"
         "- ปิดด้วยประโยคชวนคิด/ชวนติดตาม (ไม่การันตีผล)\n"
         'ตอบ JSON เท่านั้น: {"title": "หัวข้อสั้น", "lines": ["ประโยคสั้นๆ", "..."], '
-        '"caption": "แคปชั่นโพสต์ + #แฮชแท็ก เช่น #สายมู #เครื่องราง #ความเชื่อ #ลึกลับ"}'
+        '"caption": "แคปชั่นโพสต์ + #แฮชแท็ก เช่น #สายมู #เครื่องราง #ความเชื่อ #ลึกลับ", '
+        '"image_prompt": "คำอธิบายภาพพื้นหลังเป็นภาษาอังกฤษให้เข้ากับเรื่อง (ไม่มีตัวหนังสือในภาพ)"}'
     )
     data = _parse_json(await _or_chat(SCRIPT_MODEL, system, prompt, 800))
     lines = [str(x).strip() for x in (data.get("lines") or []) if str(x).strip()][:8]
@@ -277,13 +327,16 @@ async def generate_mystery_script(topic: str = "", title: str = "", summary: str
     if not lines:
         lines = [out_title]
     caption = str(data.get("caption") or out_title).strip()[:300]
-    return {"title": out_title, "lines": lines, "caption": caption}
+    image_prompt = str(data.get("image_prompt") or out_title).strip()[:300]
+    return {"title": out_title, "lines": lines, "caption": caption, "image_prompt": image_prompt}
 
 
 async def make_mystery_short(topic: str = "", title: str = "", summary: str = "") -> dict:
-    """สายมู short: AI picks/retells a mystery topic -> Thai short MP4."""
+    """สายมู short: AI picks/retells a mystery topic -> Thai short MP4 (with a topical bg image)."""
     script = await generate_mystery_script(topic, title, summary)
-    r = await _render_clip(script["title"], script["lines"])
+    bg = await _gen_bg_image(script.get("image_prompt") or script["title"])
+    r = await _render_clip(script["title"], script["lines"], bg)
     if r.get("ok"):
-        r.update({"caption": script["caption"], "lines": script["lines"], "title": script["title"]})
+        r.update({"caption": script["caption"], "lines": script["lines"], "title": script["title"],
+                  "has_bg": bool(bg)})
     return r
