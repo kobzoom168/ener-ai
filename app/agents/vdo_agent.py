@@ -28,10 +28,14 @@ _ASS_HEADER = (
     "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, "
     "Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
     "Style: Default,Loma,64,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,0,0,1,5,3,2,70,70,540,0\n"
-    "Style: Title,Loma,46,&H00A5B4FC,&H00111111,&H64000000,-1,0,0,0,100,100,0,0,1,4,2,8,70,70,90,0\n\n"
+    "Style: Title,Loma,46,&H00A5B4FC,&H00111111,&H64000000,-1,0,0,0,100,100,0,0,1,4,2,8,70,70,90,0\n"
+    "Style: Brand,Loma,34,&H70FFFFFF,&H50000000,&H64000000,0,0,0,0,100,100,0,0,1,2,1,2,40,40,52,0\n\n"
     "[Events]\n"
     "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
 )
+
+# Small brand watermark burned at the bottom of every clip (set "" to disable).
+VDO_BRAND_TEXT = os.environ.get("VDO_BRAND_TEXT", "Ener Scan • my-ener.uk")
 
 
 async def _or_chat(model: str, system: str, prompt: str, max_tokens: int = 700) -> str:
@@ -297,6 +301,10 @@ def _build_ass(title: str, segments: list[tuple[str, float]], ass_path: str) -> 
     events.append(
         f"Dialogue: 0,{_ass_ts(0)},{_ass_ts(total)},Title,,0,0,0,,{_wrap_thai(_ass_escape(title)[:80], 30)}"
     )
+    if VDO_BRAND_TEXT.strip():
+        events.append(
+            f"Dialogue: 0,{_ass_ts(0)},{_ass_ts(total)},Brand,,0,0,0,,{_ass_escape(VDO_BRAND_TEXT)[:40]}"
+        )
     t = 0.0
     for ln, d in segments:
         rows = _wrap_rows(_ass_escape(ln), 22) or [_ass_escape(ln)]
