@@ -371,42 +371,54 @@ async def _gen_bg_images(prompts: list[str]) -> list[str]:
     return [p for p in results if p]
 
 
+async def _pexels_pick(query: str, key: str) -> dict | None:
+    """Search Pexels for `query`, return the best portrait mp4 file (closest to 9:16)."""
+    import httpx
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.get(
+            "https://api.pexels.com/videos/search",
+            headers={"Authorization": key},
+            params={"query": query, "orientation": "portrait", "size": "medium", "per_page": 8},
+        )
+    if r.status_code >= 300:
+        return None
+    target = 1920 / 1080  # h/w for 9:16 ≈ 1.778
+    best, best_score = None, None
+    for v in (r.json().get("videos") or []):
+        vw, vh = v.get("width") or 0, v.get("height") or 0
+        if (v.get("duration") or 0) < 2 or vw <= 0 or vh < vw:
+            continue
+        files = [f for f in (v.get("video_files") or [])
+                 if f.get("file_type") == "video/mp4" and f.get("link")
+                 and (f.get("height") or 0) >= (f.get("width") or 0)]  # portrait only
+        if not files:
+            continue
+        score = abs((vh / vw) - target)
+        if best is None or score < best_score:
+            files.sort(key=lambda f: abs((f.get("width") or 0) - 1080))
+            best, best_score = files[0], score
+    return best
+
+
 async def _fetch_stock_video(query: str, idx: int = 0) -> str | None:
-    """Find + download a real vertical stock video for `query` from Pexels. Fail-open None."""
+    """Find + download a real vertical Thai stock video for `query` from Pexels. Fail-open.
+
+    Tries the (Thai-biased) query first; if nothing matches, retries once with the Thai
+    words stripped so we still get a real video rather than dropping to an AI image.
+    """
     key = os.environ.get("PEXELS_API_KEY", "").strip()
     query = (query or "").strip()
     if not key or not query:
         return None
     try:
-        import httpx
-        async with httpx.AsyncClient(timeout=30) as c:
-            r = await c.get(
-                "https://api.pexels.com/videos/search",
-                headers={"Authorization": key},
-                params={"query": query, "orientation": "portrait",
-                        "size": "medium", "per_page": 8},
-            )
-        if r.status_code >= 300:
-            return None
-        # prefer the clip whose aspect is closest to true 9:16 so it fills the frame
-        # with minimal crop (avoids the zoomed/"pulled" look from cropping 4:5 or square).
-        target = 1920 / 1080  # h/w for 9:16 ≈ 1.778
-        best, best_score = None, None
-        for v in (r.json().get("videos") or []):
-            vw, vh = v.get("width") or 0, v.get("height") or 0
-            if (v.get("duration") or 0) < 2 or vw <= 0 or vh < vw:
-                continue
-            files = [f for f in (v.get("video_files") or [])
-                     if f.get("file_type") == "video/mp4" and f.get("link")
-                     and (f.get("height") or 0) >= (f.get("width") or 0)]  # portrait only
-            if not files:
-                continue
-            score = abs((vh / vw) - target)
-            if best is None or score < best_score:
-                files.sort(key=lambda f: abs((f.get("width") or 0) - 1080))
-                best, best_score = files[0], score
+        best = await _pexels_pick(query, key)
+        if not best:
+            broadened = re.sub(r"\b(thai|thailand|bangkok)\b", "", query, flags=re.IGNORECASE).strip()
+            if broadened and broadened.lower() != query.lower():
+                best = await _pexels_pick(broadened, key)
         if not best:
             return None
+        import httpx
         os.makedirs(VDO_DIR, exist_ok=True)
         path = os.path.join(VDO_DIR, f"sv_{int(time.time())}_{idx}.mp4")
         async with httpx.AsyncClient(timeout=120, follow_redirects=True) as c:
@@ -686,7 +698,7 @@ async def generate_mystery_script(topic: str = "", title: str = "", summary: str
         'ตอบ JSON เท่านั้น: {"title": "หัวข้อสั้น", "lines": ["ประโยคสั้นๆ", "..."], '
         '"caption": "แคปชั่นโพสต์ + #แฮชแท็ก เช่น #สายมู #เครื่องราง #ความเชื่อ #ลึกลับ", '
         '"image_prompts": ["ภาพพื้นหลัง 3 ฉากเป็นภาษาอังกฤษให้เข้ากับเรื่อง ไล่ตามเนื้อหา (ไม่มีตัวหนังสือในภาพ)", "...", "..."], '
-        '"video_queries": ["คำค้นวิดีโอสต็อกจริงสั้นๆ เป็นภาษาอังกฤษ 1-3 คำ ให้เข้ากับฉาก เช่น temple incense smoke / candle dark ritual / foggy forest night", "...", "..."]}'
+        '"video_queries": ["คำค้นวิดีโอสต็อกจริงสั้นๆ ภาษาอังกฤษ 1-3 คำ เน้นบรรยากาศไทย/เอเชีย ใส่คำว่า Thai หรือ Thailand เมื่อเข้ากับเรื่อง เช่น Thai temple, Thai monk, Thailand misty forest, incense smoke shrine, Thai river mist", "...", "..."]}'
     )
     data = _parse_json(await _or_chat(SCRIPT_MODEL, system, prompt, 1000))
     lines = [_strip_quotes(str(x)) for x in (data.get("lines") or []) if str(x).strip()][:8]
