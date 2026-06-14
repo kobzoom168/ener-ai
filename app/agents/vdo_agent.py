@@ -466,65 +466,49 @@ def _audio_filter(voice_idx: int, bgm_idx: int | None, duration: float) -> tuple
 
 def _render(audio_path: str, ass_path: str, duration: float, out_path: str,
             bg_images: list[str] | None = None,
-            bg_videos: list[str] | None = None) -> tuple[bool, str]:
-    imgs = [p for p in (bg_images or []) if p and os.path.exists(p)]
-    vids = [p for p in (bg_videos or []) if p and os.path.exists(p)]
+            bg_videos: list[str] | None = None,
+            bg_items: list[tuple[str, str]] | None = None) -> tuple[bool, str]:
     bgm = BGM_PATH if os.path.exists(BGM_PATH) else None
     fps = 25
-    if vids:
-        # real stock-video slideshow: each clip filled to its segment (looped if short),
-        # cropped to 9:16, darkened for caption readability. Source audio is dropped.
-        n = len(vids)
-        seg = max(1.0, duration / n)
-        cmd = ["ffmpeg", "-y"]
-        for p in vids:
-            cmd += ["-stream_loop", "-1", "-t", f"{seg:.2f}", "-i", p]
-        cmd += ["-i", audio_path]
-        voice_idx, bgm_idx = n, None
-        if bgm:
-            cmd += ["-stream_loop", "-1", "-i", bgm]
-            bgm_idx = n + 1
-        chains = []
-        for i in range(n):
-            chains.append(
-                f"[{i}:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
-                f"fps={fps},setpts=PTS-STARTPTS,setsar=1[v{i}]"
-            )
-        cat = "".join(f"[v{i}]" for i in range(n))
-        fc = (";".join(chains) +
-              f";{cat}concat=n={n}:v=1:a=0,eq=brightness=-0.18:saturation=1.05,"
-              f"subtitles={ass_path}[vout]")
-        fc_a, amap = _audio_filter(voice_idx, bgm_idx, duration)
-        if fc_a:
-            fc += ";" + fc_a
-        cmd += ["-filter_complex", fc, "-map", "[vout]", "-map", amap,
-                "-r", str(fps), "-c:v", "libx264", "-preset", "veryfast",
-                "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-shortest", out_path]
-    elif imgs:
-        # slideshow of the images, each with a slow Ken Burns zoom (camera motion),
-        # darkened for caption readability. 1 image = 1 zooming segment.
-        n = len(imgs)
-        fps = 25
+    # normalize backgrounds into an ordered list of (path, kind) — videos and AI images
+    # can be mixed in one clip (a slot with no stock video falls back to an image).
+    items = list(bg_items or [])
+    if not items:
+        items = ([(p, "video") for p in (bg_videos or [])] +
+                 [(p, "image") for p in (bg_images or [])])
+    items = [(p, k) for (p, k) in items if p and os.path.exists(p)]
+
+    if items:
+        n = len(items)
         seg = max(1.0, duration / n)
         dframes = max(fps, int(seg * fps))
         cmd = ["ffmpeg", "-y"]
-        for p in imgs:
-            cmd += ["-loop", "1", "-t", f"{seg:.2f}", "-i", p]
+        for p, k in items:
+            if k == "image":
+                cmd += ["-loop", "1", "-t", f"{seg:.2f}", "-i", p]
+            else:
+                cmd += ["-stream_loop", "-1", "-t", f"{seg:.2f}", "-i", p]
         cmd += ["-i", audio_path]
         voice_idx, bgm_idx = n, None
         if bgm:
             cmd += ["-stream_loop", "-1", "-i", bgm]
             bgm_idx = n + 1
         chains = []
-        for i in range(n):
-            chains.append(
-                f"[{i}:v]scale=1620:2880:force_original_aspect_ratio=increase,crop=1620:2880,"
-                f"zoompan=z='min(zoom+0.0012,1.35)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
-                f"d={dframes}:s=1080x1920:fps={fps},setsar=1[v{i}]"
-            )
+        for i, (p, k) in enumerate(items):
+            if k == "image":  # still image -> slow Ken Burns zoom
+                chains.append(
+                    f"[{i}:v]scale=1620:2880:force_original_aspect_ratio=increase,crop=1620:2880,"
+                    f"zoompan=z='min(zoom+0.0012,1.35)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+                    f"d={dframes}:s=1080x1920:fps={fps},setsar=1[v{i}]"
+                )
+            else:  # real video -> fill 9:16
+                chains.append(
+                    f"[{i}:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+                    f"fps={fps},setpts=PTS-STARTPTS,setsar=1[v{i}]"
+                )
         cat = "".join(f"[v{i}]" for i in range(n))
         fc = (";".join(chains) +
-              f";{cat}concat=n={n}:v=1:a=0,eq=brightness=-0.20:saturation=1.1,"
+              f";{cat}concat=n={n}:v=1:a=0,eq=brightness=-0.19:saturation=1.08,"
               f"subtitles={ass_path}[vout]")
         fc_a, amap = _audio_filter(voice_idx, bgm_idx, duration)
         if fc_a:
@@ -606,7 +590,8 @@ async def make_news_short(title: str, summary: str) -> dict:
 
 
 async def _render_clip(title: str, lines: list[str], bg_images: list[str] | None = None,
-                       bg_videos: list[str] | None = None, face_pip: bool = False) -> dict:
+                       bg_videos: list[str] | None = None, face_pip: bool = False,
+                       bg_items: list[tuple[str, str]] | None = None) -> dict:
     """Shared render: lines -> TTS -> ASS captions -> MP4 (stock-video or image slideshow).
 
     If face_pip and a D-ID talking head can be made, the user's lip-synced face is
@@ -618,6 +603,9 @@ async def _render_clip(title: str, lines: list[str], bg_images: list[str] | None
     mp3, ass, mp4 = base + ".mp3", base + ".ass", base + ".mp4"
     bg_images = [p for p in (bg_images or []) if p]
     bg_videos = [p for p in (bg_videos or []) if p]
+    bg_items = [it for it in (bg_items or []) if it and it[0]]
+    if not bg_items:
+        bg_items = [(p, "video") for p in bg_videos] + [(p, "image") for p in bg_images]
     if not lines:
         return {"ok": False, "error": "ไม่มีบทพากย์"}
     try:
@@ -639,10 +627,10 @@ async def _render_clip(title: str, lines: list[str], bg_images: list[str] | None
             pip_video = None
 
     render_target = (base + "_bg.mp4") if pip_video else mp4
-    ok, err = await asyncio.to_thread(_render, mp3, ass, duration, render_target, bg_images, bg_videos)
-    if not ok and (bg_videos or bg_images):
+    ok, err = await asyncio.to_thread(_render, mp3, ass, duration, render_target, None, None, bg_items)
+    if not ok and bg_items:
         # the slideshow/zoom render broke → retry plain solid so the clip still ships
-        ok, err = await asyncio.to_thread(_render, mp3, ass, duration, render_target, None, None)
+        ok, err = await asyncio.to_thread(_render, mp3, ass, duration, render_target, None, None, None)
     if not ok:
         return {"ok": False, "error": f"render ล้มเหลว: {err}"}
 
@@ -654,7 +642,7 @@ async def _render_clip(title: str, lines: list[str], bg_images: list[str] | None
             except Exception:
                 mp4 = render_target
 
-    for p in [mp3, ass, base + "_bg.mp4", pip_video] + bg_images + bg_videos:
+    for p in [mp3, ass, base + "_bg.mp4", pip_video] + [it[0] for it in bg_items]:
         if p and p != mp4:
             try:
                 os.remove(p)
@@ -715,10 +703,24 @@ async def generate_mystery_script(topic: str = "", title: str = "", summary: str
             "image_prompts": image_prompts, "video_queries": video_queries}
 
 
+async def _bg_item(video_query: str, image_prompt: str, idx: int) -> tuple[str, str] | None:
+    """One background slot: real stock video (Thai→foreign) if found, else an AI image."""
+    if video_query:
+        v = await _fetch_stock_video(video_query, idx)
+        if v:
+            return (v, "video")
+    if image_prompt:
+        img = await _gen_bg_image(image_prompt)
+        if img:
+            return (img, "image")
+    return None
+
+
 async def make_mystery_short(topic: str = "", title: str = "", summary: str = "") -> dict:
     """สายมู short: AI picks/retells a mystery topic -> Thai short MP4.
 
-    Background: prefer real stock video (Pexels) for true motion; fall back to AI images.
+    Each of the (up to 3) background slots prefers a real Thai stock video, then a foreign
+    one, then an AI image — so videos and images can be mixed within one clip.
     """
     script = await generate_mystery_script(topic, title, summary)
     try:
@@ -726,15 +728,21 @@ async def make_mystery_short(topic: str = "", title: str = "", summary: str = ""
         face_pip = _th_enabled()
     except Exception:
         face_pip = False
-    videos = await _fetch_stock_videos(script.get("video_queries") or [])
-    if videos:
-        bg_kind, bg_count = "video", len(videos)
-        r = await _render_clip(script["title"], script["lines"], bg_videos=videos, face_pip=face_pip)
-    else:
-        bgs = await _gen_bg_images(script.get("image_prompts") or [script["title"]])
-        bg_kind, bg_count = "image", len(bgs)
-        r = await _render_clip(script["title"], script["lines"], bg_images=bgs, face_pip=face_pip)
+
+    vqs = script.get("video_queries") or []
+    imps = script.get("image_prompts") or []
+    slots = []
+    for i in range(3):
+        vq = vqs[i] if i < len(vqs) else (vqs[0] if vqs else "")
+        ip = imps[i] if i < len(imps) else (imps[0] if imps else script["title"])
+        slots.append((vq, ip, i))
+    items = await asyncio.gather(*[_bg_item(vq, ip, i) for vq, ip, i in slots])
+    items = [it for it in items if it]
+
+    r = await _render_clip(script["title"], script["lines"], bg_items=items, face_pip=face_pip)
     if r.get("ok"):
+        kinds = [k for _, k in items]
         r.update({"caption": script["caption"], "lines": script["lines"], "title": script["title"],
-                  "bg_count": bg_count, "bg_kind": bg_kind})
+                  "bg_count": len(items),
+                  "bg_kind": f"{kinds.count('video')}vid+{kinds.count('image')}img"})
     return r
