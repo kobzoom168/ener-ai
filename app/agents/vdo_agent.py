@@ -546,6 +546,24 @@ def _render(audio_path: str, ass_path: str, duration: float, out_path: str,
         return False, str(exc)[:300]
 
 
+def _overlay_pip(base_mp4: str, pip_mp4: str, out_path: str) -> tuple[bool, str]:
+    """Overlay the talking-head video as a PIP at the bottom-left (above the TikTok UI),
+    keeping the base clip's audio and dropping the PIP's own audio track."""
+    fc = ("[1:v]scale=380:-1,setsar=1,pad=iw+8:ih+8:4:4:color=0x00000000[pip];"
+          "[0:v][pip]overlay=x=42:y=H-h-300[v]")
+    cmd = ["ffmpeg", "-y", "-i", base_mp4, "-i", pip_mp4,
+           "-filter_complex", fc, "-map", "[v]", "-map", "0:a",
+           "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+           "-c:a", "copy", "-shortest", out_path]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        if r.returncode == 0 and os.path.exists(out_path):
+            return True, "ok"
+        return False, (r.stderr or "overlay failed")[-400:]
+    except Exception as exc:
+        return False, str(exc)[:300]
+
+
 async def make_news_short(title: str, summary: str) -> dict:
     """News -> funny Thai short MP4. Returns {ok, mp4, caption, lines, error}."""
     os.makedirs(VDO_DIR, exist_ok=True)
@@ -580,8 +598,12 @@ async def make_news_short(title: str, summary: str) -> dict:
 
 
 async def _render_clip(title: str, lines: list[str], bg_images: list[str] | None = None,
-                       bg_videos: list[str] | None = None) -> dict:
-    """Shared render: lines -> TTS -> ASS captions -> MP4 (stock-video or image slideshow)."""
+                       bg_videos: list[str] | None = None, face_pip: bool = False) -> dict:
+    """Shared render: lines -> TTS -> ASS captions -> MP4 (stock-video or image slideshow).
+
+    If face_pip and a D-ID talking head can be made, the user's lip-synced face is
+    overlaid bottom-left as a PIP (the narration mp3 is served publicly for D-ID to fetch).
+    """
     os.makedirs(VDO_DIR, exist_ok=True)
     stamp = int(time.time())
     base = os.path.join(VDO_DIR, f"vdo_{stamp}")
@@ -597,18 +619,42 @@ async def _render_clip(title: str, lines: list[str], bg_images: list[str] | None
     if not segments or duration <= 0:
         return {"ok": False, "error": "อ่านความยาวเสียงไม่ได้"}
     await asyncio.to_thread(_build_ass, title, segments, ass)
-    ok, err = await asyncio.to_thread(_render, mp3, ass, duration, mp4, bg_images, bg_videos)
+
+    # talking-head PIP (optional): generate while the mp3 is still on disk + served publicly
+    pip_video = None
+    if face_pip:
+        try:
+            from app.agents import talkinghead
+            if talkinghead.enabled():
+                audio_url = f"{talkinghead.PUBLIC_BASE}/vdo/audio/{os.path.basename(mp3)}"
+                pip_video = await talkinghead.generate_talking_head(audio_url, base + "_pip.mp4")
+        except Exception:
+            pip_video = None
+
+    render_target = (base + "_bg.mp4") if pip_video else mp4
+    ok, err = await asyncio.to_thread(_render, mp3, ass, duration, render_target, bg_images, bg_videos)
     if not ok and (bg_videos or bg_images):
         # the slideshow/zoom render broke → retry plain solid so the clip still ships
-        ok, err = await asyncio.to_thread(_render, mp3, ass, duration, mp4, None, None)
+        ok, err = await asyncio.to_thread(_render, mp3, ass, duration, render_target, None, None)
     if not ok:
         return {"ok": False, "error": f"render ล้มเหลว: {err}"}
-    for p in [mp3, ass] + bg_images + bg_videos:
-        try:
-            os.remove(p)
-        except Exception:
-            pass
-    return {"ok": True, "mp4": mp4, "duration": round(duration, 1)}
+
+    if pip_video:
+        ok2, err2 = await asyncio.to_thread(_overlay_pip, render_target, pip_video, mp4)
+        if not ok2:  # overlay failed → ship the plain clip
+            try:
+                os.replace(render_target, mp4)
+            except Exception:
+                mp4 = render_target
+
+    for p in [mp3, ass, base + "_bg.mp4", pip_video] + bg_images + bg_videos:
+        if p and p != mp4:
+            try:
+                os.remove(p)
+            except Exception:
+                pass
+    return {"ok": True, "mp4": mp4, "duration": round(duration, 1),
+            "talking_head": bool(pip_video)}
 
 
 async def generate_mystery_script(topic: str = "", title: str = "", summary: str = "") -> dict:
@@ -668,14 +714,19 @@ async def make_mystery_short(topic: str = "", title: str = "", summary: str = ""
     Background: prefer real stock video (Pexels) for true motion; fall back to AI images.
     """
     script = await generate_mystery_script(topic, title, summary)
+    try:
+        from app.agents.talkinghead import enabled as _th_enabled
+        face_pip = _th_enabled()
+    except Exception:
+        face_pip = False
     videos = await _fetch_stock_videos(script.get("video_queries") or [])
     if videos:
         bg_kind, bg_count = "video", len(videos)
-        r = await _render_clip(script["title"], script["lines"], bg_videos=videos)
+        r = await _render_clip(script["title"], script["lines"], bg_videos=videos, face_pip=face_pip)
     else:
         bgs = await _gen_bg_images(script.get("image_prompts") or [script["title"]])
         bg_kind, bg_count = "image", len(bgs)
-        r = await _render_clip(script["title"], script["lines"], bg_images=bgs)
+        r = await _render_clip(script["title"], script["lines"], bg_images=bgs, face_pip=face_pip)
     if r.get("ok"):
         r.update({"caption": script["caption"], "lines": script["lines"], "title": script["title"],
                   "bg_count": bg_count, "bg_kind": bg_kind})

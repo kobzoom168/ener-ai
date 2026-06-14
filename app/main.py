@@ -7025,6 +7025,50 @@ async def vdo_file(name: str):
     return FileResponse(path, media_type="video/mp4", filename=name)
 
 
+@app.get("/vdo/audio/{name}")
+async def vdo_audio(name: str):
+    """Serve a narration mp3 (public so D-ID can fetch it to lip-sync)."""
+    import os as _osa, re as _rea
+    if not _rea.fullmatch(r"vdo_\d+\.mp3", name or ""):
+        raise HTTPException(status_code=404, detail="not found")
+    path = _osa.path.join("/app/data/vdo", name)
+    if not _osa.path.exists(path):
+        raise HTTPException(status_code=404, detail="not found")
+    return FileResponse(path, media_type="audio/mpeg")
+
+
+@app.get("/avatar/face.jpg")
+async def avatar_face():
+    """Serve the uploaded face photo (public so D-ID can fetch it as the talk source)."""
+    import os
+    from app.agents.talkinghead import FACE_PATH
+    if not os.path.exists(FACE_PATH):
+        raise HTTPException(status_code=404, detail="not found")
+    with open(FACE_PATH, "rb") as fh:
+        head = fh.read(8)
+    media = "image/png" if head.startswith(b"\x89PNG") else "image/jpeg"
+    return FileResponse(FACE_PATH, media_type=media)
+
+
+@app.post("/workspace/autopost/face")
+async def workspace_autopost_face(request: Request):
+    """Upload the user's face photo (used for the D-ID talking-head PIP)."""
+    await _require_admin(request)
+    import os
+    from app.agents.talkinghead import FACE_DIR, FACE_PATH
+    form = await request.form()
+    f = form.get("image")
+    if not f or not hasattr(f, "read"):
+        raise HTTPException(status_code=400, detail="no image")
+    data = await f.read()
+    if not data or len(data) < 1000:
+        raise HTTPException(status_code=400, detail="bad image")
+    os.makedirs(FACE_DIR, exist_ok=True)
+    with open(FACE_PATH, "wb") as fh:
+        fh.write(data)
+    return JSONResponse({"ok": True, "size": len(data)})
+
+
 @app.get("/workspace/news")
 async def workspace_news(request: Request):
     await _require_admin(request)

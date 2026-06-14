@@ -2423,6 +2423,30 @@ document.addEventListener('DOMContentLoaded', function() {
       '</div>').join('');
   }
 
+  async function uploadFace(input) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    const msg = document.getElementById('ap-face-msg');
+    if (msg) msg.textContent = '⏳ กำลังอัปโหลด…';
+    try {
+      const fd = new FormData();
+      fd.append('image', file);
+      const res = await fetch('/workspace/autopost/face', {
+        method: 'POST', body: fd, credentials: 'same-origin',
+      });
+      if (!res.ok) throw new Error('upload failed');
+      if (msg) msg.textContent = '✅ อัปโหลดแล้ว';
+      const img = document.getElementById('ap-face-preview');
+      if (img) { img.style.display = ''; img.src = '/avatar/face.jpg?t=' + Date.now(); }
+      showToast('อัปโหลดรูปหน้าแล้ว ✅');
+    } catch (e) {
+      if (msg) msg.textContent = '❌ ' + e.message;
+      showToast('อัปโหลดไม่สำเร็จ: ' + e.message);
+    }
+    input.value = '';
+  }
+
+  window.uploadFace = uploadFace;
   window.loadAutopost = loadAutopost;
   window.saveAutopost = saveAutopost;
   window.runAutopostNow = runAutopostNow;

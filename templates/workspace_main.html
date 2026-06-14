@@ -164,6 +164,17 @@
 
         <div id="autopost-channels" style="margin-bottom:16px"></div>
 
+        <div class="surface" style="padding:12px 16px;border:1px solid var(--border);border-radius:12px;margin-bottom:16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          <img id="ap-face-preview" src="/avatar/face.jpg" onerror="this.style.display='none'" style="width:54px;height:54px;border-radius:50%;object-fit:cover;border:2px solid var(--border)">
+          <div style="flex:1;min-width:180px">
+            <div style="font-weight:600;font-size:13px">🗣️ หน้าพูด (D-ID)</div>
+            <div style="font-size:12px;color:var(--muted-foreground)">อัปโหลดรูปหน้าคุณ → คลิปจะมีหน้าคุณพูดมุมล่างซ้าย (ต้องตั้ง DID_API_KEY)</div>
+          </div>
+          <input type="file" id="ap-face-input" accept="image/*" style="display:none" onchange="uploadFace(this)">
+          <button class="panel-action" onclick="document.getElementById('ap-face-input').click()">📸 อัปโหลดรูปหน้า</button>
+          <span id="ap-face-msg" style="font-size:12px;color:var(--muted-foreground)"></span>
+        </div>
+
         <div class="surface" style="padding:16px;border:1px solid var(--border);border-radius:12px;margin-bottom:20px">
           <div style="font-weight:600;margin-bottom:12px" id="autopost-form-title">➕ ตั้งตารางโพสต์ใหม่</div>
           <input type="hidden" id="ap-id" value="">
