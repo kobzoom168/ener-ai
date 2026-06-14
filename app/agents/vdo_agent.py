@@ -27,9 +27,9 @@ _ASS_HEADER = (
     "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, "
     "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, "
     "Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-    "Style: Default,Loma,72,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,0,0,1,5,3,2,70,70,540,0\n"
-    "Style: Title,Loma,62,&H00A5B4FC,&H00111111,&H64000000,-1,0,0,0,100,100,0,0,1,5,3,8,70,70,250,0\n"
-    "Style: Brand,Loma,52,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,1,0,1,3,2,8,70,70,250,0\n\n"
+    "Style: Default,Garuda,72,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,3,0,1,4,3,2,70,70,540,0\n"
+    "Style: Title,Garuda,62,&H00A5B4FC,&H00111111,&H64000000,-1,0,0,0,100,100,0,0,1,5,3,8,70,70,250,0\n"
+    "Style: Brand,Garuda,52,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,1,0,1,3,2,8,70,70,250,0\n\n"
     "[Events]\n"
     "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
 )
