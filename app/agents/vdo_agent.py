@@ -29,13 +29,16 @@ _ASS_HEADER = (
     "Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
     "Style: Default,Loma,64,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,0,0,1,5,3,2,70,70,540,0\n"
     "Style: Title,Loma,46,&H00A5B4FC,&H00111111,&H64000000,-1,0,0,0,100,100,0,0,1,4,2,8,70,70,250,0\n"
-    "Style: Brand,Loma,32,&H60FFFFFF,&H50000000,&H64000000,0,0,0,0,100,100,1,0,1,2,1,8,70,70,160,0\n\n"
+    "Style: Brand,Loma,34,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,1,0,1,2,1,8,70,70,160,0\n\n"
     "[Events]\n"
     "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
 )
 
-# Small brand watermark burned at the bottom of every clip (set "" to disable).
-VDO_BRAND_TEXT = os.environ.get("VDO_BRAND_TEXT", "Ener Scan • my-ener.uk")
+# Brand watermark: handle (green) + website (white). Set both to "" to disable.
+VDO_BRAND_HANDLE = os.environ.get("VDO_BRAND_HANDLE", "@ener")
+VDO_BRAND_WEB = os.environ.get("VDO_BRAND_WEB", "my-ener.uk")
+_BRAND_GREEN = "&H5EC522&"  # ASS BGR for #22c55e
+_BRAND_WHITE = "&HFFFFFF&"
 
 
 async def _or_chat(model: str, system: str, prompt: str, max_tokens: int = 700) -> str:
@@ -301,9 +304,15 @@ def _build_ass(title: str, segments: list[tuple[str, float]], ass_path: str) -> 
     events.append(
         f"Dialogue: 0,{_ass_ts(0)},{_ass_ts(total)},Title,,0,0,0,,{_wrap_thai(_ass_escape(title)[:80], 30)}"
     )
-    if VDO_BRAND_TEXT.strip():
+    handle, web = _ass_escape(VDO_BRAND_HANDLE)[:20], _ass_escape(VDO_BRAND_WEB)[:30]
+    brand_parts = []
+    if handle:
+        brand_parts.append("{\\c" + _BRAND_GREEN + "}" + handle)
+    if web:
+        brand_parts.append("{\\c" + _BRAND_WHITE + "}" + web)
+    if brand_parts:
         events.append(
-            f"Dialogue: 0,{_ass_ts(0)},{_ass_ts(total)},Brand,,0,0,0,,{_ass_escape(VDO_BRAND_TEXT)[:40]}"
+            f"Dialogue: 0,{_ass_ts(0)},{_ass_ts(total)},Brand,,0,0,0,,{'  '.join(brand_parts)}"
         )
     t = 0.0
     for ln, d in segments:
