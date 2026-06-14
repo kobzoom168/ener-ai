@@ -544,10 +544,11 @@ def _render(audio_path: str, ass_path: str, duration: float, out_path: str,
 
 
 def _overlay_pip(base_mp4: str, pip_mp4: str, out_path: str) -> tuple[bool, str]:
-    """Overlay the talking-head video as a PIP at the bottom-left (above the TikTok UI),
-    keeping the base clip's audio and dropping the PIP's own audio track."""
-    fc = ("[1:v]scale=380:-1,setsar=1,pad=iw+8:ih+8:4:4:color=0x00000000[pip];"
-          "[0:v][pip]overlay=x=42:y=H-h-300[v]")
+    """Overlay the talking head as a compact square PIP stuck to the bottom-left corner,
+    sitting below the centred subtitle so it never covers it. Keeps the base clip audio."""
+    fc = ("[1:v]crop='min(iw,ih)':'min(iw,ih)':'(iw-min(iw,ih))/2':'(ih-min(iw,ih))/2',"
+          "scale=320:320,setsar=1,pad=328:328:4:4:color=0x101010[pip];"
+          "[0:v][pip]overlay=x=24:y=H-h-70[v]")
     cmd = ["ffmpeg", "-y", "-i", base_mp4, "-i", pip_mp4,
            "-filter_complex", fc, "-map", "[v]", "-map", "0:a",
            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
