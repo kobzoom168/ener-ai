@@ -21,13 +21,14 @@ _ASS_HEADER = (
     "ScriptType: v4.00+\n"
     "PlayResX: 1080\n"
     "PlayResY: 1920\n"
+    "WrapStyle: 2\n"
     "ScaledBorderAndShadow: yes\n\n"
     "[V4+ Styles]\n"
     "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, "
     "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, "
     "Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-    "Style: Default,Loma,78,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,0,0,1,6,3,2,90,90,360,0\n"
-    "Style: Title,Loma,52,&H00A5B4FC,&H00111111,&H64000000,-1,0,0,0,100,100,0,0,1,4,2,8,90,90,120,0\n\n"
+    "Style: Default,Loma,60,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,0,0,1,5,3,2,70,70,320,0\n"
+    "Style: Title,Loma,46,&H00A5B4FC,&H00111111,&H64000000,-1,0,0,0,100,100,0,0,1,4,2,8,70,70,90,0\n\n"
     "[Events]\n"
     "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
 )
@@ -109,18 +110,51 @@ def _ass_escape(text: str) -> str:
     return (text or "").replace("\\", " ").replace("{", "(").replace("}", ")").replace("\n", " ").strip()
 
 
+def _wrap_thai(text: str, max_chars: int = 24) -> str:
+    """Hard-wrap a line to fit the video width using ASS \\N breaks.
+
+    Thai has no spaces so libass can't auto-wrap — we wrap manually: break at spaces
+    when possible, otherwise hard-split long runs at max_chars.
+    """
+    text = (text or "").strip()
+    if len(text) <= max_chars:
+        return text
+    out: list[str] = []
+    line = ""
+    for tok in re.findall(r"\S+|\s+", text):
+        if tok.isspace():
+            if line:
+                line += tok
+            continue
+        while len(tok) > max_chars:
+            if line.strip():
+                out.append(line.strip())
+            out.append(tok[:max_chars])
+            tok = tok[max_chars:]
+            line = ""
+        if len(line) + len(tok) > max_chars:
+            if line.strip():
+                out.append(line.strip())
+            line = tok
+        else:
+            line += tok
+    if line.strip():
+        out.append(line.strip())
+    return "\\N".join(out)
+
+
 def _build_ass(title: str, lines: list[str], duration: float, ass_path: str) -> None:
     n = max(1, len(lines))
     per = max(1.0, duration / n)
     events = []
     # persistent small title at top for the whole clip
     events.append(
-        f"Dialogue: 0,{_ass_ts(0)},{_ass_ts(duration)},Title,,0,0,0,,{_ass_escape(title)[:60]}"
+        f"Dialogue: 0,{_ass_ts(0)},{_ass_ts(duration)},Title,,0,0,0,,{_wrap_thai(_ass_escape(title)[:80], 30)}"
     )
     for i, ln in enumerate(lines):
         st = i * per
         en = min(duration, (i + 1) * per)
-        events.append(f"Dialogue: 0,{_ass_ts(st)},{_ass_ts(en)},Default,,0,0,0,,{_ass_escape(ln)}")
+        events.append(f"Dialogue: 0,{_ass_ts(st)},{_ass_ts(en)},Default,,0,0,0,,{_wrap_thai(_ass_escape(ln), 24)}")
     with open(ass_path, "w", encoding="utf-8") as f:
         f.write(_ASS_HEADER + "\n".join(events) + "\n")
 
