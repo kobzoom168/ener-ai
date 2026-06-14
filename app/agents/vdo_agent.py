@@ -327,7 +327,7 @@ def _build_ass(title: str, segments: list[tuple[str, float]], ass_path: str) -> 
         f.write(_ASS_HEADER + "\n".join(events) + "\n")
 
 
-async def _gen_bg_image(prompt: str) -> str | None:
+async def _gen_bg_image(prompt: str, idx: int = 0) -> str | None:
     """Generate a topical 9:16 background image via OpenRouter (Gemini image). Fail-open."""
     try:
         import base64 as _b64
@@ -354,7 +354,7 @@ async def _gen_bg_image(prompt: str) -> str | None:
         if not url or "base64," not in url:
             return None
         os.makedirs(VDO_DIR, exist_ok=True)
-        path = os.path.join(VDO_DIR, f"bg_{int(time.time())}.png")
+        path = os.path.join(VDO_DIR, f"bg_{int(time.time() * 1000)}_{idx}.png")
         with open(path, "wb") as f:
             f.write(_b64.b64decode(url.split("base64,", 1)[1]))
         return path
@@ -367,7 +367,7 @@ async def _gen_bg_images(prompts: list[str]) -> list[str]:
     prompts = [p for p in (prompts or []) if str(p).strip()][:6]
     if not prompts:
         return []
-    results = await asyncio.gather(*[_gen_bg_image(p) for p in prompts])
+    results = await asyncio.gather(*[_gen_bg_image(p, i) for i, p in enumerate(prompts)])
     return [p for p in results if p]
 
 
