@@ -5625,8 +5625,9 @@ async def _media_credit_stats() -> dict:
                     r = await c.get("https://api.d-id.com/credits",
                                     headers={"Authorization": auth})
                     if r.status_code < 300:
-                        d = r.json()
-                        out["did"] = {"remaining": d.get("remaining"), "total": d.get("total")}
+                        creds = (r.json().get("credits") or [{}])
+                        c0 = creds[0] if creds else {}
+                        out["did"] = {"remaining": c0.get("remaining"), "total": c0.get("total")}
                 except Exception:
                     pass
     except Exception:
