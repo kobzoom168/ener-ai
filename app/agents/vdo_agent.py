@@ -364,7 +364,7 @@ async def _gen_bg_image(prompt: str) -> str | None:
 
 async def _gen_bg_images(prompts: list[str]) -> list[str]:
     """Generate several bg images in parallel; returns the paths that succeeded."""
-    prompts = [p for p in (prompts or []) if str(p).strip()][:3]
+    prompts = [p for p in (prompts or []) if str(p).strip()][:6]
     if not prompts:
         return []
     results = await asyncio.gather(*[_gen_bg_image(p) for p in prompts])
@@ -690,7 +690,7 @@ async def generate_mystery_script(topic: str = "", title: str = "", summary: str
         "- ปิดด้วยประโยคชวนขนลุก/ชวนเชื่อ/ชวนคิด ตามโทนความเชื่อ (ไม่การันตีผล ไม่ต้องหักมุม)\n"
         'ตอบ JSON เท่านั้น: {"title": "หัวข้อสั้น", "lines": ["ประโยคสั้นๆ", "..."], '
         '"caption": "แคปชั่นโพสต์ + #แฮชแท็ก เช่น #สายมู #เครื่องราง #ความเชื่อ #ลึกลับ", '
-        '"image_prompts": ["ภาพพื้นหลัง 3 ฉากเป็นภาษาอังกฤษให้เข้ากับเรื่อง ไล่ตามเนื้อหา (ไม่มีตัวหนังสือในภาพ)", "...", "..."], '
+        '"image_prompts": ["ภาพพื้นหลัง 5 ฉากเป็นภาษาอังกฤษ ไล่ตามเนื้อหาทีละช่วง บรรยากาศขลังๆ ไทย/เอเชีย (ไม่มีตัวหนังสือในภาพ)", "...", "...", "...", "..."], '
         '"video_queries": ["คำค้นวิดีโอสต็อกจริงสั้นๆ ภาษาอังกฤษ 1-3 คำ เน้นบรรยากาศไทย/เอเชีย ใส่คำว่า Thai หรือ Thailand เมื่อเข้ากับเรื่อง เช่น Thai temple, Thai monk, Thailand misty forest, incense smoke shrine, Thai river mist", "...", "..."], '
         '"ai_video_prompt": "พรอมต์ภาษาอังกฤษ 1 ประโยค สำหรับ AI สร้างวิดีโอ \\"ฉากเด็ด\\" ที่สต็อกไม่มี (เช่น พญานาค/ของขลังเรืองแสง/ควันวนรอบพระ) cinematic ขลังๆ"}'
     )
@@ -701,7 +701,7 @@ async def generate_mystery_script(topic: str = "", title: str = "", summary: str
     if not lines:
         lines = [out_title]
     caption = str(data.get("caption") or out_title).strip()[:300]
-    image_prompts = [str(x).strip()[:300] for x in (data.get("image_prompts") or []) if str(x).strip()][:3]
+    image_prompts = [str(x).strip()[:300] for x in (data.get("image_prompts") or []) if str(x).strip()][:6]
     if not image_prompts:
         image_prompts = [out_title]
     video_queries = [str(x).strip()[:80] for x in (data.get("video_queries") or []) if str(x).strip()][:3]
@@ -737,30 +737,40 @@ async def make_mystery_short(topic: str = "", title: str = "", summary: str = ""
     except Exception:
         face_pip = False
 
+    imps = script.get("image_prompts") or [script["title"]]
     vqs = script.get("video_queries") or []
-    imps = script.get("image_prompts") or []
-    slots = []
-    for i in range(3):
-        vq = vqs[i] if i < len(vqs) else (vqs[0] if vqs else "")
-        ip = imps[i] if i < len(imps) else (imps[0] if imps else script["title"])
-        slots.append((vq, ip, i))
-    items = list(await asyncio.gather(*[_bg_item(vq, ip, i) for vq, ip, i in slots]))
+    bg_mode = os.environ.get("VDO_BG_MODE", "image")  # image (free, all AI images) | video | mixed
 
-    # one "hero" slot rendered by AI video (naga / glowing relic) when fal.ai is configured;
-    # the rest stay free Thai stock. Place it as the middle scene for impact.
-    try:
-        from app.agents import aivideo
-        hero = script.get("ai_video_prompt") or ""
-        if aivideo.enabled() and hero:
-            hv = await aivideo.generate_ai_video(hero, os.path.join(VDO_DIR, f"hero_{int(time.time())}.mp4"))
-            if hv:
-                pos = 1 if len(items) >= 2 else 0
-                items.insert(pos, (hv, "video"))
-                items = items[:3]
-    except Exception:
-        pass
+    if bg_mode == "image":
+        # all AI images via OpenRouter (no new bill) — several scenes per clip
+        n = max(1, min(6, int(os.environ.get("VDO_BG_IMAGE_COUNT", "5") or 5)))
+        prompts = list(imps)
+        while len(prompts) < n:
+            prompts.append(imps[len(prompts) % len(imps)])
+        imgs = await _gen_bg_images(prompts[:n])
+        items = [(p, "image") for p in imgs]
+    else:
+        slots = []
+        for i in range(3):
+            vq = vqs[i] if i < len(vqs) else (vqs[0] if vqs else "")
+            ip = imps[i] if i < len(imps) else (imps[0] if imps else script["title"])
+            slots.append((vq, ip, i))
+        items = list(await asyncio.gather(*[_bg_item(vq, ip, i) for vq, ip, i in slots]))
+        try:  # one "hero" AI-video scene when fal.ai is configured (video/mixed mode only)
+            from app.agents import aivideo
+            hero = script.get("ai_video_prompt") or ""
+            if aivideo.enabled() and hero:
+                hv = await aivideo.generate_ai_video(hero, os.path.join(VDO_DIR, f"hero_{int(time.time())}.mp4"))
+                if hv:
+                    items.insert(1 if len(items) >= 2 else 0, (hv, "video"))
+                    items = items[:3]
+        except Exception:
+            pass
 
     items = [it for it in items if it]
+    if not items:  # last-resort so the clip still ships
+        imgs = await _gen_bg_images([script["title"]])
+        items = [(p, "image") for p in imgs]
 
     r = await _render_clip(script["title"], script["lines"], bg_items=items, face_pip=face_pip)
     if r.get("ok"):
