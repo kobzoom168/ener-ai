@@ -1784,16 +1784,27 @@ document.addEventListener('DOMContentLoaded', function() {
       const cuts = (spec.cut || []).map(f => escapeHtml(f)).join(', ');
       const conf = spec.confidence || '';
       const confColor = conf === 'go' ? '#10b981' : conf === 'risky' ? '#ef4444' : '#f59e0b';
-      html += `<div class="verdict-card" style="margin-top:14px">
-        <h4>🎯 Project Spec — <span style="color:${confColor}">${escapeHtml(conf || '-')}</span></h4>
-        <div style="font-size:16px;font-weight:700">${escapeHtml(spec.name || '(ไม่มีชื่อ)')}</div>
-        <div style="color:#cbd5e1;margin:4px 0">${escapeHtml(spec.one_liner || '')}</div>
-        <div class="task-meta">👥 ${escapeHtml(spec.users || '-')}</div>
-        ${feats ? `<div style="margin-top:8px">ฟีเจอร์ MVP:<ul style="margin:4px 0 0 18px">${feats}</ul></div>` : ''}
-        <div class="task-meta" style="margin-top:6px">🧱 ${escapeHtml(spec.tech || '-')} · 🎨 ${escapeHtml(spec.ui || '-')}</div>
-        ${cuts ? `<div class="task-meta">✂️ v1 ตัด: ${cuts}</div>` : ''}
-        <button id="council-build-btn" class="primary-btn" style="margin-top:12px">🚀 สร้างเป็น project</button>
-      </div>`;
+      if (spec._fallback) {
+        // JSON synth failed → backend returned a plain-text Thai summary. Show it readable.
+        html += `<div class="verdict-card" style="margin-top:14px">
+          <h4>📋 สรุปวง Council</h4>
+          <div style="color:#cbd5e1;margin:4px 0">${renderMarkdown(spec.one_liner || '')}</div>
+          <button id="council-build-btn" class="primary-btn" style="margin-top:12px">🚀 สร้างเป็น project</button>
+        </div>`;
+      } else {
+        const meta = [];
+        if (spec.users) meta.push(`<div class="task-meta">👥 ${escapeHtml(spec.users)}</div>`);
+        if (spec.tech || spec.ui) meta.push(`<div class="task-meta" style="margin-top:6px">🧱 ${escapeHtml(spec.tech || '-')} · 🎨 ${escapeHtml(spec.ui || '-')}</div>`);
+        if (cuts) meta.push(`<div class="task-meta">✂️ v1 ตัด: ${cuts}</div>`);
+        html += `<div class="verdict-card" style="margin-top:14px">
+          <h4>🎯 Project Spec — <span style="color:${confColor}">${escapeHtml(conf || '-')}</span></h4>
+          <div style="font-size:16px;font-weight:700">${escapeHtml(spec.name || '(ไม่มีชื่อ)')}</div>
+          <div style="color:#cbd5e1;margin:4px 0">${renderMarkdown(spec.one_liner || '')}</div>
+          ${meta.join('')}
+          ${feats ? `<div style="margin-top:8px">ฟีเจอร์ MVP:<ul style="margin:4px 0 0 18px">${feats}</ul></div>` : ''}
+          <button id="council-build-btn" class="primary-btn" style="margin-top:12px">🚀 สร้างเป็น project</button>
+        </div>`;
+      }
       result.innerHTML = html;
 
       const btn = document.getElementById('council-build-btn');

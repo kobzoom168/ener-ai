@@ -52,6 +52,60 @@ def _council_parse_json(raw: str) -> dict:
         return {}
 
 
+_SYNTH_SYSTEM = (
+    "คุณคือ product lead สังเคราะห์ผลวง brainstorm เป็น project spec ที่ลงมือสร้างได้จริง. ตอบ JSON เท่านั้น"
+)
+_SYNTH_SCHEMA = (
+    "ตอบ JSON เท่านั้น ห้ามมีข้อความอื่นนอก JSON รูปแบบนี้:\n"
+    '{"name":"ชื่อโปรเจกต์สั้นๆ", "one_liner":"อธิบาย 1 ประโยค", "users":"ใครใช้", '
+    '"features":["ฟีเจอร์ MVP 3-6 ข้อ"], "tech":"stack ที่แนะนำ", "ui":"ทิศทาง UI/หน้าตา", '
+    '"cut":["สิ่งที่ตัดทิ้งใน v1"], "confidence":"go|maybe|risky"}'
+)
+
+
+def _spec_is_usable(spec: dict) -> bool:
+    if not isinstance(spec, dict):
+        return False
+    return bool(
+        str(spec.get("name") or "").strip()
+        or str(spec.get("one_liner") or "").strip()
+        or (spec.get("features") or [])
+    )
+
+
+async def _council_synthesize(topic: str, research: str, debate: str) -> dict:
+    """Synthesize the debate into a spec.
+
+    Robust on purpose: retry the JSON synth, and if JSON keeps failing fall back to a
+    plain-text Thai summary so the UI ALWAYS shows a readable สรุป instead of an empty card.
+    """
+    prompt = (
+        f"ไอเดีย: {topic}\n\nBrief:\n{research}\n\nวง debate:\n{debate}\n\n"
+        f"สรุปเป็น project spec ที่ดีที่สุด {_SYNTH_SCHEMA}"
+    )
+    for _ in range(2):
+        raw = await _or_chat(_SYNTH_MODEL, _SYNTH_SYSTEM, prompt, max_tokens=1400)
+        spec = _council_parse_json(raw)
+        if _spec_is_usable(spec):
+            return spec
+
+    # JSON synth failed twice → relax to a plain-text summary (no JSON required).
+    summary = await _or_chat(
+        _SYNTH_MODEL,
+        "คุณคือ product lead สรุปผลวง brainstorm เป็นภาษาไทย กระชับ อ่านง่าย เป็น bullet",
+        f"ไอเดีย: {topic}\n\nวง debate:\n{debate}\n\n"
+        "สรุปสั้นๆ: ชื่อโปรเจกต์ / ทำอะไร 1 ประโยค / ใครใช้ / ฟีเจอร์ MVP 3-6 / tech / "
+        "สิ่งที่ตัดใน v1 / ควรไปต่อไหม (go/maybe/risky)",
+        max_tokens=1000,
+    )
+    summary = (summary or "").strip()
+    return {
+        "name": topic,
+        "one_liner": summary or "สังเคราะห์ spec ไม่สำเร็จ ลองกด Start Debate ใหม่อีกครั้ง",
+        "_fallback": True,
+    }
+
+
 async def run_council(topic: str) -> dict:
     """Multi-model council: research → 4-seat debate (2 rounds, parallel) → spec.
 
@@ -93,17 +147,7 @@ async def run_council(topic: str) -> dict:
         debate += f"\n=== รอบ {rd['round']} ===\n" + "\n\n".join(
             f"{s['emoji']} {s['name']}:\n{s['text']}" for s in rd["seats"]
         )
-    spec_raw = await _or_chat(
-        _SYNTH_MODEL,
-        "คุณคือ product lead สังเคราะห์ผลวง brainstorm เป็น project spec ที่ลงมือสร้างได้จริง. ตอบ JSON เท่านั้น",
-        f"ไอเดีย: {topic}\n\nBrief:\n{research}\n\nวง debate:\n{debate}\n\n"
-        "สรุปเป็น project spec ที่ดีที่สุด ตอบ JSON เท่านั้นรูปแบบนี้:\n"
-        '{"name":"ชื่อโปรเจกต์สั้นๆ", "one_liner":"อธิบาย 1 ประโยค", "users":"ใครใช้", '
-        '"features":["ฟีเจอร์ MVP 3-6 ข้อ"], "tech":"stack ที่แนะนำ", "ui":"ทิศทาง UI/หน้าตา", '
-        '"cut":["สิ่งที่ตัดทิ้งใน v1"], "confidence":"go|maybe|risky"}',
-        max_tokens=1200,
-    )
-    spec = _council_parse_json(spec_raw)
+    spec = await _council_synthesize(topic, research, debate)
 
     try:
         async with get_db() as db:
