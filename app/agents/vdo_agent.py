@@ -178,3 +178,78 @@ async def make_news_short(title: str, summary: str) -> dict:
 
     return {"ok": True, "mp4": mp4, "caption": script["caption"], "lines": lines,
             "duration": round(duration, 1)}
+
+
+async def _render_clip(title: str, lines: list[str]) -> dict:
+    """Shared render: lines -> gTTS -> ASS captions -> MP4. Returns {ok, mp4, duration, error}."""
+    os.makedirs(VDO_DIR, exist_ok=True)
+    stamp = int(time.time())
+    base = os.path.join(VDO_DIR, f"vdo_{stamp}")
+    mp3, ass, mp4 = base + ".mp3", base + ".ass", base + ".mp4"
+    if not lines:
+        return {"ok": False, "error": "ไม่มีบทพากย์"}
+    try:
+        await asyncio.to_thread(_synth_voice, " ".join(lines), mp3)
+    except Exception as exc:
+        return {"ok": False, "error": f"TTS ล้มเหลว: {str(exc)[:200]}"}
+    duration = await asyncio.to_thread(_audio_duration, mp3)
+    if duration <= 0:
+        return {"ok": False, "error": "อ่านความยาวเสียงไม่ได้"}
+    await asyncio.to_thread(_build_ass, title, lines, duration, ass)
+    ok, err = await asyncio.to_thread(_render, mp3, ass, duration, mp4)
+    if not ok:
+        return {"ok": False, "error": f"render ล้มเหลว: {err}"}
+    for p in (mp3, ass):
+        try:
+            os.remove(p)
+        except Exception:
+            pass
+    return {"ok": True, "mp4": mp4, "duration": round(duration, 1)}
+
+
+async def generate_mystery_script(topic: str = "", title: str = "", summary: str = "") -> dict:
+    """สายมู/ลึกลับ content for the Ener Scan page: amulets (TH+world), UFO, myths, beliefs.
+
+    If title/summary are given (a real mystery news item) it retells them; else it picks
+    an intriguing topic. Tone: engaging + respectful of belief, no guarantees, not mocking.
+    """
+    system = (
+        "คุณคือครีเอเตอร์คอนเทนต์สายมู/ลึกลับของเพจ 'Ener Scan ตรวจพลังพระ หิน เครื่องราง' "
+        "เขียนบทคลิปสั้นแนวตั้งภาษาไทย น่าสนใจ ชวนติดตาม เล่าเรื่องสนุกแต่ให้ความรู้ "
+        "เคารพความเชื่อ ไม่ลบหลู่ ไม่การันตีโชคลาภ/รักษาโรค ไม่ชวนเชื่องมงายเกินจริง ตอบ JSON เท่านั้น"
+    )
+    if title:
+        body = f"ข่าว/เรื่อง: {title}\nรายละเอียด: {summary}\n\nเรียบเรียงเป็นบทคลิปสายมูที่น่าติดตาม"
+    elif topic:
+        body = f"หัวข้อ: {topic}\n\nเขียนบทคลิปสายมูที่น่าสนใจเรื่องนี้"
+    else:
+        body = (
+            "เลือกหัวข้อสายมู/ลึกลับที่น่าสนใจ 1 เรื่อง (หมุนเวียนแนว: พระเครื่อง/เครื่องรางไทย, "
+            "เครื่องรางต่างประเทศ เช่น Omamori ญี่ปุ่น/Nazar ตุรกี/Hamsa/Maneki-neko, UFO/UAP, "
+            "ตำนานลึกลับ, ความเชื่อ/ของขลัง, สถานที่ศักดิ์สิทธิ์) แล้วเขียนบทคลิป"
+        )
+    prompt = (
+        f"{body}\n\n"
+        "รูปแบบบท:\n"
+        "- เปิดด้วย hook สะดุดใจ 1 ประโยคใน 3 วิแรก\n"
+        "- เล่า 3-5 ประโยคสั้น (ที่มา/ตำนาน/ความเชื่อ/เกร็ดน่ารู้)\n"
+        "- ปิดด้วยประโยคชวนคิด/ชวนติดตาม (ไม่การันตีผล)\n"
+        'ตอบ JSON เท่านั้น: {"title": "หัวข้อสั้น", "lines": ["ประโยคสั้นๆ", "..."], '
+        '"caption": "แคปชั่นโพสต์ + #แฮชแท็ก เช่น #สายมู #เครื่องราง #ความเชื่อ #ลึกลับ"}'
+    )
+    data = _parse_json(await _or_chat(SCRIPT_MODEL, system, prompt, 800))
+    lines = [str(x).strip() for x in (data.get("lines") or []) if str(x).strip()][:8]
+    out_title = str(data.get("title") or title or topic or "เรื่องลึกลับ").strip()[:60]
+    if not lines:
+        lines = [out_title]
+    caption = str(data.get("caption") or out_title).strip()[:300]
+    return {"title": out_title, "lines": lines, "caption": caption}
+
+
+async def make_mystery_short(topic: str = "", title: str = "", summary: str = "") -> dict:
+    """สายมู short: AI picks/retells a mystery topic -> Thai short MP4."""
+    script = await generate_mystery_script(topic, title, summary)
+    r = await _render_clip(script["title"], script["lines"])
+    if r.get("ok"):
+        r.update({"caption": script["caption"], "lines": script["lines"], "title": script["title"]})
+    return r

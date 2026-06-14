@@ -1863,6 +1863,19 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
+  async function makeMysteryVdo() {
+    const topic = (prompt('หัวข้อสายมู/ลึกลับ (เว้นว่าง = ให้ AI เลือกเอง)\nเช่น: ตะกรุดมหาอุด, Omamori ญี่ปุ่น, UFO Roswell, ตำนานกุมารทอง', '') || '').trim();
+    showToast('🔮 กำลังทำคลิปสายมู (AI เขียนบท→เสียง→วิดีโอ) ~30-60 วิ…');
+    try {
+      const data = await api('/workspace/vdo/mystery', { method: 'POST', body: JSON.stringify({ topic }) });
+      if (data.ok && data.telegram) showToast('✅ ส่งคลิปสายมูเข้า Telegram แล้ว: ' + (data.title || '') + ' (' + (data.duration || '?') + ' วิ)');
+      else if (data.ok) showToast('⚠️ render ได้ แต่ส่ง Telegram ไม่ได้: ' + (data.error || ''));
+      else showToast('❌ ' + (data.error || 'ทำคลิปไม่สำเร็จ'));
+    } catch (e) {
+      showToast((e && e.message) || 'ทำคลิปไม่สำเร็จ');
+    }
+  }
+
   async function fetchNews() {
     try {
       showToast('Fetching latest news...');
@@ -2230,6 +2243,7 @@ document.addEventListener('DOMContentLoaded', function() {
   window.updateProject = updateProject;
   window.runBrainstorm = runBrainstorm;
   window.fetchNews = fetchNews;
+  window.makeMysteryVdo = makeMysteryVdo;
   window.summarizeFile = summarizeFile;
   window.askFile = askFile;
   window.dropZoneClick = dropZoneClick;

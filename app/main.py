@@ -6833,6 +6833,38 @@ async def workspace_vdo_make(request: Request):
                          "video_url": video_url})
 
 
+@app.post("/workspace/vdo/mystery")
+async def workspace_vdo_mystery(request: Request):
+    """ener-vdo (สายมู): AI picks/retells a mystery topic → short → Telegram preview."""
+    await _require_admin(request)
+    body = await request.json()
+    topic = str(body.get("topic") or "").strip()
+    title = str(body.get("title") or "").strip()
+    summary = str(body.get("summary") or "").strip()
+    from app.agents.vdo_agent import make_mystery_short
+
+    res = await make_mystery_short(topic, title, summary)
+    if not res.get("ok"):
+        return JSONResponse({"ok": False, "error": res.get("error", "render failed")})
+    import os as _os4
+    fname = _os4.path.basename(res["mp4"])
+    video_url = f"https://my-ener.uk/vdo/file/{fname}"
+    try:
+        cap = f"🔮 พรีวิวคลิปสายมู (ยังไม่โพสต์)\n\n{res.get('caption', '')}\n\n📿 {res.get('title', '')[:120]}\n{video_url}"
+        with open(res["mp4"], "rb") as fh:
+            await telegram_app.bot.send_video(
+                chat_id=settings.telegram_chat_id, video=fh, caption=cap[:1000]
+            )
+    except Exception as exc:
+        return JSONResponse({"ok": True, "telegram": False, "duration": res.get("duration"),
+                             "caption": res.get("caption"), "title": res.get("title"),
+                             "video_url": video_url,
+                             "error": f"render ok แต่ส่ง Telegram ไม่ได้: {str(exc)[:200]}"})
+    return JSONResponse({"ok": True, "telegram": True, "duration": res.get("duration"),
+                         "caption": res.get("caption"), "title": res.get("title"),
+                         "lines": res.get("lines"), "video_url": video_url})
+
+
 @app.get("/vdo/file/{name}")
 async def vdo_file(name: str):
     """Serve a rendered short by filename (public so Postiz/n8n can fetch it to post)."""
