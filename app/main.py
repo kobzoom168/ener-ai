@@ -6865,6 +6865,28 @@ async def workspace_vdo_mystery(request: Request):
                          "lines": res.get("lines"), "video_url": video_url})
 
 
+@app.post("/workspace/vdo/post")
+async def workspace_vdo_post(request: Request):
+    """Publish a rendered short to a Postiz channel (default: Ener Scan FB page)."""
+    await _require_admin(request)
+    body = await request.json()
+    fname = str(body.get("filename") or "").strip()
+    caption = str(body.get("caption") or "").strip()
+    when = str(body.get("when") or "now").strip()
+    integration_id = str(body.get("integration_id") or "").strip()
+    if when not in ("now", "draft"):
+        when = "now"
+    import os as _os6, re as _re6
+    if not _re6.fullmatch(r"vdo_\d+\.mp4", fname):
+        raise HTTPException(status_code=400, detail="bad filename")
+    path = _os6.path.join("/app/data/vdo", fname)
+    if not _os6.path.exists(path):
+        raise HTTPException(status_code=404, detail="video not found")
+    from app.agents.postiz_client import post_video
+    ok, msg = await post_video(path, caption, integration_id=integration_id, when=when)
+    return JSONResponse({"ok": ok, "message": msg, "when": when})
+
+
 @app.get("/vdo/file/{name}")
 async def vdo_file(name: str):
     """Serve a rendered short by filename (public so Postiz/n8n can fetch it to post)."""

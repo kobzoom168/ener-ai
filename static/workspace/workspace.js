@@ -1868,9 +1868,20 @@ document.addEventListener('DOMContentLoaded', function() {
     showToast('🔮 กำลังทำคลิปสายมู (AI เขียนบท→เสียง→วิดีโอ) ~30-60 วิ…');
     try {
       const data = await api('/workspace/vdo/mystery', { method: 'POST', body: JSON.stringify({ topic }) });
-      if (data.ok && data.telegram) showToast('✅ ส่งคลิปสายมูเข้า Telegram แล้ว: ' + (data.title || '') + ' (' + (data.duration || '?') + ' วิ)');
-      else if (data.ok) showToast('⚠️ render ได้ แต่ส่ง Telegram ไม่ได้: ' + (data.error || ''));
-      else showToast('❌ ' + (data.error || 'ทำคลิปไม่สำเร็จ'));
+      if (!data.ok) { showToast('❌ ' + (data.error || 'ทำคลิปไม่สำเร็จ')); return; }
+      showToast('✅ คลิปสายมูเข้า Telegram แล้ว: ' + (data.title || '') + ' (' + (data.duration || '?') + ' วิ)');
+      // offer to publish to the connected FB page (after reviewing in Telegram)
+      if (data.video_url) {
+        const fn = String(data.video_url).split('/').pop();
+        const yes = confirm('คลิปอยู่ใน Telegram แล้ว 👇\n"' + (data.title || '') + '"\n\nโพสต์ขึ้นเพจ FB (Ener Scan) เลยไหม?\n(OK = โพสต์เลย / Cancel = ไม่โพสต์)');
+        if (yes) {
+          showToast('📤 กำลังโพสต์ขึ้น FB…');
+          try {
+            const p = await api('/workspace/vdo/post', { method: 'POST', body: JSON.stringify({ filename: fn, caption: data.caption || '', when: 'now' }) });
+            showToast(p.ok ? '✅ ' + (p.message || 'โพสต์ขึ้น FB แล้ว!') : '❌ ' + (p.message || p.error || 'โพสต์ไม่สำเร็จ'));
+          } catch (e2) { showToast('❌ ' + ((e2 && e2.message) || 'โพสต์ไม่สำเร็จ')); }
+        }
+      }
     } catch (e) {
       showToast((e && e.message) || 'ทำคลิปไม่สำเร็จ');
     }
