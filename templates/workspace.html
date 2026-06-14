@@ -730,6 +730,22 @@
       </div>
     </div>
 
+    <div id="ws-widget-media" class="mx-3 mb-2 rounded-lg px-3 py-2.5" style="background: oklch(0.19 0.02 320); border: 1px solid oklch(0.30 0.05 320);">
+      <div class="flex items-center gap-1.5 mb-1.5">
+        <span style="font-size:10px; background: oklch(0.45 0.18 320); color:white; border-radius:4px; padding:1px 5px; font-weight:600;">🎬</span>
+        <span style="font-size:11px; font-weight:600; color: oklch(0.85 0.05 320);">AI Media</span>
+        <span style="font-size:9px; color: oklch(0.55 0.12 320); margin-left:auto;">เครดิต</span>
+      </div>
+      <div class="flex justify-between" style="font-size:10px; color: var(--muted-foreground);">
+        <span>🎙️ ElevenLabs</span>
+        <span id="ws-el-credits" style="color: oklch(0.80 0.05 320);">—</span>
+      </div>
+      <div class="flex justify-between mt-0.5" style="font-size:10px; color: var(--muted-foreground);">
+        <span>🗣️ D-ID</span>
+        <span id="ws-did-credits" style="color: oklch(0.72 0.04 320);">ยังไม่ตั้ง</span>
+      </div>
+    </div>
+
     <div id="ws-widget-system" class="mx-3 mb-2 rounded-lg px-3 py-2.5" style="background: oklch(0.19 0.02 150); border: 1px solid oklch(0.30 0.04 150);">
       <div class="flex items-center gap-1.5 mb-1.5">
         <span style="font-size:10px; background: oklch(0.42 0.12 150); color:white; border-radius:4px; padding:1px 5px; font-weight:600; letter-spacing:0.03em;">SYS</span>
@@ -847,6 +863,18 @@
       const orTotal = document.getElementById('ws-or-total');
       if (orToday) orToday.textContent = or.calls_today + ' calls · ' + wsFormatNumber(or.out_tokens || 0) + ' tok';
       if (orTotal) orTotal.textContent = or.calls + ' calls';
+
+      const media = data.media_stats || {};
+      const elEl = document.getElementById('ws-el-credits');
+      if (elEl) {
+        const el = media.elevenlabs;
+        elEl.textContent = el ? (wsFormatNumber(el.left) + ' / ' + wsFormatNumber(el.limit)) : 'ยังไม่ตั้ง';
+      }
+      const didEl = document.getElementById('ws-did-credits');
+      if (didEl) {
+        const d = media.did;
+        didEl.textContent = d && d.remaining != null ? (wsFormatNumber(d.remaining) + ' เครดิต') : 'ยังไม่ตั้ง';
+      }
 
       const sys = data.system_resource_stats || {};
       const sysCpu = document.getElementById('ws-sys-cpu');

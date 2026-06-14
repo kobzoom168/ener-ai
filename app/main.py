@@ -5594,6 +5594,47 @@ async def _workspace_openrouter_model_groups() -> tuple[
     return groups, flat
 
 
+_MEDIA_CREDITS_CACHE: dict = {"at": 0.0, "data": {"elevenlabs": None, "did": None}}
+
+
+async def _media_credit_stats() -> dict:
+    """ElevenLabs + D-ID remaining credits for the AI Media widget (cached ~60s)."""
+    now = time.time()
+    if now - _MEDIA_CREDITS_CACHE["at"] < 60 and _MEDIA_CREDITS_CACHE["data"]:
+        return _MEDIA_CREDITS_CACHE["data"]
+    out: dict = {"elevenlabs": None, "did": None}
+    el_key = os.environ.get("ELEVENLABS_API_KEY", "").strip()
+    did_key = os.environ.get("DID_API_KEY", "").strip()
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as c:
+            if el_key:
+                try:
+                    r = await c.get("https://api.elevenlabs.io/v1/user/subscription",
+                                    headers={"xi-api-key": el_key})
+                    if r.status_code < 300:
+                        d = r.json()
+                        used = int(d.get("character_count") or 0)
+                        lim = int(d.get("character_limit") or 0)
+                        out["elevenlabs"] = {"used": used, "limit": lim, "left": max(0, lim - used)}
+                except Exception:
+                    pass
+            if did_key:
+                try:
+                    auth = did_key if did_key.lower().startswith("basic ") else f"Basic {did_key}"
+                    r = await c.get("https://api.d-id.com/credits",
+                                    headers={"Authorization": auth})
+                    if r.status_code < 300:
+                        d = r.json()
+                        out["did"] = {"remaining": d.get("remaining"), "total": d.get("total")}
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    _MEDIA_CREDITS_CACHE["at"] = now
+    _MEDIA_CREDITS_CACHE["data"] = out
+    return out
+
+
 async def _workspace_sidebar_stats() -> dict:
     async with get_db() as db:
         fl_cur = await db.execute(
@@ -5691,6 +5732,7 @@ async def _workspace_sidebar_stats() -> dict:
             "credits_usd": round(or_credits_usd, 2) if or_credits_usd is not None else None,
         },
         "system_resource_stats": _workspace_resource_stats(),
+        "media_stats": await _media_credit_stats(),
     }
 
 
