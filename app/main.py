@@ -5646,17 +5646,28 @@ async def _workspace_sidebar_stats() -> dict:
     try:
         or_key = await get_openrouter_api_key()
         if or_key:
+            _or_hdr = {"Authorization": f"Bearer {or_key}"}
             async with httpx.AsyncClient(timeout=5.0) as or_client:
-                or_resp = await or_client.get(
-                    "https://openrouter.ai/api/v1/auth/key",
-                    headers={"Authorization": f"Bearer {or_key}"},
-                )
-                if or_resp.status_code == 200:
-                    or_data = or_resp.json().get("data") or {}
-                    or_usage_usd = float(or_data.get("usage") or 0)
-                    or_limit = or_data.get("limit")
-                    if or_limit:
-                        or_credits_usd = float(or_limit) - or_usage_usd
+                # /credits gives the REAL account balance (total_credits - total_usage).
+                # /auth/key only has a per-key 'limit' which is null on credit accounts,
+                # so it would leave the balance blank — try /credits first.
+                cr = await or_client.get("https://openrouter.ai/api/v1/credits", headers=_or_hdr)
+                if cr.status_code == 200:
+                    cd = cr.json().get("data") or {}
+                    tc, tu = cd.get("total_credits"), cd.get("total_usage")
+                    if tc is not None and tu is not None:
+                        or_usage_usd = float(tu)
+                        or_credits_usd = float(tc) - float(tu)
+                if or_credits_usd is None:
+                    or_resp = await or_client.get(
+                        "https://openrouter.ai/api/v1/auth/key", headers=_or_hdr
+                    )
+                    if or_resp.status_code == 200:
+                        or_data = or_resp.json().get("data") or {}
+                        or_usage_usd = float(or_data.get("usage") or 0)
+                        or_limit = or_data.get("limit")
+                        if or_limit:
+                            or_credits_usd = float(or_limit) - or_usage_usd
     except Exception:
         pass
 
