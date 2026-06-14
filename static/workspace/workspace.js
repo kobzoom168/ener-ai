@@ -1758,7 +1758,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (!topic) return;
 
     const result = document.getElementById('brainstorm-result');
-    result.innerHTML = '<div class="surface">Thinking...</div>';
+    result.innerHTML = '<div class="surface">🧠 AI Council กำลังประชุม — 4 โมเดลถกกัน 2 รอบ + สังเคราะห์เป็น spec (อาจใช้ 1-2 นาที)…</div>';
 
     try {
       const data = await api('/workspace/brainstorm', {
@@ -1767,23 +1767,48 @@ document.addEventListener('DOMContentLoaded', function() {
       });
 
       const rounds = data.rounds || [];
-      const latest = rounds[rounds.length - 1] || {};
-      result.innerHTML = `
-        <div class="brain-grid">
-          <div class="brain-card"><h4>AI_A</h4><div>${renderMarkdown(latest.ai_a || '')}</div></div>
-          <div class="brain-card"><h4>AI_B</h4><div>${renderMarkdown(latest.ai_b || '')}</div></div>
-          <div class="brain-card"><h4>AI_C</h4><div>${renderMarkdown(latest.ai_c || '')}</div></div>
-        </div>
-        <div class="verdict-card">
-          <h4>Verdict</h4>
-          <div>${escapeHtml(data.verdict || '-')}</div>
-          <div class="task-meta">${escapeHtml(data.reason || '')}</div>
-          ${data.raw ? `<details style="margin-top:12px;"><summary>Raw output</summary><div style="margin-top:10px;">${renderMarkdown(data.raw)}</div></details>` : ''}
-        </div>
-      `;
+      const spec = data.spec || {};
+      const shortModel = m => String(m || '').split('/').pop();
+      let html = '';
+      if (data.research) {
+        html += `<div class="surface" style="margin-bottom:12px"><h4>🔎 Research</h4><div>${renderMarkdown(data.research)}</div></div>`;
+      }
+      rounds.forEach(rd => {
+        html += `<h4 style="margin:14px 0 6px">รอบ ${rd.round}</h4><div class="brain-grid">`;
+        (rd.seats || []).forEach(s => {
+          html += `<div class="brain-card"><h4>${s.emoji || ''} ${escapeHtml(s.name || '')} <span style="font-size:10px;color:#888;font-weight:400">${escapeHtml(shortModel(s.model))}</span></h4><div>${renderMarkdown(s.text || '')}</div></div>`;
+        });
+        html += `</div>`;
+      });
+      const feats = (spec.features || []).map(f => `<li>${escapeHtml(f)}</li>`).join('');
+      const cuts = (spec.cut || []).map(f => escapeHtml(f)).join(', ');
+      const conf = spec.confidence || '';
+      const confColor = conf === 'go' ? '#10b981' : conf === 'risky' ? '#ef4444' : '#f59e0b';
+      html += `<div class="verdict-card" style="margin-top:14px">
+        <h4>🎯 Project Spec — <span style="color:${confColor}">${escapeHtml(conf || '-')}</span></h4>
+        <div style="font-size:16px;font-weight:700">${escapeHtml(spec.name || '(ไม่มีชื่อ)')}</div>
+        <div style="color:#cbd5e1;margin:4px 0">${escapeHtml(spec.one_liner || '')}</div>
+        <div class="task-meta">👥 ${escapeHtml(spec.users || '-')}</div>
+        ${feats ? `<div style="margin-top:8px">ฟีเจอร์ MVP:<ul style="margin:4px 0 0 18px">${feats}</ul></div>` : ''}
+        <div class="task-meta" style="margin-top:6px">🧱 ${escapeHtml(spec.tech || '-')} · 🎨 ${escapeHtml(spec.ui || '-')}</div>
+        ${cuts ? `<div class="task-meta">✂️ v1 ตัด: ${cuts}</div>` : ''}
+        <button id="council-build-btn" class="primary-btn" style="margin-top:12px">🚀 สร้างเป็น project</button>
+      </div>`;
+      result.innerHTML = html;
+
+      const btn = document.getElementById('council-build-btn');
+      if (btn) btn.addEventListener('click', () => {
+        const q = 'สร้างเว็บแอปใหม่ตาม spec นี้ ให้ครบ รันได้จริง หน้าตาระดับพรีเมียม:\n'
+          + 'ชื่อ: ' + (spec.name || topic) + '\n' + (spec.one_liner || '') + '\n'
+          + 'ผู้ใช้: ' + (spec.users || '') + '\n'
+          + 'ฟีเจอร์ MVP:\n' + (spec.features || []).map(f => '- ' + f).join('\n') + '\n'
+          + 'Tech: ' + (spec.tech || 'FastAPI + HTML/Tailwind') + '\nทิศทาง UI: ' + (spec.ui || '');
+        try { localStorage.setItem('ener_council_build', JSON.stringify({ name: spec.name || topic, question: q })); } catch (e) {}
+        window.location.href = '/workspace?tool=code';
+      });
     } catch (error) {
-      result.innerHTML = '<div class="surface">Brainstorm failed.</div>';
-      showToast(error.message || 'Brainstorm failed');
+      result.innerHTML = '<div class="surface">AI Council failed.</div>';
+      showToast((error && error.message) || 'Council failed');
     }
   }
 

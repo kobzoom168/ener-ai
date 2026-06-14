@@ -6789,15 +6789,16 @@ async def workspace_standup_projects_update(project_id: int, request: Request):
 
 @app.post("/workspace/brainstorm")
 async def workspace_brainstorm(request: Request):
+    """AI Council: multi-model debate (via OpenRouter) → buildable project spec."""
     await _require_admin(request)
     payload = await request.json()
     topic = str(payload.get("topic", "")).strip()
     if not topic:
         raise HTTPException(status_code=400, detail="กรุณาระบุหัวข้อ")
-    from app.agents.brainstorm import run_brainstorm
+    from app.agents.brainstorm import run_council
 
-    result = await run_brainstorm(topic)
-    return JSONResponse(_parse_brainstorm_blocks(result))
+    result = await run_council(topic)
+    return JSONResponse(result)
 
 
 @app.get("/workspace/news")

@@ -2120,6 +2120,26 @@
       window.initCodeAssistantPanel = async function() {
         try { const lp = localStorage.getItem('ener-last-project'); if (lp) currentProject = lp; } catch(e) {}
         await loadProjects();
+        // AI Council handoff: a brainstorm spec was sent here to build → create the
+        // project and kick off the Code Agent automatically.
+        try {
+          const pend = localStorage.getItem('ener_council_build');
+          if (pend) {
+            localStorage.removeItem('ener_council_build');
+            const { name, question } = JSON.parse(pend);
+            let proj = (name || 'idea-app').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'idea-app';
+            await fetch('/workspace/code/project/create', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: proj, template: 'empty', git_init: true }),
+            }).catch(() => {});
+            await loadProjects();
+            currentProject = proj;
+            try { localStorage.setItem('ener-last-project', proj); } catch (e) {}
+            if (window.selectProject) { try { await selectProject(proj); } catch (e) {} }
+            if (window.askCodeAI && question) askCodeAI(question);
+            return;
+          }
+        } catch (e) {}
         // After loadProjects, if currentProject is set and project is now in DOM, load its chat history
         if (currentProject) {
           const filesDiv = document.querySelector(`.code-project-files[data-project="${currentProject}"]`);
