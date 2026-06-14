@@ -61,7 +61,8 @@ def _parse_json(raw: str) -> dict:
 async def generate_script(title: str, summary: str) -> dict:
     system = (
         "คุณคือนักเขียนบทคลิปสั้นข่าวสายฮา พูดไทยกวนๆ เป็นกันเอง ทำให้คนดูอมยิ้ม "
-        "เขียนบทพากย์สำหรับคลิปแนวตั้ง 30-45 วินาที ห้ามหยาบคาย ห้ามดูถูกใคร ตอบ JSON เท่านั้น"
+        "เขียนบทพากย์สำหรับคลิปแนวตั้ง 30-45 วินาที ห้ามหยาบคาย ห้ามดูถูกใคร "
+        "ห้ามใส่เครื่องหมายคำพูด \" \" หรือ ' ' ในบทพากย์ ตอบ JSON เท่านั้น"
     )
     prompt = (
         f"ข่าว: {title}\nรายละเอียด: {summary}\n\n"
@@ -72,7 +73,8 @@ async def generate_script(title: str, summary: str) -> dict:
         'ตอบ JSON เท่านั้น: {"lines": ["ประโยคสั้นๆ", "..."], "caption": "แคปชั่นโพสต์สั้น + #แฮชแท็ก"}'
     )
     data = _parse_json(await _or_chat(SCRIPT_MODEL, system, prompt, 700))
-    lines = [str(x).strip() for x in (data.get("lines") or []) if str(x).strip()][:8]
+    lines = [_strip_quotes(str(x)) for x in (data.get("lines") or []) if str(x).strip()][:8]
+    lines = [x for x in lines if x]
     if not lines:
         lines = [title]
     caption = str(data.get("caption") or title).strip()[:300]
@@ -86,7 +88,7 @@ def _synth_voice(text: str, out_path: str) -> str:
     if key and voice:
         try:
             import httpx
-            model = os.environ.get("ELEVENLABS_MODEL", "eleven_multilingual_v2")
+            model = os.environ.get("ELEVENLABS_MODEL", "eleven_v3")
             r = httpx.post(
                 f"https://api.elevenlabs.io/v1/text-to-speech/{voice}",
                 headers={"xi-api-key": key, "Content-Type": "application/json"},
@@ -133,36 +135,78 @@ def _ass_escape(text: str) -> str:
     return (text or "").replace("\\", " ").replace("{", "(").replace("}", ")").replace("\n", " ").strip()
 
 
-def _wrap_thai(text: str, max_chars: int = 24) -> str:
-    """Hard-wrap a line to fit the video width using ASS \\N breaks.
+# Quotes make the narration read like an AI (and look odd on screen) — strip them out.
+_QUOTES = "\"“”„«»‘’‹›`'"
 
-    Thai has no spaces so libass can't auto-wrap — we wrap manually: break at spaces
-    when possible, otherwise hard-split long runs at max_chars.
+
+def _strip_quotes(s: str) -> str:
+    return (s or "").translate({ord(c): None for c in _QUOTES}).strip()
+
+
+# Thai has no spaces, so a naive char-cut orphans trailing vowels/tone marks on the next
+# line (e.g. "เทพีบ" / "าสเทต"). These chars must never START a line; เแโใไ must never END one.
+_NO_LINE_START = set("ะาำิีึืุู็่้๊๋์ํัๆๅฯๆ.,!?)]}")
+_NO_LINE_END = set("เแโใไ([{")
+
+
+def _cluster_cut(s: str, max_chars: int) -> int:
+    """Pick a cut index <= max_chars that doesn't split a Thai vowel/tone cluster."""
+    cut = max_chars
+    while cut > 1 and (s[cut] in _NO_LINE_START or s[cut - 1] in _NO_LINE_END):
+        cut -= 1
+    return cut if cut > 1 else max_chars
+
+
+def _wrap_thai(text: str, max_chars: int = 26) -> str:
+    """Wrap a line to the video width using ASS \\N breaks.
+
+    Best: pythainlp word segmentation -> break at real Thai word boundaries.
+    Fallback (pythainlp absent): cluster-safe char cut so a break never orphans a Thai
+    vowel/tone-mark from the consonant it attaches to.
     """
-    text = (text or "").strip()
-    if len(text) <= max_chars:
-        return text
+    s = (text or "").strip()
+    if len(s) <= max_chars:
+        return s
+
+    words = None
+    try:
+        from pythainlp.tokenize import word_tokenize
+        words = [w for w in word_tokenize(s, engine="newmm") if w]
+    except Exception:
+        words = None
+
     out: list[str] = []
-    line = ""
-    for tok in re.findall(r"\S+|\s+", text):
-        if tok.isspace():
-            if line:
-                line += tok
-            continue
-        while len(tok) > max_chars:
-            if line.strip():
+    if words:
+        line = ""
+        for w in words:
+            if not w.strip():  # whitespace token — keep attached
+                line += w
+                continue
+            if len(w) > max_chars:  # single overlong word: cluster-safe split it
+                if line.strip():
+                    out.append(line.strip())
+                    line = ""
+                while len(w) > max_chars:
+                    c = _cluster_cut(w, max_chars)
+                    out.append(w[:c].strip())
+                    w = w[c:]
+                line = w
+            elif len((line + w).strip()) <= max_chars or not line.strip():
+                line += w
+            else:
                 out.append(line.strip())
-            out.append(tok[:max_chars])
-            tok = tok[max_chars:]
-            line = ""
-        if len(line) + len(tok) > max_chars:
-            if line.strip():
-                out.append(line.strip())
-            line = tok
-        else:
-            line += tok
-    if line.strip():
-        out.append(line.strip())
+                line = w
+        if line.strip():
+            out.append(line.strip())
+        return "\\N".join(out)
+
+    while len(s) > max_chars:
+        sp = s.rfind(" ", 0, max_chars + 1)
+        cut = sp if sp > max_chars // 2 else _cluster_cut(s, max_chars)
+        out.append(s[:cut].strip())
+        s = s[cut:].lstrip()
+    if s.strip():
+        out.append(s.strip())
     return "\\N".join(out)
 
 
@@ -347,7 +391,8 @@ async def generate_mystery_script(topic: str = "", title: str = "", summary: str
     system = (
         "คุณคือครีเอเตอร์คอนเทนต์สายมู/ลึกลับของเพจ 'Ener Scan ตรวจพลังพระ หิน เครื่องราง' "
         "เขียนบทคลิปสั้นแนวตั้งภาษาไทย น่าสนใจ ชวนติดตาม เล่าเรื่องสนุกแต่ให้ความรู้ "
-        "เคารพความเชื่อ ไม่ลบหลู่ ไม่การันตีโชคลาภ/รักษาโรค ไม่ชวนเชื่องมงายเกินจริง ตอบ JSON เท่านั้น"
+        "เคารพความเชื่อ ไม่ลบหลู่ ไม่การันตีโชคลาภ/รักษาโรค ไม่ชวนเชื่องมงายเกินจริง "
+        "ห้ามใส่เครื่องหมายคำพูด \" \" หรือ ' ' ในบทพากย์ ตอบ JSON เท่านั้น"
     )
     if title:
         body = f"ข่าว/เรื่อง: {title}\nรายละเอียด: {summary}\n\nเรียบเรียงเป็นบทคลิปสายมูที่น่าติดตาม"
@@ -370,8 +415,9 @@ async def generate_mystery_script(topic: str = "", title: str = "", summary: str
         '"image_prompts": ["ภาพพื้นหลัง 3 ฉากเป็นภาษาอังกฤษให้เข้ากับเรื่อง ไล่ตามเนื้อหา (ไม่มีตัวหนังสือในภาพ)", "...", "..."]}'
     )
     data = _parse_json(await _or_chat(SCRIPT_MODEL, system, prompt, 900))
-    lines = [str(x).strip() for x in (data.get("lines") or []) if str(x).strip()][:8]
-    out_title = str(data.get("title") or title or topic or "เรื่องลึกลับ").strip()[:60]
+    lines = [_strip_quotes(str(x)) for x in (data.get("lines") or []) if str(x).strip()][:8]
+    lines = [x for x in lines if x]
+    out_title = _strip_quotes(str(data.get("title") or title or topic or "เรื่องลึกลับ"))[:60]
     if not lines:
         lines = [out_title]
     caption = str(data.get("caption") or out_title).strip()[:300]

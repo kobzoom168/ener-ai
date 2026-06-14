@@ -14,6 +14,7 @@ groq
 google-genai
 psutil
 gTTS==2.5.3
+pythainlp==5.0.4
 docker==7.1.0
 google-auth-oauthlib==1.4.0
 google-api-python-client==2.196.0
