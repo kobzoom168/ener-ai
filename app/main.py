@@ -8496,6 +8496,9 @@ async def workspace_code_agent_stream(request: Request):
         if _ref_spec:
             system += (
                 "\n=== REFERENCE DESIGN TO CLONE (user pasted a screenshot of a site to copy) ===\n"
+                "This is a CLONE/REBUILD job and it OVERRIDES the 'when editing keep the existing\n"
+                "framework / make only targeted edits' rule above — you SHOULD rewrite the page's\n"
+                "HTML/CSS in full so it looks like the reference, not the old page.\n"
                 "Build the UI to CLOSELY MATCH this reference. A vision critic will compare your\n"
                 "rendered page against the original screenshot and send back the differences to fix.\n"
                 "Reproduce its layout, color palette, typography, components and spacing. You cannot\n"
@@ -9168,7 +9171,28 @@ async def workspace_code_agent_stream(request: Request):
         conv_messages = clean_history[:]
         # Inject change plan + FULL current file content so the writer edits precisely
         # (without the real content, DeepSeek regenerates whole files from memory and destroys them)
-        if change_plan:
+        if reference_b64:
+            # CLONE: the timid change-plan "make only targeted edits / copy verbatim"
+            # prompt fights the goal (rebuild to look like the reference). Override it
+            # with a forceful full-rewrite-and-write-now instruction so the writer
+            # actually produces files (otherwise QC + Visual QC silently skip).
+            AGENT_MAX_TOKENS = 12000
+            _ui_hint = ", ".join(
+                p for p in (project_files or "").split("\n")
+                if p.strip().lower().endswith((".html", ".css"))
+            ) or "templates/index.html, static/style.css (หรือ index.html)"
+            current_q = (
+                f"User request: {question}\n\n"
+                f"งานนี้คือ CLONE ดีไซน์จากรูปอ้างอิง (design spec + ภาพอยู่ใน system prompt แล้ว)\n"
+                f"REBUILD หน้าเว็บใหม่ทั้งหน้า ให้ layout / สี / typography / components เหมือนรูปอ้างอิงมากที่สุด:\n"
+                f"- เขียนไฟล์ UI ใหม่ทั้งไฟล์ด้วย <WRITE_FILE path=\"{project}/...\"> ในคำตอบนี้เลย "
+                f"(ไฟล์หน้าเว็บหลักของโปรเจกต์นี้: {_ui_hint})\n"
+                f"- ห้ามแค่ ls/cat/restart แล้วหยุด และห้ามแค่เปลี่ยนสี — ต้องสร้างหน้าใหม่ให้เหมือนต้นแบบจริงๆ\n"
+                f"- ใช้ Tailwind + design system ใน system prompt; แทน asset จริง (โลโก้/รูปถ่าย) ด้วย inline SVG / CSS gradient / placeholder\n"
+                f"- ถ้าเป็น FastAPI app ให้ route '/' render หน้าที่ clone นี้ (อย่าแตะ logic/route อื่นที่ไม่เกี่ยว UI)\n"
+                f"ระบบจะ deploy + ให้ vision เทียบกับรูปอ้างอิงแล้ววน fix ให้เองหลังคุณเขียนไฟล์เสร็จ"
+            )
+        elif change_plan:
             _plan_lines = "\n".join(f"- {_f}: {_inst}" for _f, _inst in change_plan.items())
             _file_blocks = []
             for _fname in change_plan.keys():
@@ -9225,6 +9249,13 @@ async def workspace_code_agent_stream(request: Request):
                 yield f"data: {_json.dumps({'type': 'token', 'text': token, 'tokens': token_count})}\n\n"
 
             yield f"data: {_json.dumps({'type': 'thinking_done', 'tokens': token_count})}\n\n"
+
+            # Empty Writer response (model at-capacity / thinking-model returned nothing on
+            # this budget — e.g. Kimi) → say so plainly instead of going silent, and stop.
+            if repair_iter == 0 and not full_response.strip():
+                yield f"data: {_json.dumps({'type': 'final_text', 'text': '⚠️ Writer ตอบกลับว่างเปล่า — โมเดล Writer อาจ at-capacity หรือเป็น thinking-model ที่คืนค่าว่างบน budget นี้ ลองเปลี่ยนโมเดล Writer เป็น DeepSeek V4 Pro/Flash แล้วส่งใหม่', 'actions': [], 'exec_results': []})}\n\n"
+                yield f"data: {_json.dumps({'type': 'done'})}\n\n"
+                return
 
             # ── Execute WRITE_FILE tags ───────────────────────────────
             actions, events, written_now = await process_write_files(full_response)
@@ -9294,6 +9325,12 @@ async def workspace_code_agent_stream(request: Request):
                 {"role": "assistant", "content": full_response[:1200]},
             ]
             yield f"data: {_json.dumps({'type': 'repair_start', 'iter': repair_iter, 'errors': len(failed)})}\n\n"
+
+        # Safeguard: a clone that produced NO file writes (writer only inspected with
+        # ls/cat) must not silently report success — QC + Visual QC are gated on
+        # written_contents, so without this the user just sees a misleading "done".
+        if reference_b64 and not written_contents:
+            yield f"data: {_json.dumps({'type': 'final_text', 'text': '⚠️ Clone ยังไม่สำเร็จ — Writer ยังไม่ได้เขียนไฟล์หน้าเว็บ (แค่ตรวจโครงสร้าง). ลองกดส่งใหม่อีกครั้ง หรือพิมพ์กำกับว่า \"เขียน templates/index.html ใหม่ให้เหมือนรูป\" เพื่อบังคับให้ลงมือเขียน', 'actions': [], 'exec_results': []})}\n\n"
 
         # ════════════════════════════════════════════════════════════
         # VERIFY LOOP — QC technical review + Planner acceptance judgment.
