@@ -194,18 +194,43 @@ async def _gen_bg_image(prompt: str) -> str | None:
         return None
 
 
+async def _gen_bg_images(prompts: list[str]) -> list[str]:
+    """Generate several bg images in parallel; returns the paths that succeeded."""
+    prompts = [p for p in (prompts or []) if str(p).strip()][:3]
+    if not prompts:
+        return []
+    results = await asyncio.gather(*[_gen_bg_image(p) for p in prompts])
+    return [p for p in results if p]
+
+
 def _render(audio_path: str, ass_path: str, duration: float, out_path: str,
-            bg_image: str | None = None) -> tuple[bool, str]:
-    if bg_image and os.path.exists(bg_image):
-        # still image → fill 1080x1920, darken for caption readability, burn subs
-        vf = ("scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
-              f"eq=brightness=-0.20:saturation=1.1,subtitles={ass_path}")
-        cmd = [
-            "ffmpeg", "-y", "-loop", "1", "-i", bg_image, "-i", audio_path,
-            "-vf", vf, "-t", f"{duration:.2f}",
-            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "128k", "-shortest", out_path,
-        ]
+            bg_images: list[str] | None = None) -> tuple[bool, str]:
+    imgs = [p for p in (bg_images or []) if p and os.path.exists(p)]
+    if imgs:
+        # slideshow of the images, each with a slow Ken Burns zoom (camera motion),
+        # darkened for caption readability. 1 image = 1 zooming segment.
+        n = len(imgs)
+        fps = 25
+        seg = max(1.0, duration / n)
+        dframes = max(fps, int(seg * fps))
+        cmd = ["ffmpeg", "-y"]
+        for p in imgs:
+            cmd += ["-loop", "1", "-t", f"{seg:.2f}", "-i", p]
+        cmd += ["-i", audio_path]
+        chains = []
+        for i in range(n):
+            chains.append(
+                f"[{i}:v]scale=1620:2880:force_original_aspect_ratio=increase,crop=1620:2880,"
+                f"zoompan=z='min(zoom+0.0012,1.35)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+                f"d={dframes}:s=1080x1920:fps={fps},setsar=1[v{i}]"
+            )
+        cat = "".join(f"[v{i}]" for i in range(n))
+        fc = (";".join(chains) +
+              f";{cat}concat=n={n}:v=1:a=0,eq=brightness=-0.20:saturation=1.1,"
+              f"subtitles={ass_path}[vout]")
+        cmd += ["-filter_complex", fc, "-map", "[vout]", "-map", f"{n}:a",
+                "-r", str(fps), "-c:v", "libx264", "-preset", "veryfast",
+                "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-shortest", out_path]
     else:
         bg = f"color=c=0x0f172a:s=1080x1920:d={duration:.2f}"
         cmd = [
@@ -215,7 +240,7 @@ def _render(audio_path: str, ass_path: str, duration: float, out_path: str,
             "-c:a", "aac", "-b:a", "128k", "-shortest", out_path,
         ]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=240)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         if r.returncode == 0 and os.path.exists(out_path):
             return True, "ok"
         return False, (r.stderr or "ffmpeg failed")[-500:]
@@ -259,12 +284,13 @@ async def make_news_short(title: str, summary: str) -> dict:
             "duration": round(duration, 1)}
 
 
-async def _render_clip(title: str, lines: list[str], bg_image: str | None = None) -> dict:
-    """Shared render: lines -> gTTS -> ASS captions -> MP4 (optional bg image). Fail-open bg."""
+async def _render_clip(title: str, lines: list[str], bg_images: list[str] | None = None) -> dict:
+    """Shared render: lines -> gTTS -> ASS captions -> MP4 (optional bg image slideshow)."""
     os.makedirs(VDO_DIR, exist_ok=True)
     stamp = int(time.time())
     base = os.path.join(VDO_DIR, f"vdo_{stamp}")
     mp3, ass, mp4 = base + ".mp3", base + ".ass", base + ".mp4"
+    bg_images = [p for p in (bg_images or []) if p]
     if not lines:
         return {"ok": False, "error": "ไม่มีบทพากย์"}
     try:
@@ -275,16 +301,15 @@ async def _render_clip(title: str, lines: list[str], bg_image: str | None = None
     if duration <= 0:
         return {"ok": False, "error": "อ่านความยาวเสียงไม่ได้"}
     await asyncio.to_thread(_build_ass, title, lines, duration, ass)
-    ok, err = await asyncio.to_thread(_render, mp3, ass, duration, mp4, bg_image)
-    if not ok and bg_image:
-        # bg image broke the render → retry on the plain solid background
+    ok, err = await asyncio.to_thread(_render, mp3, ass, duration, mp4, bg_images)
+    if not ok and bg_images:
+        # the slideshow/zoom render broke → retry plain solid so the clip still ships
         ok, err = await asyncio.to_thread(_render, mp3, ass, duration, mp4, None)
     if not ok:
         return {"ok": False, "error": f"render ล้มเหลว: {err}"}
-    for p in (mp3, ass, bg_image or ""):
+    for p in [mp3, ass] + bg_images:
         try:
-            if p:
-                os.remove(p)
+            os.remove(p)
         except Exception:
             pass
     return {"ok": True, "mp4": mp4, "duration": round(duration, 1)}
@@ -319,24 +344,26 @@ async def generate_mystery_script(topic: str = "", title: str = "", summary: str
         "- ปิดด้วยประโยคชวนคิด/ชวนติดตาม (ไม่การันตีผล)\n"
         'ตอบ JSON เท่านั้น: {"title": "หัวข้อสั้น", "lines": ["ประโยคสั้นๆ", "..."], '
         '"caption": "แคปชั่นโพสต์ + #แฮชแท็ก เช่น #สายมู #เครื่องราง #ความเชื่อ #ลึกลับ", '
-        '"image_prompt": "คำอธิบายภาพพื้นหลังเป็นภาษาอังกฤษให้เข้ากับเรื่อง (ไม่มีตัวหนังสือในภาพ)"}'
+        '"image_prompts": ["ภาพพื้นหลัง 3 ฉากเป็นภาษาอังกฤษให้เข้ากับเรื่อง ไล่ตามเนื้อหา (ไม่มีตัวหนังสือในภาพ)", "...", "..."]}'
     )
-    data = _parse_json(await _or_chat(SCRIPT_MODEL, system, prompt, 800))
+    data = _parse_json(await _or_chat(SCRIPT_MODEL, system, prompt, 900))
     lines = [str(x).strip() for x in (data.get("lines") or []) if str(x).strip()][:8]
     out_title = str(data.get("title") or title or topic or "เรื่องลึกลับ").strip()[:60]
     if not lines:
         lines = [out_title]
     caption = str(data.get("caption") or out_title).strip()[:300]
-    image_prompt = str(data.get("image_prompt") or out_title).strip()[:300]
-    return {"title": out_title, "lines": lines, "caption": caption, "image_prompt": image_prompt}
+    image_prompts = [str(x).strip()[:300] for x in (data.get("image_prompts") or []) if str(x).strip()][:3]
+    if not image_prompts:
+        image_prompts = [out_title]
+    return {"title": out_title, "lines": lines, "caption": caption, "image_prompts": image_prompts}
 
 
 async def make_mystery_short(topic: str = "", title: str = "", summary: str = "") -> dict:
-    """สายมู short: AI picks/retells a mystery topic -> Thai short MP4 (with a topical bg image)."""
+    """สายมู short: AI picks/retells a mystery topic -> Thai short MP4 (3 zooming bg images)."""
     script = await generate_mystery_script(topic, title, summary)
-    bg = await _gen_bg_image(script.get("image_prompt") or script["title"])
-    r = await _render_clip(script["title"], script["lines"], bg)
+    bgs = await _gen_bg_images(script.get("image_prompts") or [script["title"]])
+    r = await _render_clip(script["title"], script["lines"], bgs)
     if r.get("ok"):
         r.update({"caption": script["caption"], "lines": script["lines"], "title": script["title"],
-                  "has_bg": bool(bg)})
+                  "bg_count": len(bgs)})
     return r
