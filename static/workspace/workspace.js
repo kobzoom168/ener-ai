@@ -2346,15 +2346,27 @@ document.addEventListener('DOMContentLoaded', function() {
       }).join('');
     }
     const pct = (s && s.pct != null) ? s.pct : 0;
+    const accent = isErr ? '#ef4444' : (stage === 'done' ? '#22c55e' : '#22c55e');
     const barEl = document.getElementById('ap-status-bar');
     if (barEl) {
       barEl.style.width = pct + '%';
-      barEl.style.background = isErr ? '#ef4444' : 'linear-gradient(90deg,#3b82f6,#22c55e)';
-      barEl.style.boxShadow = '0 0 10px ' + (isErr ? '#ef4444' : '#22c55e');
+      barEl.style.background = isErr
+        ? '#ef4444'
+        : 'repeating-linear-gradient(45deg,#22c55e,#22c55e 8px,#16a34a 8px,#16a34a 16px)';
+      barEl.style.boxShadow = '0 0 12px ' + accent;
     }
+    // the pixel hero walks along the bar; cheers at the end, KO on error
+    const charEl = document.getElementById('ap-status-char');
+    if (charEl) {
+      charEl.style.left = Math.max(2, Math.min(98, pct)) + '%';
+      charEl.textContent = isErr ? '💀' : (stage === 'done' ? '🎉' : (stage === 'posting' ? '🏃' : '🧙‍♂️'));
+      charEl.style.filter = 'drop-shadow(0 0 5px ' + accent + ')';
+    }
+    bar.style.borderColor = accent;
+    bar.style.animation = isErr ? 'none' : 'apGlow 2.4s ease-in-out infinite';
     const t = document.getElementById('ap-status-text'); if (t) t.textContent = (s && s.detail) || stage;
     const ti = document.getElementById('ap-status-title'); if (ti) ti.textContent = (s && s.title) ? ('· ' + s.title) : '';
-    const p = document.getElementById('ap-status-pct'); if (p) { p.textContent = pct + '%'; p.style.color = isErr ? '#ef4444' : '#22c55e'; }
+    const p = document.getElementById('ap-status-pct'); if (p) { p.textContent = pct + '%'; p.style.color = accent; p.style.textShadow = '0 0 10px ' + accent; }
     const at = document.getElementById('ap-status-at'); if (at) at.textContent = (s && s.at) || '';
   }
 

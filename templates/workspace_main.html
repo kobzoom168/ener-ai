@@ -162,18 +162,29 @@
           ประเภทเนื้อหา → AI สร้างคลิป → โพสต์อัตโนมัติ (Facebook / YouTube / TikTok — แยกเวลาได้)
         </p>
 
-        <!-- live pipeline status box: steps + running light + percent -->
-        <style>@keyframes apPulse{0%,100%{opacity:1}50%{opacity:.45}}</style>
-        <div id="ap-status" class="surface" style="display:none;flex-direction:column;gap:8px;padding:12px 16px;border:1px solid var(--border);border-radius:12px;margin-bottom:14px">
-          <div id="ap-status-steps" style="display:flex;align-items:center;gap:5px;flex-wrap:wrap"></div>
-          <div style="height:8px;background:#141821;border-radius:6px;overflow:hidden">
-            <div id="ap-status-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#3b82f6,#22c55e);transition:width .4s;box-shadow:0 0 10px #22c55e"></div>
+        <!-- live pipeline status box: RPG quest style with a walking pixel hero -->
+        <style>
+          @keyframes apPulse{0%,100%{opacity:1}50%{opacity:.4}}
+          @keyframes apStripes{0%{background-position:0 0}100%{background-position:-32px 0}}
+          @keyframes apWalk{0%,100%{transform:translateX(-50%) translateY(0)}50%{transform:translateX(-50%) translateY(-4px)}}
+          @keyframes apGlow{0%,100%{box-shadow:0 0 0 2px #22c55e,0 0 18px #22c55e66}50%{box-shadow:0 0 0 2px #16a34a,0 0 30px #22c55ebb}}
+        </style>
+        <div id="ap-status" style="display:none;max-width:680px;margin:0 auto 20px;padding:16px 22px 20px;border-radius:14px;background:linear-gradient(180deg,#0f1626,#0a0e1a);border:2px solid #22c55e;animation:apGlow 2.4s ease-in-out infinite;flex-direction:column;gap:13px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-family:'Press Start 2P',monospace;font-size:10px;color:#a78bfa;text-shadow:0 0 8px #a78bfa88">⚔ QUEST</span>
+            <span id="ap-status-title" style="color:var(--muted-foreground);font-size:12px"></span>
           </div>
-          <div style="display:flex;align-items:center;gap:8px;font-size:13px">
-            <span id="ap-status-text" style="font-weight:600"></span>
-            <span id="ap-status-title" style="color:var(--muted-foreground)"></span>
-            <span id="ap-status-pct" style="margin-left:auto;font-weight:800;color:#22c55e"></span>
-            <span id="ap-status-at" style="color:var(--muted-foreground);font-size:11px"></span>
+          <div id="ap-status-steps" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:center"></div>
+          <div style="position:relative;height:20px;margin-top:8px">
+            <div style="position:absolute;inset:0;background:#0a1020;border:2px solid #1e293b;border-radius:10px;overflow:hidden">
+              <div id="ap-status-bar" style="height:100%;width:0%;border-radius:8px;background:repeating-linear-gradient(45deg,#22c55e,#22c55e 8px,#16a34a 8px,#16a34a 16px);background-size:32px 32px;animation:apStripes .55s linear infinite;transition:width .5s;box-shadow:0 0 12px #22c55e"></div>
+            </div>
+            <div id="ap-status-char" style="position:absolute;top:-13px;left:0%;font-size:22px;animation:apWalk .5s ease-in-out infinite;transition:left .5s;filter:drop-shadow(0 0 5px #22c55e)">🧙‍♂️</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <span id="ap-status-text" style="font-weight:600;font-size:13px"></span>
+            <span id="ap-status-pct" style="margin-left:auto;font-family:'Press Start 2P',monospace;font-size:15px;color:#22c55e;text-shadow:0 0 10px #22c55e"></span>
+            <span id="ap-status-at" style="color:var(--muted-foreground);font-size:9px;font-family:'Press Start 2P',monospace"></span>
           </div>
         </div>
 
