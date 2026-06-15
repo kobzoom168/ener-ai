@@ -1687,6 +1687,8 @@
         let streamText = '';
         let finalText = '';
         let currentToolEl = null;
+        let _streamNoteEl = null;     // body of the CURRENT agent's note box
+        let _streamNoteAgent = null;  // which agent that box belongs to
 
         function addToolRow(icon, label, desc, id) {
           const row = document.createElement('div');
@@ -1986,6 +1988,20 @@
               }
 
               if (evt.type === 'token') {
+                const agentLabel = _agentCurrent || 'writer';
+                // Agent changed (e.g. Writer → QC) → open a NEW separate note box so each
+                // agent's output stays in its own bubble instead of overwriting the previous.
+                if (_streamNoteAgent !== agentLabel) {
+                  _streamNoteAgent = agentLabel;
+                  streamText = '';
+                  const agentIcons = { planner: '🧠 Planner', writer: '✍️ Writer', qc: '🔍 QC' };
+                  const note = document.createElement('div');
+                  note.className = 'cc-agent-note';
+                  note.setAttribute('data-agent', agentLabel);
+                  note.innerHTML = `<div class="cc-agent-note-head"><span class="cc-agent-dot"></span>${agentIcons[agentLabel] || agentLabel}</div><div class="cc-agent-note-body"></div>`;
+                  toolsEl.appendChild(note);
+                  _streamNoteEl = note.querySelector('.cc-agent-note-body');
+                }
                 streamText += evt.text;
                 tokensEl.textContent = `· ${evt.tokens || 0} tokens`;
                 // Strip complete tool blocks, then strip any still-streaming unclosed WRITE_FILE
@@ -1995,17 +2011,10 @@
                   .replace(/<EXEC_CMD[^/]*\/>/g, '')
                   .replace(/<UPDATE_MEMORY[^/]*\/>/g, '')
                   .trim();
-                if (clean) {
-                  const agentLabel = _agentCurrent || 'writer';
-                  const agentIcons = { planner: '🧠 Planner', writer: '✍️ Writer', qc: '🔍 QC' };
-                  const label = agentIcons[agentLabel] || agentLabel;
-                  respEl.style.display = '';
+                if (clean && _streamNoteEl) {
                   let parsed = clean;
                   try { parsed = marked.parse(clean); } catch { parsed = escHtml(clean).replace(/\n/g,'<br>'); }
-                  respEl.innerHTML = `<div class="cc-agent-note" data-agent="${agentLabel}">
-                    <div class="cc-agent-note-head"><span class="cc-agent-dot"></span>${label}</div>
-                    <div class="cc-agent-note-body">${parsed}</div>
-                  </div>`;
+                  _streamNoteEl.innerHTML = parsed;
                 }
                 msgs.scrollTop = msgs.scrollHeight;
               }
