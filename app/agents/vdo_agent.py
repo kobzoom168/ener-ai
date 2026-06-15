@@ -79,7 +79,7 @@ async def generate_script(title: str, summary: str) -> dict:
         "- ปิดด้วยมุก/คอมเมนต์ฮาๆ 1 ประโยค\n"
         'ตอบ JSON เท่านั้น: {"lines": ["ประโยคสั้นๆ", "..."], "caption": "แคปชั่นโพสต์สั้น + #แฮชแท็ก"}'
     )
-    data = _parse_json(await _or_chat(SCRIPT_MODEL, system, prompt, 700))
+    data = _parse_json(await _or_chat(SCRIPT_MODEL, system, prompt, 4000))
     lines = [_strip_quotes(str(x)) for x in (data.get("lines") or []) if str(x).strip()][:8]
     lines = [x for x in lines if x]
     if not lines:
@@ -700,7 +700,7 @@ async def generate_mystery_script(topic: str = "", title: str = "", summary: str
         '"video_queries": ["คำค้นวิดีโอสต็อกจริงสั้นๆ ภาษาอังกฤษ 1-3 คำ เน้นบรรยากาศไทย/เอเชีย ใส่คำว่า Thai หรือ Thailand เมื่อเข้ากับเรื่อง เช่น Thai temple, Thai monk, Thailand misty forest, incense smoke shrine, Thai river mist", "...", "..."], '
         '"ai_video_prompt": "พรอมต์ภาษาอังกฤษ 1 ประโยค สำหรับ AI สร้างวิดีโอ \\"ฉากเด็ด\\" ที่สต็อกไม่มี (เช่น พญานาค/ของขลังเรืองแสง/ควันวนรอบพระ) cinematic ขลังๆ"}'
     )
-    data = _parse_json(await _or_chat(SCRIPT_MODEL, system, prompt, 1000))
+    data = _parse_json(await _or_chat(SCRIPT_MODEL, system, prompt, 6000))
     lines = [_strip_quotes(str(x)) for x in (data.get("lines") or []) if str(x).strip()][:8]
     lines = [x for x in lines if x]
     out_title = _strip_quotes(str(data.get("title") or title or topic or "เรื่องลึกลับ"))[:60]
