@@ -158,11 +158,17 @@
         <button class="panel-action" onclick="loadAutopost()">↻ รีเฟรช</button>
       </div>
       <div class="panel-body" style="max-width:860px">
-        <p style="color:var(--muted-foreground);margin:0 0 14px;font-size:13px">
-          ตั้งเวลาให้ AI สร้างคลิป (สายมู/ข่าว) แล้วโพสต์ขึ้นเพจอัตโนมัติ — เลือกหัวข้อ ช่องทาง และวันเวลา
+        <p style="color:var(--muted-foreground);margin:0 0 12px;font-size:13px">
+          ประเภทเนื้อหา → AI สร้างคลิป → โพสต์อัตโนมัติ (Facebook / YouTube / TikTok — แยกเวลาได้)
         </p>
 
-        <div id="autopost-channels" style="margin-bottom:16px"></div>
+        <!-- live pipeline status light -->
+        <div id="ap-status" class="surface" style="display:none;align-items:center;gap:10px;padding:10px 16px;border:1px solid var(--border);border-radius:12px;margin-bottom:14px;font-size:13px">
+          <span id="ap-status-dot" style="width:11px;height:11px;border-radius:50%;background:#22c55e;flex-shrink:0;box-shadow:0 0 8px #22c55e"></span>
+          <span id="ap-status-text" style="font-weight:600"></span>
+          <span id="ap-status-title" style="color:var(--muted-foreground)"></span>
+          <span id="ap-status-at" style="margin-left:auto;color:var(--muted-foreground);font-size:11px"></span>
+        </div>
 
         <div class="surface" style="padding:12px 16px;border:1px solid var(--border);border-radius:12px;margin-bottom:16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
           <img id="ap-face-preview" src="/avatar/face.jpg" onerror="this.style.display='none'" style="width:54px;height:54px;border-radius:50%;object-fit:cover;border:2px solid var(--border)">
@@ -176,41 +182,51 @@
         </div>
 
         <div class="surface" style="padding:16px;border:1px solid var(--border);border-radius:12px;margin-bottom:20px">
-          <div style="font-weight:600;margin-bottom:12px" id="autopost-form-title">➕ ตั้งตารางโพสต์ใหม่</div>
+          <div style="font-weight:600;margin-bottom:14px" id="autopost-form-title">➕ ตั้งตารางโพสต์ใหม่</div>
           <input type="hidden" id="ap-id" value="">
+
+          <div style="font-size:12px;color:var(--muted-foreground);margin-bottom:4px">① ประเภทเนื้อหา</div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
             <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">ชื่อเรียก
               <input id="ap-label" type="text" placeholder="เช่น คลิปสายมูรายวัน" style="background:#1f2430;border:1px solid var(--border);border-radius:8px;padding:8px;color:var(--foreground)">
             </label>
-            <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">ประเภทเนื้อหา
+            <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">ประเภท
               <select id="ap-content" style="background:#1f2430;border:1px solid var(--border);border-radius:8px;padding:8px;color:var(--foreground)">
                 <option value="mystery">🔮 สายมู/ลึกลับ</option>
                 <option value="news">📰 ข่าว AI/IT</option>
               </select>
             </label>
           </div>
-          <label style="display:flex;flex-direction:column;gap:4px;font-size:13px;margin-top:12px">หัวข้อ (เว้นว่าง = ให้ AI สุ่มเลือกเอง)
-            <input id="ap-topic" type="text" placeholder="เช่น ตะกรุดมหาอุด, UFO เหนือเขาใหญ่ ..." style="background:#1f2430;border:1px solid var(--border);border-radius:8px;padding:8px;color:var(--foreground)">
-          </label>
-
-          <div style="margin-top:12px;font-size:13px">ช่องทางที่จะโพสต์</div>
-          <div id="ap-platforms" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px"></div>
-
-          <div style="display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:center;margin-top:14px">
-            <label style="display:flex;align-items:center;gap:6px;font-size:13px">⏰ เวลา (ไทย)
-              <input id="ap-time" type="time" value="18:00" style="background:#1f2430;border:1px solid var(--border);border-radius:8px;padding:8px;color:var(--foreground)">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+            <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">🎭 โทนการเล่า
+              <select id="ap-tone" style="background:#1f2430;border:1px solid var(--border);border-radius:8px;padding:8px;color:var(--foreground)">
+                <option value="evidence">📜 จริงจัง มีหลักฐาน</option>
+                <option value="cheeky">😏 กวนๆ สนุก</option>
+                <option value="twist">🔄 หักมุม</option>
+                <option value="academic">🎓 วิชาการ เจาะลึก</option>
+                <option value="creepy">👻 ขนลุก/สยอง</option>
+              </select>
             </label>
-            <div>
-              <div style="font-size:13px;margin-bottom:6px">วันที่โพสต์</div>
-              <div id="ap-days" style="display:flex;gap:6px;flex-wrap:wrap"></div>
-            </div>
+            <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">หัวข้อ (เว้นว่าง=สุ่ม)
+              <input id="ap-topic" type="text" placeholder="เช่น บั้งไฟพญานาค ..." style="background:#1f2430;border:1px solid var(--border);border-radius:8px;padding:8px;color:var(--foreground)">
+            </label>
+          </div>
+
+          <div style="text-align:center;color:var(--muted-foreground);margin:12px 0 8px">↓ ② AI สร้างคลิป ↓</div>
+
+          <div style="font-size:12px;color:var(--muted-foreground);margin-bottom:6px">③ โพสต์อัตโนมัติขึ้น (แยกเวลาแต่ละช่อง)</div>
+          <div id="ap-platforms" style="display:flex;flex-direction:column;gap:8px"></div>
+
+          <div style="margin-top:16px">
+            <div style="font-size:13px;margin-bottom:6px">📅 วันที่โพสต์</div>
+            <div id="ap-days" style="display:flex;gap:6px;flex-wrap:wrap"></div>
           </div>
 
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-top:14px">
             <input id="ap-enabled" type="checkbox" checked> เปิดใช้งานตารางนี้
           </label>
 
-          <div style="display:flex;gap:10px;margin-top:16px">
+          <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap">
             <button class="primary-btn" onclick="saveAutopost()">💾 บันทึกตาราง</button>
             <button class="panel-action" onclick="runAutopostNow()" style="background:linear-gradient(135deg,#7c3aed,#db2777)">▶ ทดสอบโพสต์เลย</button>
             <button class="panel-action" onclick="resetAutopostForm()">ล้างฟอร์ม</button>

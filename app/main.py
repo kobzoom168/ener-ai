@@ -6886,9 +6886,10 @@ async def workspace_vdo_mystery(request: Request):
     topic = str(body.get("topic") or "").strip()
     title = str(body.get("title") or "").strip()
     summary = str(body.get("summary") or "").strip()
+    tone = str(body.get("tone") or "evidence")
     from app.agents.vdo_agent import make_mystery_short
 
-    res = await make_mystery_short(topic, title, summary)
+    res = await make_mystery_short(topic, title, summary, tone=tone)
     if not res.get("ok"):
         return JSONResponse({"ok": False, "error": res.get("error", "render failed")})
     import os as _os4
@@ -6938,37 +6939,45 @@ async def workspace_vdo_post(request: Request):
 
 @app.get("/workspace/autopost/data")
 async def workspace_autopost_data(request: Request):
-    """Auto-post panel data: schedules, connected channels, recent run log."""
+    """Auto-post panel data: schedules, platform status, pipeline status, recent log."""
     await _require_admin(request)
     from app.agents import autopost
-    from app.agents.postiz_client import list_integrations
+    from app.core.pipeline_status import get_status
     schedules = await autopost.load_schedules()
     log = await autopost.get_log()
-    channels, err = await list_integrations()
-    chans = [{"id": c.get("id"), "name": c.get("name"),
-              "platform": (c.get("identifier") or c.get("providerIdentifier") or "")}
-             for c in (channels or [])]
-    return JSONResponse({"ok": True, "schedules": schedules, "channels": chans,
-                         "channels_error": err, "log": log[:30]})
+    status = await get_status()
+    return JSONResponse({"ok": True, "schedules": schedules,
+                         "platforms": autopost.platform_status(),
+                         "platform_labels": autopost.PLATFORM_LABEL,
+                         "status": status, "log": log[:30]})
 
 
 def _autopost_job_from_body(body: dict) -> dict:
     import re as _re, time as _t
-    job = {
+    plats_in = body.get("platforms") or []
+    platforms = []
+    for name in ("facebook", "youtube", "tiktok"):
+        pin = next((p for p in plats_in if isinstance(p, dict) and p.get("name") == name), None) or {}
+        t = str(pin.get("time") or "18:00")[:5]
+        if not _re.fullmatch(r"[0-2]\d:[0-5]\d", t):
+            t = "18:00"
+        platforms.append({"name": name, "time": t, "enabled": bool(pin.get("enabled"))})
+    if not any(p["enabled"] for p in platforms):  # default FB on
+        platforms[0]["enabled"] = True
+    tone = str(body.get("tone") or "evidence")
+    if tone not in ("evidence", "cheeky", "twist", "academic", "creepy"):
+        tone = "evidence"
+    return {
         "id": str(body.get("id") or "").strip() or f"ap_{int(_t.time())}",
         "label": (str(body.get("label") or "").strip()[:80] or "คลิปออโต้"),
         "content_type": "news" if str(body.get("content_type")) == "news" else "mystery",
+        "tone": tone,
         "topic": str(body.get("topic") or "").strip()[:200],
-        "platforms": [str(x) for x in (body.get("platforms") or []) if str(x).strip()],
-        "time": str(body.get("time") or "18:00").strip()[:5],
         "days": [int(d) for d in (body.get("days") or [])
                  if str(d).isdigit() and 0 <= int(d) <= 6] or [0, 1, 2, 3, 4, 5, 6],
         "enabled": bool(body.get("enabled", True)),
-        "last_run": "",
+        "platforms": platforms,
     }
-    if not _re.fullmatch(r"[0-2]\d:[0-5]\d", job["time"]):
-        job["time"] = "18:00"
-    return job
 
 
 @app.post("/workspace/autopost/save")
@@ -6980,7 +6989,7 @@ async def workspace_autopost_save(request: Request):
     schedules = await autopost.load_schedules()
     for i, s in enumerate(schedules):
         if s.get("id") == job["id"]:
-            job["last_run"] = s.get("last_run", "")  # preserve dedupe state on edit
+            job["_state"] = s.get("_state", {})  # preserve clip cache + dedupe state
             schedules[i] = job
             break
     else:

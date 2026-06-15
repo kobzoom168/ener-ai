@@ -2228,64 +2228,54 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   });
 
-  // ===== Auto Post =====
+  // ===== Auto Post (pipeline) =====
   const AP_DAYS = ['จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส', 'อา']; // 0=Mon..6=Sun
-  let _apChannels = [];
+  const AP_PLATS = [
+    { name: 'facebook', label: '📘 Facebook', def: '18:00' },
+    { name: 'youtube', label: '▶️ YouTube', def: '19:00' },
+    { name: 'tiktok', label: '🎵 TikTok', def: '20:00' },
+  ];
   let _apSchedules = [];
-
-  function apPlatformIcon(p) {
-    p = (p || '').toLowerCase();
-    if (p.includes('face')) return '📘';
-    if (p.includes('you')) return '▶️';
-    if (p.includes('tik')) return '🎵';
-    if (p.includes('insta')) return '📷';
-    return '🔗';
-  }
+  let _apPlatStatus = {};
+  let _apStatusTimer = null;
 
   async function loadAutopost() {
     const schDiv = document.getElementById('autopost-schedules');
     if (schDiv) schDiv.innerHTML = '<div style="color:var(--muted-foreground);font-size:13px">กำลังโหลด…</div>';
     try {
       const data = await api('/workspace/autopost/data');
-      _apChannels = data.channels || [];
       _apSchedules = data.schedules || [];
-      renderApChannels(data);
+      _apPlatStatus = data.platforms || {};
       renderApPlatforms();
       renderApDays();
       renderApSchedules(_apSchedules);
       renderApLog(data.log || []);
+      renderApStatus(data.status);
     } catch (e) {
       if (schDiv) schDiv.innerHTML = '<div style="color:#f87171">โหลดไม่สำเร็จ: ' + escapeHtml(e.message) + '</div>';
     }
+    startApStatusPoll();
   }
 
-  function renderApChannels(data) {
-    const div = document.getElementById('autopost-channels');
-    if (!div) return;
-    if (!_apChannels.length) {
-      const err = data.channels_error ? (' (' + escapeHtml(data.channels_error) + ')') : '';
-      div.innerHTML = '<div style="font-size:13px;color:#fbbf24">⚠️ ยังไม่มีช่องทางใน Postiz' + err + ' — เชื่อม Facebook/YouTube/TikTok ใน Postiz ก่อน</div>';
-      return;
-    }
-    div.innerHTML = '<div style="font-size:13px;color:var(--muted-foreground);margin-bottom:6px">ช่องทางที่เชื่อมแล้ว:</div>' +
-      '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
-      _apChannels.map(c => '<span style="background:#1f2430;border:1px solid var(--border);border-radius:20px;padding:4px 12px;font-size:13px">' + apPlatformIcon(c.platform) + ' ' + escapeHtml(c.name || c.platform || '?') + '</span>').join('') +
-      '</div>';
-  }
-
-  function renderApPlatforms(selected) {
+  function renderApPlatforms(schedPlatforms) {
     const div = document.getElementById('ap-platforms');
     if (!div) return;
-    selected = selected || [];
-    if (!_apChannels.length) {
-      div.innerHTML = '<span style="font-size:13px;color:var(--muted-foreground)">— ไม่มีช่องทาง —</span>';
-      return;
-    }
-    div.innerHTML = _apChannels.map(c => {
-      const on = selected.length ? selected.includes(c.id) : (c.platform || '').toLowerCase().includes('face');
-      return '<label style="display:flex;align-items:center;gap:6px;background:#1f2430;border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px;cursor:pointer">' +
-        '<input type="checkbox" class="ap-plat" value="' + escapeHtml(c.id) + '"' + (on ? ' checked' : '') + '> ' +
-        apPlatformIcon(c.platform) + ' ' + escapeHtml(c.name || c.platform || '?') + '</label>';
+    div.innerHTML = AP_PLATS.map(m => {
+      const sp = (schedPlatforms || []).find(p => p.name === m.name);
+      const connected = !!_apPlatStatus[m.name];
+      const enabled = sp ? sp.enabled : (m.name === 'facebook');
+      const time = (sp && sp.time) || m.def;
+      const status = connected
+        ? '<span style="color:#22c55e;white-space:nowrap">🟢 พร้อม</span>'
+        : '<span style="color:var(--muted-foreground);white-space:nowrap">⚪ ยังไม่เชื่อม</span>';
+      return '<div style="display:flex;align-items:center;gap:10px;background:#1f2430;border:1px solid var(--border);border-radius:10px;padding:8px 12px;font-size:13px;flex-wrap:wrap' + (connected ? '' : ';opacity:.65') + '">' +
+        '<label style="display:flex;align-items:center;gap:6px;flex:1;min-width:120px;cursor:pointer">' +
+          '<input type="checkbox" class="ap-plat" data-name="' + m.name + '"' + (enabled ? ' checked' : '') + (connected ? '' : ' disabled') + '> ' + m.label +
+        '</label>' +
+        '<span style="color:var(--muted-foreground)">⏰</span>' +
+        '<input type="time" class="ap-plat-time" data-name="' + m.name + '" value="' + time + '" style="background:#141821;border:1px solid var(--border);border-radius:6px;padding:4px 6px;color:var(--foreground)">' +
+        status +
+      '</div>';
     }).join('');
   }
 
@@ -2298,14 +2288,47 @@ document.addEventListener('DOMContentLoaded', function() {
       '<input type="checkbox" class="ap-day" value="' + i + '"' + (sel.includes(i) ? ' checked' : '') + '> ' + d + '</label>').join('');
   }
 
+  function renderApStatus(s) {
+    const bar = document.getElementById('ap-status');
+    if (!bar) return;
+    const stage = (s && s.stage) || 'idle';
+    if (stage === 'idle') { bar.style.display = 'none'; return; }
+    bar.style.display = 'flex';
+    const colors = { script: '#3b82f6', media: '#a855f7', render: '#f59e0b', posting: '#22c55e', done: '#22c55e', error: '#ef4444' };
+    const c = colors[stage] || '#22c55e';
+    const dot = document.getElementById('ap-status-dot');
+    if (dot) { dot.style.background = c; dot.style.boxShadow = '0 0 8px ' + c; }
+    const t = document.getElementById('ap-status-text'); if (t) t.textContent = (s && s.detail) || stage;
+    const ti = document.getElementById('ap-status-title'); if (ti) ti.textContent = (s && s.title) ? ('· ' + s.title) : '';
+    const at = document.getElementById('ap-status-at'); if (at) at.textContent = (s && s.at) || '';
+  }
+
+  function startApStatusPoll() {
+    stopApStatusPoll();
+    _apStatusTimer = setInterval(async () => {
+      const panel = document.getElementById('panel-autopost');
+      if (!panel || panel.style.display === 'none') { stopApStatusPoll(); return; }
+      try {
+        const d = await api('/workspace/autopost/data');
+        renderApStatus(d.status);
+        renderApLog(d.log || []);
+      } catch (e) {}
+    }, 3000);
+  }
+  function stopApStatusPoll() { if (_apStatusTimer) { clearInterval(_apStatusTimer); _apStatusTimer = null; } }
+
   function _apFormBody() {
     return {
       id: document.getElementById('ap-id').value || '',
       label: document.getElementById('ap-label').value || '',
       content_type: document.getElementById('ap-content').value || 'mystery',
+      tone: document.getElementById('ap-tone').value || 'evidence',
       topic: document.getElementById('ap-topic').value || '',
-      platforms: Array.from(document.querySelectorAll('.ap-plat:checked')).map(x => x.value),
-      time: document.getElementById('ap-time').value || '18:00',
+      platforms: AP_PLATS.map(m => {
+        const cb = document.querySelector('.ap-plat[data-name="' + m.name + '"]');
+        const tm = document.querySelector('.ap-plat-time[data-name="' + m.name + '"]');
+        return { name: m.name, enabled: cb ? cb.checked : false, time: tm ? tm.value : m.def };
+      }),
       days: Array.from(document.querySelectorAll('.ap-day:checked')).map(x => parseInt(x.value, 10)),
       enabled: document.getElementById('ap-enabled').checked,
     };
@@ -2315,8 +2338,8 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('ap-id').value = '';
     document.getElementById('ap-label').value = '';
     document.getElementById('ap-content').value = 'mystery';
+    document.getElementById('ap-tone').value = 'evidence';
     document.getElementById('ap-topic').value = '';
-    document.getElementById('ap-time').value = '18:00';
     document.getElementById('ap-enabled').checked = true;
     document.getElementById('autopost-form-title').textContent = '➕ ตั้งตารางโพสต์ใหม่';
     renderApPlatforms();
@@ -2326,7 +2349,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   async function saveAutopost() {
     const body = _apFormBody();
-    if (!body.platforms.length) { showToast('เลือกช่องทางอย่างน้อย 1'); return; }
+    if (!body.platforms.some(p => p.enabled)) { showToast('เปิดอย่างน้อย 1 ช่องทาง'); return; }
     try {
       await api('/workspace/autopost/save', { method: 'POST', body: JSON.stringify(body) });
       showToast('บันทึกตารางแล้ว ✅');
@@ -2337,13 +2360,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
   async function runAutopostNow() {
     const body = _apFormBody();
-    if (!body.platforms.length) { showToast('เลือกช่องทางอย่างน้อย 1'); return; }
+    if (!body.platforms.some(p => p.enabled)) { showToast('เปิดอย่างน้อย 1 ช่องทาง'); return; }
     const m = document.getElementById('ap-form-msg');
-    if (m) m.textContent = '⏳ กำลังสร้างคลิป + โพสต์… (~1-2 นาที) ดูผลที่ประวัติด้านล่าง';
+    if (m) m.textContent = '⏳ กำลังสร้างคลิป + โพสต์… ดูไฟสถานะด้านบน';
     try {
       await api('/workspace/autopost/run', { method: 'POST', body: JSON.stringify(body) });
-      showToast('เริ่มสร้างคลิปแล้ว — รอสักครู่');
-      setTimeout(loadAutopost, 90000);
+      showToast('เริ่มสร้างคลิปแล้ว — ดูไฟสถานะ');
+      startApStatusPoll();
     } catch (e) { showToast('สั่งรันไม่สำเร็จ: ' + e.message); }
   }
 
@@ -2353,8 +2376,8 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('ap-id').value = j.id;
     document.getElementById('ap-label').value = j.label || '';
     document.getElementById('ap-content').value = j.content_type || 'mystery';
+    document.getElementById('ap-tone').value = j.tone || 'evidence';
     document.getElementById('ap-topic').value = j.topic || '';
-    document.getElementById('ap-time').value = j.time || '18:00';
     document.getElementById('ap-enabled').checked = j.enabled !== false;
     document.getElementById('autopost-form-title').textContent = '✏️ แก้ไข: ' + (j.label || '');
     renderApPlatforms(j.platforms || []);
@@ -2373,10 +2396,13 @@ document.addEventListener('DOMContentLoaded', function() {
   async function runAutopostId(id) {
     try {
       await api('/workspace/autopost/run', { method: 'POST', body: JSON.stringify({ id }) });
-      showToast('เริ่มสร้าง+โพสต์แล้ว — รอ ~1-2 นาที');
-      setTimeout(loadAutopost, 90000);
+      showToast('เริ่มสร้าง+โพสต์แล้ว — ดูไฟสถานะ');
+      startApStatusPoll();
     } catch (e) { showToast('รันไม่สำเร็จ: ' + e.message); }
   }
+
+  const AP_TONE_LABEL = { evidence: '📜 จริงจัง', cheeky: '😏 กวนๆ', twist: '🔄 หักมุม', academic: '🎓 วิชาการ', creepy: '👻 ขนลุก' };
+  function apPlatIcon(n) { return n === 'facebook' ? '📘' : n === 'youtube' ? '▶️' : '🎵'; }
 
   function renderApSchedules(list) {
     const div = document.getElementById('autopost-schedules');
@@ -2386,24 +2412,24 @@ document.addEventListener('DOMContentLoaded', function() {
       return;
     }
     div.innerHTML = list.map(j => {
-      const plats = (j.platforms || []).map(pid => {
-        const c = _apChannels.find(x => x.id === pid);
-        return c ? (apPlatformIcon(c.platform) + ' ' + escapeHtml(c.name || '')) : '🔗';
-      }).join(', ');
+      const plats = (j.platforms || []).filter(p => p.enabled)
+        .map(p => apPlatIcon(p.name) + ' ' + escapeHtml(p.time || '')).join('  ') || '—';
       const days = (j.days && j.days.length === 7) ? 'ทุกวัน' : (j.days || []).map(d => AP_DAYS[d]).join(',');
       const ctype = j.content_type === 'news' ? '📰 ข่าว' : '🔮 สายมู';
+      const tone = AP_TONE_LABEL[j.tone || 'evidence'] || '';
       const topic = j.topic ? escapeHtml(j.topic) : '(AI สุ่มเอง)';
       const onoff = j.enabled !== false;
       const id = escapeHtml(j.id);
+      const last = (j._state && j._state.gen_date) ? j._state.gen_date : '';
       return '<div class="surface" style="border:1px solid var(--border);border-radius:10px;padding:12px;display:flex;justify-content:space-between;align-items:center;gap:12px;' + (onoff ? '' : 'opacity:.5') + '">' +
         '<div style="font-size:13px;line-height:1.6">' +
           '<div style="font-weight:600">' + (onoff ? '🟢' : '⚪') + ' ' + escapeHtml(j.label || '(ไม่มีชื่อ)') + '</div>' +
-          '<div style="color:var(--muted-foreground)">' + ctype + ' · ' + topic + '</div>' +
-          '<div style="color:var(--muted-foreground)">⏰ ' + escapeHtml(j.time || '') + ' · ' + days + ' · ' + (plats || '—') + '</div>' +
-          (j.last_run ? '<div style="color:var(--muted-foreground);font-size:12px">ล่าสุด: ' + escapeHtml(j.last_run) + '</div>' : '') +
+          '<div style="color:var(--muted-foreground)">' + ctype + ' · ' + tone + ' · ' + topic + '</div>' +
+          '<div style="color:var(--muted-foreground)">📅 ' + days + ' · ' + plats + '</div>' +
+          (last ? '<div style="color:var(--muted-foreground);font-size:12px">สร้างล่าสุด: ' + escapeHtml(last) + '</div>' : '') +
         '</div>' +
         '<div style="display:flex;gap:6px;flex-shrink:0">' +
-          '<button class="panel-action" onclick="runAutopostId(\'' + id + '\')" title="โพสต์เดี๋ยวนี้">▶</button>' +
+          '<button class="panel-action" onclick="runAutopostId(\'' + id + '\')" title="สร้าง+โพสต์เดี๋ยวนี้">▶</button>' +
           '<button class="panel-action" onclick="editAutopost(\'' + id + '\')" title="แก้ไข">✏️</button>' +
           '<button class="panel-action" onclick="deleteAutopost(\'' + id + '\')" title="ลบ">🗑️</button>' +
         '</div>' +

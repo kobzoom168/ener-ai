@@ -16,6 +16,19 @@ import time
 VDO_DIR = "/app/data/vdo"
 SCRIPT_MODEL = "minimax/minimax-m3"  # picks real documented mysteries; cheap, engaging Thai
 
+# Narration tone presets for the mystery script (chosen in the Auto Post UI).
+TONE_GUIDE = {
+    "evidence": "โทน: สารคดีจริงจัง น่าเชื่อถือ เน้นข้อเท็จจริง/หลักฐาน/แหล่งอ้างอิงจริง ปิดด้วยประโยคชวนคิด",
+    "cheeky": "โทน: กวนๆ สนุก เป็นกันเอง แซวเบาๆ ชวนยิ้ม แต่ยังเคารพความเชื่อ ไม่ลบหลู่",
+    "twist": "โทน: ปูเรื่องสร้างความสงสัยทีละนิด แล้วพลิกหักมุมตอนจบให้คนดูอึ้ง/ร้องเฮ้ย",
+    "academic": "โทน: วิชาการ เจาะลึกที่มา/ประวัติศาสตร์/มานุษยวิทยา/รากของความเชื่อ ให้ความรู้แน่นแต่ฟังง่าย",
+    "creepy": "โทน: ขนลุก สยอง บรรยากาศหลอน เสียวสันหลัง สร้างความกลัวแบบสายมู (ไม่โหด/ไม่กราฟิกเกินไป)",
+}
+
+
+def _tone_guide(tone: str) -> str:
+    return TONE_GUIDE.get(tone or "evidence", TONE_GUIDE["evidence"])
+
 _ASS_HEADER = (
     "[Script Info]\n"
     "ScriptType: v4.00+\n"
@@ -655,25 +668,21 @@ async def _render_clip(title: str, lines: list[str], bg_images: list[str] | None
             "talking_head": bool(pip_video)}
 
 
-async def generate_mystery_script(topic: str = "", title: str = "", summary: str = "") -> dict:
+async def generate_mystery_script(topic: str = "", title: str = "", summary: str = "",
+                                  tone: str = "evidence") -> dict:
     """สายมู/ลึกลับ content for the Ener Scan page: amulets (TH+world), UFO, myths, beliefs.
 
-    If title/summary are given (a real mystery news item) it retells them; else it picks
-    an intriguing topic. Tone: engaging + respectful of belief, no guarantees, not mocking.
+    `tone` selects the narration style (evidence/cheeky/twist/academic/creepy).
     """
     system = (
         "คุณคือครีเอเตอร์คอนเทนต์สายมู/ลึกลับของเพจ 'Ener Scan ตรวจพลังพระ หิน เครื่องราง' "
-        "เขียนบทคลิปสั้นแนวตั้งภาษาไทย แนวสายมู/พลังงาน/ความเชื่อ เล่าแบบเป็นกันเอง "
-        "สุภาพแต่กวนๆ นิดหน่อย ชวนคุย เรียกคนดูว่า 'คุณ' พูดกับคุณตรงๆ "
-        "(เช่น คุณรู้ไหมว่า, บอกเลยว่าคุณ..., ลองคิดดูสิครับ, เชื่อหรือเปล่าครับ) "
-        "แทนตัวเองว่า ผม/เรา ห้ามใช้ กู/มึง ห้ามหยาบคาย "
-        "โทนขลังๆ ลึกลับ น่าค้นหา ชวนขนลุก เน้นเล่าเรื่องความเชื่อ/พลังงาน/ตำนานให้น่าติดตาม "
-        "สำคัญสุด (retention): ประโยคแรกต้องเป็นฮุคที่ 'หยุดนิ้วคนเลื่อน' ใน 2 วิแรกให้ได้ "
-        "แล้วค้างความอยากรู้ไว้ตลอดคลิป ให้คนดูจนจบ ห้ามเปิดเรื่อยเปื่อย/น่าเบื่อ "
-        "เลือกเล่า 'เรื่องที่มีอยู่จริง มีหลักฐาน/คนรู้จัก' (เช่น บั้งไฟพญานาค, ตำนานดังที่สืบได้) "
-        "จะน่าเชื่อถือกว่าเรื่องที่แต่งขึ้น — อ้างอิงแหล่งเจาะจงเนียนๆ + รายละเอียดจริง (ชื่อ/ยุค/สถานที่) "
-        "ห้ามกุข้อมูลเท็จที่ตรวจสอบได้ ห้ามเอาชื่อวัด/พระ/บุคคลจริงไปผูกเรื่องที่ไม่มีจริง ห้ามอ้างวิทยาศาสตร์ปลอม "
-        "ไม่ต้องหักมุมพลิกตอนจบ — เล่าตรงๆ ตามโทนความเชื่อ ปิดด้วยประโยคชวนขนลุก/ชวนเชื่อ/ชวนคิด "
+        "เขียนบทคลิปสั้นแนวตั้งภาษาไทย แนวสายมู/พลังงาน/ความเชื่อ เรียกคนดูว่า 'คุณ' พูดกับคุณตรงๆ "
+        "(เช่น คุณรู้ไหมว่า, ลองคิดดูสิครับ) แทนตัวเองว่า ผม/เรา ห้ามใช้ กู/มึง ห้ามหยาบคาย "
+        f"{_tone_guide(tone)} "
+        "สำคัญสุด (retention): ประโยคแรกต้องเป็นฮุคที่หยุดนิ้วคนเลื่อนใน 2 วิแรก แล้วค้างความอยากรู้ให้ดูจนจบ "
+        "เลือกเล่าเรื่องที่มีอยู่จริง มีหลักฐาน/คนรู้จัก จะน่าเชื่อถือกว่าแต่งขึ้น "
+        "อ้างอิงแหล่งเจาะจง + รายละเอียดจริง (ชื่อ/ยุค/สถานที่) ห้ามกุข้อมูลเท็จที่ตรวจสอบได้ "
+        "ห้ามเอาชื่อวัด/พระ/บุคคลจริงไปผูกเรื่องที่ไม่มีจริง ห้ามอ้างวิทยาศาสตร์ปลอม "
         "เคารพความเชื่อ ไม่ลบหลู่สิ่งศักดิ์สิทธิ์ ไม่การันตีโชคลาภ/รักษาโรค "
         "ห้ามใส่เครื่องหมายคำพูด \" \" หรือ ' ' ในบทพากย์ ตอบ JSON เท่านั้น"
     )
@@ -730,19 +739,23 @@ async def _bg_item(video_query: str, image_prompt: str, idx: int) -> tuple[str, 
     return None
 
 
-async def make_mystery_short(topic: str = "", title: str = "", summary: str = "") -> dict:
+async def make_mystery_short(topic: str = "", title: str = "", summary: str = "",
+                             tone: str = "evidence") -> dict:
     """สายมู short: AI picks/retells a mystery topic -> Thai short MP4.
 
     Each of the (up to 3) background slots prefers a real Thai stock video, then a foreign
     one, then an AI image — so videos and images can be mixed within one clip.
     """
-    script = await generate_mystery_script(topic, title, summary)
+    from app.core.pipeline_status import set_status
+    await set_status("script")
+    script = await generate_mystery_script(topic, title, summary, tone=tone)
     try:
         from app.agents.talkinghead import enabled as _th_enabled
         face_pip = _th_enabled()
     except Exception:
         face_pip = False
 
+    await set_status("media", title=script.get("title", ""))
     imps = script.get("image_prompts") or [script["title"]]
     vqs = script.get("video_queries") or []
     bg_mode = os.environ.get("VDO_BG_MODE", "image")  # image (free, all AI images) | video | mixed
@@ -778,6 +791,7 @@ async def make_mystery_short(topic: str = "", title: str = "", summary: str = ""
         imgs = await _gen_bg_images([script["title"]])
         items = [(p, "image") for p in imgs]
 
+    await set_status("render", title=script.get("title", ""))
     r = await _render_clip(script["title"], script["lines"], bg_items=items, face_pip=face_pip)
     if r.get("ok"):
         kinds = [k for _, k in items]
