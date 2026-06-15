@@ -45,3 +45,36 @@ async def get_status() -> dict:
         return json.loads(raw) if raw else {"stage": "idle", "detail": STAGES["idle"]}
     except Exception:
         return {"stage": "idle", "detail": STAGES["idle"]}
+
+
+# ── live console log (what the pipeline is doing, line by line) ──────────────
+_LOG_KEY = "vdo_pipeline_console"
+_LOG_MAX = 60
+
+
+async def log_line(text: str) -> None:
+    raw = await get_config(_LOG_KEY, "")
+    try:
+        lines = json.loads(raw) if raw else []
+    except Exception:
+        lines = []
+    lines.append({"t": datetime.now(_BKK).strftime("%H:%M:%S"), "msg": str(text)[:240]})
+    try:
+        await set_config(_LOG_KEY, json.dumps(lines[-_LOG_MAX:], ensure_ascii=False))
+    except Exception:
+        pass
+
+
+async def get_console() -> list:
+    raw = await get_config(_LOG_KEY, "")
+    try:
+        return json.loads(raw) if raw else []
+    except Exception:
+        return []
+
+
+async def clear_console() -> None:
+    try:
+        await set_config(_LOG_KEY, "[]")
+    except Exception:
+        pass

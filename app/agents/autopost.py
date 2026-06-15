@@ -18,7 +18,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from app.core.database import get_config, set_config, get_db
-from app.core.pipeline_status import set_status
+from app.core.pipeline_status import set_status, log_line
 
 _BANGKOK = ZoneInfo("Asia/Bangkok")
 _SCHED_KEY = "vdo_autopost_schedules"
@@ -142,6 +142,7 @@ async def _ensure_clip(job: dict, today: str) -> tuple[str, str, str]:
               caption=res.get("caption") or res.get("title") or "",
               title=res.get("title") or "")
     await _send_telegram(st["mp4"], f"{st['title']}\n\n{st['caption']}".strip())
+    await log_line("📲 ส่งคลิปเข้า Telegram แล้ว")
     return st["mp4"], st["caption"], st["title"]
 
 
@@ -177,6 +178,7 @@ async def run_job(job: dict, source: str = "manual", preview: bool = False) -> d
             ok, msg = await _post_platform(p["name"], mp4, caption)
         except Exception as exc:
             ok, msg = False, str(exc)[:160]
+        await log_line(f"📤 {PLATFORM_LABEL.get(p['name'], p['name'])}: {'✅' if ok else '❌'} {msg}")
         results.append(f"{'✅' if ok else '❌'} {PLATFORM_LABEL.get(p['name'], p['name'])}: {msg}")
     await set_status("done", title=title)
     entry = {"at": now, "label": label, "ok": True, "src": source, "title": title,
@@ -223,6 +225,7 @@ async def run_due() -> None:
                 ok, msg = await _post_platform(p["name"], mp4, caption)
             except Exception as exc:
                 ok, msg = False, str(exc)[:160]
+            await log_line(f"📤 {PLATFORM_LABEL.get(p['name'], p['name'])}: {'✅' if ok else '❌'} {msg}")
             last_run[p["name"]] = today
             await _append_log({"at": now.strftime("%Y-%m-%d %H:%M"), "label": job.get("label"),
                                "ok": ok, "src": "schedule", "title": title,

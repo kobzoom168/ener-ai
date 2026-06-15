@@ -746,9 +746,15 @@ async def make_mystery_short(topic: str = "", title: str = "", summary: str = ""
     Each of the (up to 3) background slots prefers a real Thai stock video, then a foreign
     one, then an AI image — so videos and images can be mixed within one clip.
     """
-    from app.core.pipeline_status import set_status
+    from app.core.pipeline_status import set_status, log_line, clear_console
+    await clear_console()
+    await log_line("🚀 เริ่มสร้างคลิป")
     await set_status("script")
+    await log_line("✍️ เขียนบท (MiniMax M3)…")
     script = await generate_mystery_script(topic, title, summary, tone=tone)
+    await log_line(f"📝 หัวข้อ: {script.get('title', '')}")
+    for _ln in (script.get("lines") or []):
+        await log_line("· " + str(_ln))
     try:
         from app.agents.talkinghead import enabled as _th_enabled
         face_pip = _th_enabled()
@@ -763,10 +769,12 @@ async def make_mystery_short(topic: str = "", title: str = "", summary: str = ""
     if bg_mode == "image":
         # all AI images via OpenRouter (no new bill) — several scenes per clip
         n = max(1, min(6, int(os.environ.get("VDO_BG_IMAGE_COUNT", "5") or 5)))
+        await log_line(f"🎨 สร้างภาพ AI {n} รูป (Nano Banana 2)…")
         prompts = list(imps)
         while len(prompts) < n:
             prompts.append(imps[len(prompts) % len(imps)])
         imgs = await _gen_bg_images(prompts[:n])
+        await log_line(f"✅ ได้ภาพ {len(imgs)}/{n} รูป")
         items = [(p, "image") for p in imgs]
     else:
         slots = []
@@ -792,10 +800,14 @@ async def make_mystery_short(topic: str = "", title: str = "", summary: str = ""
         items = [(p, "image") for p in imgs]
 
     await set_status("render", title=script.get("title", ""))
+    await log_line("🎙️ พากย์ (เสียงคุณ V3)" + (" + 🗣️ หน้าพูด D-ID" if face_pip else "") + " + 🎬 ตัดต่อ…")
     r = await _render_clip(script["title"], script["lines"], bg_items=items, face_pip=face_pip)
     if r.get("ok"):
         kinds = [k for _, k in items]
+        await log_line(f"✅ คลิปเสร็จ {r.get('duration', '?')} วิ" + (" · มีหน้าพูด" if r.get("talking_head") else ""))
         r.update({"caption": script["caption"], "lines": script["lines"], "title": script["title"],
                   "bg_count": len(items),
                   "bg_kind": f"{kinds.count('video')}vid+{kinds.count('image')}img"})
+    else:
+        await log_line(f"❌ render พลาด: {str(r.get('error', ''))[:80]}")
     return r

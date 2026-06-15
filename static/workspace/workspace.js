@@ -2251,11 +2251,26 @@ document.addEventListener('DOMContentLoaded', function() {
       renderApSchedules(_apSchedules);
       renderApLog(data.log || []);
       renderApStatus(data.status);
+      renderApConsole(data.console);
     } catch (e) {
       if (schDiv) schDiv.innerHTML = '<div style="color:#f87171">โหลดไม่สำเร็จ: ' + escapeHtml(e.message) + '</div>';
     }
     loadAutopostClips();
     startApStatusPoll();
+  }
+
+  function renderApConsole(lines) {
+    const box = document.getElementById('ap-console');
+    const el = document.getElementById('ap-console-lines');
+    if (!box || !el) return;
+    lines = lines || [];
+    if (!lines.length) { box.style.display = 'none'; return; }
+    box.style.display = 'block';
+    const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+    el.innerHTML = lines.map(l =>
+      '<div><span style="color:#475569">' + escapeHtml(l.t || '') + '</span>  ' + escapeHtml(l.msg || '') + '</div>'
+    ).join('');
+    if (atBottom) box.scrollTop = box.scrollHeight;
   }
 
   async function loadAutopostClips() {
@@ -2396,6 +2411,7 @@ document.addEventListener('DOMContentLoaded', function() {
       try {
         const d = await api('/workspace/autopost/data');
         renderApStatus(d.status);
+        renderApConsole(d.console);
         renderApLog(d.log || []);
       } catch (e) {}
     }, 3000);

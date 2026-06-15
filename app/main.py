@@ -6942,14 +6942,15 @@ async def workspace_autopost_data(request: Request):
     """Auto-post panel data: schedules, platform status, pipeline status, recent log."""
     await _require_admin(request)
     from app.agents import autopost
-    from app.core.pipeline_status import get_status
+    from app.core.pipeline_status import get_status, get_console
     schedules = await autopost.load_schedules()
     log = await autopost.get_log()
     status = await get_status()
+    console = await get_console()
     return JSONResponse({"ok": True, "schedules": schedules,
                          "platforms": autopost.platform_status(),
                          "platform_labels": autopost.PLATFORM_LABEL,
-                         "status": status, "log": log[:30]})
+                         "status": status, "console": console, "log": log[:30]})
 
 
 def _autopost_job_from_body(body: dict) -> dict:
