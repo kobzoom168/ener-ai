@@ -337,7 +337,7 @@ async def _gen_bg_image(prompt: str, idx: int = 0) -> str | None:
         if not key:
             return None
         body = {
-            "model": "google/gemini-2.5-flash-image",
+            "model": os.environ.get("VDO_IMAGE_MODEL", "google/gemini-3.1-flash-image-preview"),
             "modalities": ["image", "text"],
             "messages": [{"role": "user", "content": (
                 f"{prompt}. Vertical 9:16 cinematic atmospheric background, dark and moody, "
