@@ -86,16 +86,24 @@ async def run_job(job: dict, source: str = "schedule") -> dict:
     mp4 = res["mp4"]
     caption = res.get("caption") or res.get("title") or ""
     title = res.get("title") or ""
-    from app.agents.postiz_client import post_video, FB_INTEGRATION_ID
-    platforms = job.get("platforms") or [FB_INTEGRATION_ID]
 
     results = []
-    for pid in platforms:
+    from app.agents import facebook_client
+    if facebook_client.enabled():  # direct Graph API (no Postiz)
         try:
-            ok, msg = await post_video(mp4, caption, integration_id=pid, when="now")
+            ok, msg = await facebook_client.post_video(mp4, caption)
         except Exception as exc:
             ok, msg = False, str(exc)[:160]
-        results.append({"ok": ok, "msg": msg})
+        results.append({"ok": ok, "msg": "FB: " + msg})
+    else:  # fall back to Postiz
+        from app.agents.postiz_client import post_video, FB_INTEGRATION_ID
+        platforms = job.get("platforms") or [FB_INTEGRATION_ID]
+        for pid in platforms:
+            try:
+                ok, msg = await post_video(mp4, caption, integration_id=pid, when="now")
+            except Exception as exc:
+                ok, msg = False, str(exc)[:160]
+            results.append({"ok": ok, "msg": msg})
     any_ok = any(r["ok"] for r in results)
     entry = {"at": now, "label": label, "ok": any_ok, "src": source, "title": title,
              "video": mp4.split("/")[-1],

@@ -6927,8 +6927,12 @@ async def workspace_vdo_post(request: Request):
     path = _os6.path.join("/app/data/vdo", fname)
     if not _os6.path.exists(path):
         raise HTTPException(status_code=404, detail="video not found")
-    from app.agents.postiz_client import post_video
-    ok, msg = await post_video(path, caption, integration_id=integration_id, when=when)
+    from app.agents import facebook_client
+    if facebook_client.enabled() and when == "now":  # direct Graph API (no Postiz)
+        ok, msg = await facebook_client.post_video(path, caption)
+    else:
+        from app.agents.postiz_client import post_video
+        ok, msg = await post_video(path, caption, integration_id=integration_id, when=when)
     return JSONResponse({"ok": ok, "message": msg, "when": when})
 
 
