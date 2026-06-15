@@ -92,14 +92,46 @@ def _parse_json(raw: str) -> dict:
     if not raw or not raw.strip():
         return {}
     txt = re.sub(r"```(?:json)?", "", raw, flags=re.IGNORECASE).replace("```", "").strip()
-    s, e = txt.find("{"), txt.rfind("}")
-    if s != -1 and e > s:
-        txt = txt[s:e + 1]
-    try:
-        d = _json.loads(txt)
-        return d if isinstance(d, dict) else {}
-    except Exception:
+    s = txt.find("{")
+    if s == -1:
         return {}
+    # Extract the FIRST balanced {...} object. Reasoning models (MiniMax M3) sometimes emit
+    # the answer twice ({obj}{obj}); a naive first-{-to-last-} span would join both into
+    # invalid JSON. Scan brace depth (string-aware) to take just the first complete object.
+    depth = in_str = esc = 0
+    for i in range(s, len(txt)):
+        c = txt[i]
+        if in_str:
+            if esc:
+                esc = 0
+            elif c == "\\":
+                esc = 1
+            elif c == '"':
+                in_str = 0
+            continue
+        if c == '"':
+            in_str = 1
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    d = _json.loads(txt[s:i + 1])
+                    if isinstance(d, dict):
+                        return d
+                except Exception:
+                    pass
+                break
+    # fallback: original first-to-last span (handles minor noise inside one object)
+    e = txt.rfind("}")
+    if e > s:
+        try:
+            d = _json.loads(txt[s:e + 1])
+            return d if isinstance(d, dict) else {}
+        except Exception:
+            return {}
+    return {}
 
 
 async def generate_script(title: str, summary: str) -> dict:
