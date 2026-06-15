@@ -47,7 +47,10 @@
       --border: oklch(0.28 0.01 250);
       --muted-foreground: oklch(0.65 0 0);
     }
-    body { margin: 0; background: var(--background); color: var(--foreground); font-family: system-ui, -apple-system, sans-serif; }
+    body { margin: 0; background: var(--background); color: var(--foreground); font-family: system-ui, -apple-system, "Segoe UI", "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif; }
+    /* emoji wrapped in .emoji keep an emoji font even inside pixel-font (Press Start 2P)
+       contexts, otherwise Windows drops them to .notdef boxes (□) */
+    .emoji { font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif; font-style: normal; }
     .hidden { display: none !important; }
     #workspace-app { display: flex; height: 100vh; overflow: hidden; width: 100%; }
     #workspace-sidebar {
