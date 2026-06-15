@@ -668,12 +668,58 @@ async def _render_clip(title: str, lines: list[str], bg_images: list[str] | None
             "talking_head": bool(pip_video)}
 
 
+async def _vlog(msg: str) -> None:
+    try:
+        from app.core.pipeline_status import log_line
+        await log_line(msg)
+    except Exception:
+        pass
+
+
+async def _research_topic(subject: str) -> str:
+    """Accurate factual brief so the writer doesn't misread a term
+    (e.g. 'ผีฟ้า' = an Isan healing spirit/แถน, NOT 'ปอบ from the sky')."""
+    system = ("คุณคือนักวิจัยคติชน/ความเชื่อไทยที่แม่นยำ ตอบเฉพาะข้อเท็จจริงที่ถูกต้อง "
+              "ไม่แต่งเติม ถ้าไม่แน่ใจให้บอกว่าไม่แน่ใจ")
+    prompt = (f"คำว่า '{subject}' ในความเชื่อ/สายมูไทย คืออะไรกันแน่? "
+              "อธิบายสั้นๆ เป็น bullet 3-6 ข้อ: นิยามที่ถูกต้อง, ที่มา/ภูมิภาค, ลักษณะเด่น, "
+              "และ 'อย่าสับสนกับสิ่งที่ชื่อคล้าย' — ระบุความต่างให้ชัด "
+              "(เช่น ผีฟ้า=ผีแถน/พิธีหมอลำรักษาโรคของอีสาน ไม่ใช่ปอบ และไม่ใช่ผีที่มาจากท้องฟ้า)")
+    return (await _or_chat(SCRIPT_MODEL, system, prompt, 2500)).strip()
+
+
+async def _qc_facts(research: str, lines: list[str]) -> tuple[list[str], str]:
+    """QC the script lines against the research brief; fix factual/belief errors only."""
+    if not research or not lines:
+        return lines, ""
+    system = ("คุณคือ QC ตรวจความถูกต้องของข้อมูลความเชื่อ/คติชนในบทคลิปแบบเข้มงวดมาก "
+              "ถ้ามีจุดที่ข้อมูลผิด/สับสน/เข้าใจความหมายผิด ให้แก้ให้ตรงข้อเท็จจริง "
+              "คงจำนวนบรรทัด+โทน+สำนวนเดิมไว้ ถ้าถูกหมดแล้วไม่ต้องแก้ ตอบ JSON เท่านั้น")
+    prompt = ("ข้อมูลจริง (ยึดตามนี้):\n" + research + "\n\nบทเดิม:\n"
+              + _json.dumps(lines, ensure_ascii=False) + "\n\n"
+              'ตรวจแล้วตอบ JSON: {"ok": true ถ้าข้อมูลถูกหมด/false ถ้าต้องแก้, '
+              '"fixed_lines": [บทที่แก้ให้ถูกแล้ว ครบทุกบรรทัด คงโทนเดิม], "note": "จุดที่แก้สั้นๆ"}')
+    qc = _parse_json(await _or_chat(SCRIPT_MODEL, system, prompt, 5000))
+    fixed = [_strip_quotes(str(x)) for x in (qc.get("fixed_lines") or []) if str(x).strip()]
+    if not qc.get("ok", True) and fixed:
+        return fixed, str(qc.get("note", "")).strip()[:140]
+    return lines, ""
+
+
 async def generate_mystery_script(topic: str = "", title: str = "", summary: str = "",
                                   tone: str = "evidence") -> dict:
     """สายมู/ลึกลับ content for the Ener Scan page: amulets (TH+world), UFO, myths, beliefs.
 
+    Pipeline: research the term (so it isn't misread) → write → QC the facts → fix.
     `tone` selects the narration style (evidence/cheeky/twist/academic/creepy).
     """
+    research = ""
+    subject = (topic or title or "").strip()
+    if subject:
+        await _vlog("🔍 ค้นข้อมูลก่อน: " + subject)
+        research = await _research_topic(subject)
+        if research:
+            await _vlog("📚 ได้ข้อมูลอ้างอิงที่ถูกต้องแล้ว")
     system = (
         "คุณคือครีเอเตอร์คอนเทนต์สายมู/ลึกลับของเพจ 'Ener Scan ตรวจพลังพระ หิน เครื่องราง' "
         "เขียนบทคลิปสั้นแนวตั้งภาษาไทย แนวสายมู/พลังงาน/ความเชื่อ เรียกคนดูว่า 'คุณ' พูดกับคุณตรงๆ "
@@ -696,6 +742,9 @@ async def generate_mystery_script(topic: str = "", title: str = "", summary: str
             "(เช่น บั้งไฟพญานาค, ตำนานพระดัง, เครื่องรางที่มีประวัติจริง, ปรากฏการณ์ลึกลับที่มีบันทึก, "
             "สถานที่ศักดิ์สิทธิ์มีตำนาน — ทั้งไทยและต่างประเทศ) เลี่ยงเรื่องที่ต้องกุขึ้นเอง แล้วเขียนบทคลิป"
         )
+    if research:
+        body += "\n\nข้อมูลอ้างอิงที่ถูกต้อง (ยึดตามนี้เป๊ะ ห้ามขัด ห้ามเข้าใจความหมายผิด):\n" + research
+        await _vlog("✍️ เขียนบทตามข้อมูลจริง…")
     prompt = (
         f"{body}\n\n"
         "รูปแบบบท (เล่าเป็นกันเอง โทนความเชื่อขลังๆ เน้นให้คนดูจนจบ):\n"
@@ -715,6 +764,15 @@ async def generate_mystery_script(topic: str = "", title: str = "", summary: str
     out_title = _strip_quotes(str(data.get("title") or title or topic or "เรื่องลึกลับ"))[:60]
     if not lines:
         lines = [out_title]
+    # QC: verify the beliefs/facts against the research brief and fix mistakes
+    if research and lines:
+        await _vlog("🧐 QC ตรวจความถูกต้องของข้อมูลความเชื่อ…")
+        fixed, note = await _qc_facts(research, lines)
+        if note:
+            lines = [x for x in fixed if x][:8] or lines
+            await _vlog("✏️ QC แก้ข้อมูล: " + note)
+        else:
+            await _vlog("✅ QC ผ่าน — ข้อมูลถูกต้อง")
     caption = str(data.get("caption") or out_title).strip()[:300]
     image_prompts = [str(x).strip()[:300] for x in (data.get("image_prompts") or []) if str(x).strip()][:6]
     if not image_prompts:
