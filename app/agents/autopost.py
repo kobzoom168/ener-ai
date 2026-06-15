@@ -88,7 +88,9 @@ async def _render_for(job: dict) -> dict:
     topic = (job.get("topic") or "").strip()
     ctype = job.get("content_type") or "mystery"
     tone = job.get("tone") or "evidence"
-    from app.agents.vdo_agent import make_mystery_short, make_news_short
+    channel = job.get("channel") or "mystery"  # which Channel Profile to use
+    from app.agents.vdo_agent import make_channel_short, make_news_short
+    from app.agents.channels import get_profile
     if ctype == "news":
         if topic:
             return await make_news_short(topic, "")
@@ -99,7 +101,7 @@ async def _render_for(job: dict) -> dict:
         if not row:
             return {"ok": False, "error": "ไม่มีข่าวให้ทำคลิป"}
         return await make_news_short(row["title"], row["summary"] or "")
-    return await make_mystery_short(topic, tone=tone)  # default: สายมู (topic optional)
+    return await make_channel_short(get_profile(channel), topic, tone=tone)  # topic optional
 
 
 async def _post_platform(name: str, mp4: str, caption: str) -> tuple[bool, str]:

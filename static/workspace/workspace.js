@@ -2237,6 +2237,7 @@ document.addEventListener('DOMContentLoaded', function() {
   ];
   let _apSchedules = [];
   let _apPlatStatus = {};
+  let _apChannels = [];
   let _apStatusTimer = null;
 
   async function loadAutopost() {
@@ -2246,6 +2247,8 @@ document.addEventListener('DOMContentLoaded', function() {
       const data = await api('/workspace/autopost/data');
       _apSchedules = data.schedules || [];
       _apPlatStatus = data.platforms || {};
+      _apChannels = data.channels || [];
+      renderApChannels();
       renderApPlatforms();
       renderApDays();
       renderApSchedules(_apSchedules);
@@ -2257,6 +2260,16 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     loadAutopostClips();
     startApStatusPoll();
+  }
+
+  function renderApChannels() {
+    const sel = document.getElementById('ap-channel');
+    if (!sel) return;
+    const cur = sel.value;
+    sel.innerHTML = (_apChannels || []).map(c =>
+      '<option value="' + escapeHtml(c.id) + '">' + escapeHtml(c.name) + '</option>'
+    ).join('');
+    if (cur) sel.value = cur;
   }
 
   function renderApConsole(lines) {
@@ -2422,6 +2435,7 @@ document.addEventListener('DOMContentLoaded', function() {
     return {
       id: document.getElementById('ap-id').value || '',
       label: document.getElementById('ap-label').value || '',
+      channel: (document.getElementById('ap-channel') || {}).value || 'mystery',
       content_type: document.getElementById('ap-content').value || 'mystery',
       tone: document.getElementById('ap-tone').value || 'evidence',
       topic: document.getElementById('ap-topic').value || '',
@@ -2438,6 +2452,7 @@ document.addEventListener('DOMContentLoaded', function() {
   function resetAutopostForm() {
     document.getElementById('ap-id').value = '';
     document.getElementById('ap-label').value = '';
+    const chSel = document.getElementById('ap-channel'); if (chSel) chSel.value = 'mystery';
     document.getElementById('ap-content').value = 'mystery';
     document.getElementById('ap-tone').value = 'evidence';
     document.getElementById('ap-topic').value = '';
@@ -2498,6 +2513,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (!j) return;
     document.getElementById('ap-id').value = j.id;
     document.getElementById('ap-label').value = j.label || '';
+    const chSel2 = document.getElementById('ap-channel'); if (chSel2) chSel2.value = j.channel || 'mystery';
     document.getElementById('ap-content').value = j.content_type || 'mystery';
     document.getElementById('ap-tone').value = j.tone || 'evidence';
     document.getElementById('ap-topic').value = j.topic || '';

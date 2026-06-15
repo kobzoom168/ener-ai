@@ -6942,14 +6942,17 @@ async def workspace_autopost_data(request: Request):
     """Auto-post panel data: schedules, platform status, pipeline status, recent log."""
     await _require_admin(request)
     from app.agents import autopost
+    from app.agents.channels import PROFILES
     from app.core.pipeline_status import get_status, get_console
     schedules = await autopost.load_schedules()
     log = await autopost.get_log()
     status = await get_status()
     console = await get_console()
+    channels = [{"id": p.id, "name": p.name} for p in PROFILES.values()]
     return JSONResponse({"ok": True, "schedules": schedules,
                          "platforms": autopost.platform_status(),
                          "platform_labels": autopost.PLATFORM_LABEL,
+                         "channels": channels,
                          "status": status, "console": console, "log": log[:30]})
 
 
@@ -6968,10 +6971,15 @@ def _autopost_job_from_body(body: dict) -> dict:
     tone = str(body.get("tone") or "evidence")
     if tone not in ("evidence", "cheeky", "twist", "academic", "creepy"):
         tone = "evidence"
+    from app.agents.channels import PROFILES
+    channel = str(body.get("channel") or "mystery")
+    if channel not in PROFILES:
+        channel = "mystery"
     return {
         "id": str(body.get("id") or "").strip() or f"ap_{int(_t.time())}",
         "label": (str(body.get("label") or "").strip()[:80] or "คลิปออโต้"),
         "content_type": "news" if str(body.get("content_type")) == "news" else "mystery",
+        "channel": channel,
         "tone": tone,
         "topic": str(body.get("topic") or "").strip()[:200],
         "days": [int(d) for d in (body.get("days") or [])

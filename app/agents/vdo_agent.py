@@ -13,6 +13,8 @@ import re
 import subprocess
 import time
 
+from app.agents.channels import ChannelProfile, RETENTION_CORE, get_profile
+
 VDO_DIR = "/app/data/vdo"
 SCRIPT_MODEL = "minimax/minimax-m3"  # picks real documented mysteries; cheap, engaging Thai
 
@@ -368,17 +370,22 @@ def _synth_lines(lines: list[str], base: str, out_mp3: str,
     return segs, total
 
 
-def _build_ass(title: str, segments: list[tuple[str, float]], ass_path: str) -> None:
+def _build_ass(title: str, segments: list[tuple[str, float]], ass_path: str,
+               brand: tuple[str, str] | None = None) -> None:
     """Caption track: one short row on screen at a time, voice-synced.
 
     Each spoken line is timed to its real audio duration, then split into single display
     rows whose on-screen time is shared across the line's segment by row length — so the
     caption advances row-by-row in step with the narration (never a multi-row block).
+
+    `brand` = (handle, web) watermark for this channel; falls back to the global default.
+    Pass ("", "") to disable the watermark (e.g. an un-branded new channel).
     """
     total = sum(d for _, d in segments) or 1.0
     events = []
     # brand logo only (no topic title) as the persistent header
-    handle, web = _ass_escape(VDO_BRAND_HANDLE)[:20], _ass_escape(VDO_BRAND_WEB)[:30]
+    b_handle, b_web = brand if brand is not None else (VDO_BRAND_HANDLE, VDO_BRAND_WEB)
+    handle, web = _ass_escape(b_handle)[:20], _ass_escape(b_web)[:30]
     brand_parts = []
     if handle:
         brand_parts.append("{\\c" + _BRAND_GREEN + "}" + handle)
@@ -672,7 +679,8 @@ async def make_news_short(title: str, summary: str) -> dict:
 async def _render_clip(title: str, lines: list[str], bg_images: list[str] | None = None,
                        bg_videos: list[str] | None = None, face_pip: bool = False,
                        bg_items: list[tuple[str, str]] | None = None,
-                       say_lines: list[str] | None = None) -> dict:
+                       say_lines: list[str] | None = None,
+                       brand: tuple[str, str] | None = None) -> dict:
     """Shared render: lines -> TTS -> ASS captions -> MP4 (stock-video or image slideshow).
 
     `lines` is shown on screen as the subtitle; `say_lines` (optional, 1:1 with lines) is the
@@ -700,7 +708,7 @@ async def _render_clip(title: str, lines: list[str], bg_images: list[str] | None
         return {"ok": False, "error": f"TTS ล้มเหลว: {str(exc)[:200]}"}
     if not segments or duration <= 0:
         return {"ok": False, "error": "อ่านความยาวเสียงไม่ได้"}
-    await asyncio.to_thread(_build_ass, title, segments, ass)
+    await asyncio.to_thread(_build_ass, title, segments, ass, brand)
 
     # talking-head PIP (optional): generate while the mp3 is still on disk + served publicly
     pip_video = None
@@ -746,25 +754,20 @@ async def _vlog(msg: str) -> None:
         pass
 
 
-async def _research_topic(subject: str) -> str:
-    """Accurate factual brief so the writer doesn't misread a term
-    (e.g. 'ผีฟ้า' = an Isan healing spirit/แถน, NOT 'ปอบ from the sky')."""
-    system = ("คุณคือนักวิจัยคติชน/ความเชื่อไทยที่แม่นยำ ตอบเฉพาะข้อเท็จจริงที่ถูกต้อง "
-              "ไม่แต่งเติม ถ้าไม่แน่ใจให้บอกว่าไม่แน่ใจ")
-    prompt = (f"คำว่า '{subject}' ในความเชื่อ/สายมูไทย คืออะไรกันแน่? "
-              "อธิบายสั้นๆ เป็น bullet 3-6 ข้อ: นิยามที่ถูกต้อง, ที่มา/ภูมิภาค, ลักษณะเด่น, "
-              "และ 'อย่าสับสนกับสิ่งที่ชื่อคล้าย' — ระบุความต่างให้ชัด "
-              "(เช่น ผีฟ้า=ผีแถน/พิธีหมอลำรักษาโรคของอีสาน ไม่ใช่ปอบ และไม่ใช่ผีที่มาจากท้องฟ้า)")
+async def _research_topic(subject: str, profile: "ChannelProfile") -> str:
+    """Accurate brief so the writer doesn't misread a term / fabricate facts.
+    The research persona + question come from the channel profile."""
+    system = profile.research_persona
+    prompt = profile.research_question.format(subject=subject)
     return (await _or_chat(SCRIPT_MODEL, system, prompt, 2500)).strip()
 
 
-async def _qc_facts(research: str, lines: list[str]) -> tuple[list[str], str]:
-    """QC the script lines against the research brief; fix factual/belief errors only."""
+async def _qc_facts(research: str, lines: list[str], profile: "ChannelProfile") -> tuple[list[str], str]:
+    """QC the script lines against the research brief; fix factual errors only.
+    The QC focus (beliefs vs facts/figures) comes from the channel profile."""
     if not research or not lines:
         return lines, ""
-    system = ("คุณคือ QC ตรวจความถูกต้องของข้อมูลความเชื่อ/คติชนในบทคลิปแบบเข้มงวดมาก "
-              "ถ้ามีจุดที่ข้อมูลผิด/สับสน/เข้าใจความหมายผิด ให้แก้ให้ตรงข้อเท็จจริง "
-              "คงจำนวนบรรทัด+โทน+สำนวนเดิมไว้ ถ้าถูกหมดแล้วไม่ต้องแก้ ตอบ JSON เท่านั้น")
+    system = profile.qc_system
     prompt = ("ข้อมูลจริง (ยึดตามนี้):\n" + research + "\n\nบทเดิม:\n"
               + _json.dumps(lines, ensure_ascii=False) + "\n\n"
               'ตรวจแล้วตอบ JSON: {"ok": true ถ้าข้อมูลถูกหมด/false ถ้าต้องแก้, '
@@ -778,63 +781,61 @@ async def _qc_facts(research: str, lines: list[str]) -> tuple[list[str], str]:
 
 async def generate_mystery_script(topic: str = "", title: str = "", summary: str = "",
                                   tone: str = "evidence") -> dict:
-    """สายมู/ลึกลับ content for the Ener Scan page: amulets (TH+world), UFO, myths, beliefs.
+    """Back-compat wrapper: the สายมู channel of the generic engine."""
+    from app.agents.channels import MYSTERY
+    return await generate_channel_script(MYSTERY, topic, title, summary, tone=tone)
 
-    Pipeline: research the term (so it isn't misread) → write → QC the facts → fix.
-    `tone` selects the narration style (evidence/cheeky/twist/academic/creepy).
+
+async def generate_channel_script(profile: "ChannelProfile", topic: str = "", title: str = "",
+                                  summary: str = "", tone: str = "") -> dict:
+    """Retention-engine script for any channel. The profile supplies genre identity
+    (persona, hooks, beats, research/QC focus, visuals, brand); the beat structure and
+    the two-metric optimisation are shared.
+
+    Pipeline: research (if the profile wants it) → write to beats → QC the facts → pair
+    lines_say (phonetic spelling the voice speaks) 1:1 with on-screen lines.
     """
+    tone = tone or profile.default_tone
     research = ""
     subject = (topic or title or "").strip()
-    if subject:
+    if subject and profile.research_mode != "none":
         await _vlog("🔍 ค้นข้อมูลก่อน: " + subject)
-        research = await _research_topic(subject)
+        research = await _research_topic(subject, profile)
         if research:
             await _vlog("📚 ได้ข้อมูลอ้างอิงที่ถูกต้องแล้ว")
     system = (
-        "คุณคือครีเอเตอร์คอนเทนต์สายมู/ลึกลับของเพจ 'Ener Scan ตรวจพลังพระ หิน เครื่องราง' "
-        "เขียนบทคลิปสั้นแนวตั้งภาษาไทย แนวสายมู/พลังงาน/ความเชื่อ เรียกคนดูว่า 'คุณ' พูดกับคุณตรงๆ "
-        "(เช่น คุณรู้ไหมว่า, ลองคิดดูสิครับ) แทนตัวเองว่า ผม/เรา ห้ามใช้ กู/มึง ห้ามหยาบคาย "
+        f"{profile.persona} {profile.audience} "
         f"{_tone_guide(tone)} "
-        "เป้าหมายเดียวคือทำให้คนดูจนจบ (retention). "
-        "เทคนิคหัวใจ: 'เปิดวงคำถาม (open loop)' ตั้งแต่ต้น แล้วเฉลยตอนจุดพีคเท่านั้น "
-        "ห้ามเฉลยกลางเรื่อง — นี่คือสิ่งที่ทำให้คนดูค้างจนจบ. "
-        f"{HOOK_ARCHETYPES} "
-        f"{SCRIPT_BEATS} "
-        "เลือกเล่าเรื่องที่มีอยู่จริง มีหลักฐาน/คนรู้จัก จะน่าเชื่อถือกว่าแต่งขึ้น "
-        "อ้างอิงแหล่งเจาะจง + รายละเอียดจริง (ชื่อ/ยุค/สถานที่) ห้ามกุข้อมูลเท็จที่ตรวจสอบได้ "
-        "ห้ามเอาชื่อวัด/พระ/บุคคลจริงไปผูกเรื่องที่ไม่มีจริง ห้ามอ้างวิทยาศาสตร์ปลอม "
-        "เคารพความเชื่อ ไม่ลบหลู่สิ่งศักดิ์สิทธิ์ ไม่การันตีโชคลาภ/รักษาโรค "
+        f"{RETENTION_CORE}"
+        f"{profile.hooks} "
+        f"{profile.beats} "
+        f"{profile.content_rules} "
         "ห้ามใส่เครื่องหมายคำพูด \" \" หรือ ' ' ในบทพากย์ "
         "สำคัญ: ต้องส่ง 2 ชุดที่จำนวนบรรทัดเท่ากันเป๊ะ เรียงตรงกัน 1:1 — "
         "lines = ซับสำหรับแสดงบนจอ (สะกดถูกต้องตามไวยากรณ์), "
-        "lines_say = บทเดียวกันแต่แปลงเฉพาะ 'คำที่ TTS อ่านผิด/คำเฉพาะทางพุทธ-พราหมณ์-สายมู' "
-        "ให้สะกดแบบอ่านออกเสียงถูก (เช่น พระภูมิ→พระพูม, ขมังเวทย์→ขะหมังเวด, ไสยศาสตร์→ไสยะสาด, "
-        "พุทธคุณ→พุดทะคุน) คำปกติคงเดิม. ตอบ JSON เท่านั้น"
+        "lines_say = บทเดียวกันแต่แปลงเฉพาะ 'คำที่ TTS อ่านผิด/คำเฉพาะ' ให้สะกดแบบอ่านออกเสียงถูก "
+        f"(เช่น {profile.pronun_examples}) คำปกติคงเดิม. ตอบ JSON เท่านั้น"
     )
     if title:
-        body = f"ข่าว/เรื่อง: {title}\nรายละเอียด: {summary}\n\nเรียบเรียงเป็นบทคลิปสายมูที่น่าติดตาม"
+        body = f"เรื่อง: {title}\nรายละเอียด: {summary}\n\nเรียบเรียงเป็นบทคลิปที่น่าติดตาม"
     elif topic:
-        body = f"หัวข้อ: {topic}\n\nเขียนบทคลิปสายมูที่น่าสนใจเรื่องนี้"
+        body = f"หัวข้อ: {topic}\n\nเขียนบทคลิปที่น่าสนใจเรื่องนี้"
     else:
-        body = (
-            "เลือกเรื่องสายมู/ลึกลับ 'ที่มีอยู่จริง มีหลักฐาน หรือคนรู้จักกันแพร่หลาย' 1 เรื่อง "
-            "(เช่น บั้งไฟพญานาค, ตำนานพระดัง, เครื่องรางที่มีประวัติจริง, ปรากฏการณ์ลึกลับที่มีบันทึก, "
-            "สถานที่ศักดิ์สิทธิ์มีตำนาน — ทั้งไทยและต่างประเทศ) เลี่ยงเรื่องที่ต้องกุขึ้นเอง แล้วเขียนบทคลิป"
-        )
+        body = profile.topic_pick
     if research:
         body += "\n\nข้อมูลอ้างอิงที่ถูกต้อง (ยึดตามนี้เป๊ะ ห้ามขัด ห้ามเข้าใจความหมายผิด):\n" + research[:1500]
         await _vlog("✍️ เขียนบทตามข้อมูลจริง…")
     prompt = (
         f"{body}\n\n"
-        "เขียนบทตามโครงบีทข้างบนให้ครบทุกช่วง (ฮุค → ปมค้าง → ปูเรื่อง+อ้างอิงเจาะจง → จุดพีคเฉลย → ข้อคิด+ชวนคอมเมนต์)\n"
+        "เขียนบทตามโครงบีทข้างบนให้ครบทุกช่วง (ฮุค → ปมค้าง → ปูเรื่อง+อ้างอิงเจาะจง → จุดพีค → สรุป+ชวนติดตาม)\n"
         "ก่อนเขียน คิดฮุค 3 แบบในใจ เลือกอันที่หยุดนิ้วที่สุดมาเป็นประโยคแรก\n"
-        "1 บรรทัด = 1 ประโยคสั้นพูดลื่น (รวมทั้งคลิป 6-9 บรรทัด) ประโยคสุดท้ายคือชวนคอมเมนต์เสมอ\n"
+        "1 บรรทัด = 1 ประโยคสั้นพูดลื่น (รวมทั้งคลิป 6-9 บรรทัด) ประโยคสุดท้ายคือชวนคอมเมนต์/ติดตามเสมอ\n"
         'ตอบ JSON เท่านั้น: {"title": "หัวข้อสั้น", "lines": ["ประโยคสั้นๆ (ซับสะกดถูก)", "..."], '
         '"lines_say": ["ประโยคเดียวกันแต่แปลงคำที่อ่านยากให้ TTS อ่านถูก จำนวนเท่า lines", "..."], '
-        '"caption": "แคปชั่นโพสต์ + #แฮชแท็ก เช่น #สายมู #เครื่องราง #ความเชื่อ #ลึกลับ", '
-        '"image_prompts": ["ภาพพื้นหลัง 5 ฉากเป็นภาษาอังกฤษ ไล่ตามเนื้อหาทีละช่วง บรรยากาศขลังๆ ไทย/เอเชีย (ไม่มีตัวหนังสือในภาพ)", "...", "...", "...", "..."], '
-        '"video_queries": ["คำค้นวิดีโอสต็อกจริงสั้นๆ ภาษาอังกฤษ 1-3 คำ เน้นบรรยากาศไทย/เอเชีย ใส่คำว่า Thai หรือ Thailand เมื่อเข้ากับเรื่อง เช่น Thai temple, Thai monk, Thailand misty forest, incense smoke shrine, Thai river mist", "...", "..."], '
-        '"ai_video_prompt": "พรอมต์ภาษาอังกฤษ 1 ประโยค สำหรับ AI สร้างวิดีโอ \\"ฉากเด็ด\\" ที่สต็อกไม่มี (เช่น พญานาค/ของขลังเรืองแสง/ควันวนรอบพระ) cinematic ขลังๆ"}'
+        f'"caption": "แคปชั่นโพสต์ + #แฮชแท็ก เช่น {profile.caption_hint}", '
+        f'"image_prompts": ["ภาพพื้นหลัง 5 ฉากเป็นภาษาอังกฤษ ไล่ตามเนื้อหาทีละช่วง {profile.visual_style}", "...", "...", "...", "..."], '
+        f'"video_queries": ["คำค้นวิดีโอสต็อกจริงสั้นๆ ภาษาอังกฤษ 1-3 คำ {profile.video_query_hint}", "...", "..."], '
+        f'"ai_video_prompt": "พรอมต์ภาษาอังกฤษ 1 ประโยค สำหรับ AI สร้างวิดีโอ {profile.ai_video_hint}"}}'
     )
     # MiniMax M3 is a reasoning model: with the long beat/hook system prompt it can spend
     # its whole budget thinking and emit truncated/empty JSON. Give it room + retry once with
@@ -849,13 +850,13 @@ async def generate_mystery_script(topic: str = "", title: str = "", summary: str
             break
         await _vlog("↻ บทยังว่าง ลองสร้างใหม่อีกครั้ง…")
     say_raw = [_strip_quotes(str(x)) for x in (data.get("lines_say") or []) if str(x).strip()]
-    out_title = _strip_quotes(str(data.get("title") or title or topic or "เรื่องลึกลับ"))[:60]
+    out_title = _strip_quotes(str(data.get("title") or title or topic or profile.fallback_title))[:60]
     if not lines:
         lines = [out_title]
-    # QC: verify the beliefs/facts against the research brief and fix mistakes
+    # QC: verify the facts against the research brief and fix mistakes
     if research and lines:
-        await _vlog("🧐 QC ตรวจความถูกต้องของข้อมูลความเชื่อ…")
-        fixed, note = await _qc_facts(research, lines)
+        await _vlog(profile.qc_label)
+        fixed, note = await _qc_facts(research, lines, profile)
         if note:
             lines = [x for x in fixed if x][:9] or lines
             say_raw = []  # QC changed the wording → re-pair say to the fixed display
@@ -890,25 +891,36 @@ async def _bg_item(video_query: str, image_prompt: str, idx: int) -> tuple[str, 
 
 async def make_mystery_short(topic: str = "", title: str = "", summary: str = "",
                              tone: str = "evidence") -> dict:
-    """สายมู short: AI picks/retells a mystery topic -> Thai short MP4.
+    """Back-compat wrapper: render a short for the สายมู channel."""
+    from app.agents.channels import MYSTERY
+    return await make_channel_short(MYSTERY, topic, title, summary, tone=tone)
 
-    Each of the (up to 3) background slots prefers a real Thai stock video, then a foreign
-    one, then an AI image — so videos and images can be mixed within one clip.
+
+async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: str = "",
+                             summary: str = "", tone: str = "") -> dict:
+    """Render a short for any channel profile: AI picks/retells a topic -> Thai short MP4.
+
+    Each of the (up to 3) background slots prefers a real stock video, then an AI image —
+    so videos and images can be mixed within one clip. The profile decides genre, visuals,
+    voice, face-PIP and brand watermark.
     """
     from app.core.pipeline_status import set_status, log_line, clear_console
+    tone = tone or profile.default_tone
     await clear_console()
-    await log_line("🚀 เริ่มสร้างคลิป")
+    await log_line(f"🚀 เริ่มสร้างคลิป — {profile.name}")
     await set_status("script")
     await log_line("✍️ เขียนบท (MiniMax M3)…")
-    script = await generate_mystery_script(topic, title, summary, tone=tone)
+    script = await generate_channel_script(profile, topic, title, summary, tone=tone)
     await log_line(f"📝 หัวข้อ: {script.get('title', '')}")
     for _ln in (script.get("lines") or []):
         await log_line("· " + str(_ln))
-    try:
-        from app.agents.talkinghead import enabled as _th_enabled
-        face_pip = _th_enabled()
-    except Exception:
-        face_pip = False
+    face_pip = False
+    if profile.face_pip:  # only channels that want a talking head try D-ID
+        try:
+            from app.agents.talkinghead import enabled as _th_enabled
+            face_pip = _th_enabled()
+        except Exception:
+            face_pip = False
 
     await set_status("media", title=script.get("title", ""))
     imps = script.get("image_prompts") or [script["title"]]
@@ -951,7 +963,8 @@ async def make_mystery_short(topic: str = "", title: str = "", summary: str = ""
     await set_status("render", title=script.get("title", ""))
     await log_line("🎙️ พากย์ (เสียงคุณ V3)" + (" + 🗣️ หน้าพูด D-ID" if face_pip else "") + " + 🎬 ตัดต่อ…")
     r = await _render_clip(script["title"], script["lines"], bg_items=items, face_pip=face_pip,
-                           say_lines=script.get("lines_say"))
+                           say_lines=script.get("lines_say"),
+                           brand=(profile.brand_handle, profile.brand_web))
     if r.get("ok"):
         kinds = [k for _, k in items]
         await log_line(f"✅ คลิปเสร็จ {r.get('duration', '?')} วิ" + (" · มีหน้าพูด" if r.get("talking_head") else ""))
