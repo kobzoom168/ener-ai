@@ -268,12 +268,17 @@ def _concat_audio(parts: list[str], out_path: str) -> bool:
         return False
 
 
-def _synth_lines(lines: list[str], base: str, out_mp3: str) -> tuple[list[tuple[str, float]], float]:
+def _synth_lines(lines: list[str], base: str, out_mp3: str,
+                 display_lines: list[str] | None = None) -> tuple[list[tuple[str, float]], float]:
     """Synthesize each line separately → measure → concat into out_mp3.
 
     Per-line timing is what lets the subtitle for each line appear exactly while that line
     is spoken (one line at a time), instead of an even split that drifts off the audio.
-    Returns ([(line, duration)…], total_duration).
+
+    `lines` is what ElevenLabs SPEAKS (phonetic re-spelling so Thai สายมู terms are read
+    correctly). `display_lines`, when given, is the grammatically-correct subtitle text shown
+    on screen for the matching segment. The voice uses `lines`, the caption uses `display_lines`.
+    Returns ([(caption_line, duration)…], total_duration).
     """
     segs: list[tuple[str, float]] = []
     parts: list[str] = []
@@ -291,7 +296,10 @@ def _synth_lines(lines: list[str], base: str, out_mp3: str) -> tuple[list[tuple[
                 pass
             continue
         parts.append(p)
-        segs.append((ln, d))
+        shown = ln
+        if display_lines and i < len(display_lines) and (display_lines[i] or "").strip():
+            shown = display_lines[i].strip()
+        segs.append((shown, d))
     if not parts:
         return [], 0.0
     _concat_audio(parts, out_mp3)
@@ -607,8 +615,12 @@ async def make_news_short(title: str, summary: str) -> dict:
 
 async def _render_clip(title: str, lines: list[str], bg_images: list[str] | None = None,
                        bg_videos: list[str] | None = None, face_pip: bool = False,
-                       bg_items: list[tuple[str, str]] | None = None) -> dict:
+                       bg_items: list[tuple[str, str]] | None = None,
+                       say_lines: list[str] | None = None) -> dict:
     """Shared render: lines -> TTS -> ASS captions -> MP4 (stock-video or image slideshow).
+
+    `lines` is shown on screen as the subtitle; `say_lines` (optional, 1:1 with lines) is the
+    phonetic re-spelling ElevenLabs actually speaks so Thai สายมู terms are read correctly.
 
     If face_pip and a D-ID talking head can be made, the user's lip-synced face is
     overlaid bottom-left as a PIP (the narration mp3 is served publicly for D-ID to fetch).
@@ -625,7 +637,9 @@ async def _render_clip(title: str, lines: list[str], bg_images: list[str] | None
     if not lines:
         return {"ok": False, "error": "ไม่มีบทพากย์"}
     try:
-        segments, duration = await asyncio.to_thread(_synth_lines, lines, base, mp3)
+        voice_lines = say_lines if (say_lines and len(say_lines) == len(lines)) else lines
+        segments, duration = await asyncio.to_thread(
+            _synth_lines, voice_lines, base, mp3, lines)
     except Exception as exc:
         return {"ok": False, "error": f"TTS ล้มเหลว: {str(exc)[:200]}"}
     if not segments or duration <= 0:
@@ -730,7 +744,12 @@ async def generate_mystery_script(topic: str = "", title: str = "", summary: str
         "อ้างอิงแหล่งเจาะจง + รายละเอียดจริง (ชื่อ/ยุค/สถานที่) ห้ามกุข้อมูลเท็จที่ตรวจสอบได้ "
         "ห้ามเอาชื่อวัด/พระ/บุคคลจริงไปผูกเรื่องที่ไม่มีจริง ห้ามอ้างวิทยาศาสตร์ปลอม "
         "เคารพความเชื่อ ไม่ลบหลู่สิ่งศักดิ์สิทธิ์ ไม่การันตีโชคลาภ/รักษาโรค "
-        "ห้ามใส่เครื่องหมายคำพูด \" \" หรือ ' ' ในบทพากย์ ตอบ JSON เท่านั้น"
+        "ห้ามใส่เครื่องหมายคำพูด \" \" หรือ ' ' ในบทพากย์ "
+        "สำคัญ: ต้องส่ง 2 ชุดที่จำนวนบรรทัดเท่ากันเป๊ะ เรียงตรงกัน 1:1 — "
+        "lines = ซับสำหรับแสดงบนจอ (สะกดถูกต้องตามไวยากรณ์), "
+        "lines_say = บทเดียวกันแต่แปลงเฉพาะ 'คำที่ TTS อ่านผิด/คำเฉพาะทางพุทธ-พราหมณ์-สายมู' "
+        "ให้สะกดแบบอ่านออกเสียงถูก (เช่น พระภูมิ→พระพูม, ขมังเวทย์→ขะหมังเวด, ไสยศาสตร์→ไสยะสาด, "
+        "พุทธคุณ→พุดทะคุน) คำปกติคงเดิม. ตอบ JSON เท่านั้น"
     )
     if title:
         body = f"ข่าว/เรื่อง: {title}\nรายละเอียด: {summary}\n\nเรียบเรียงเป็นบทคลิปสายมูที่น่าติดตาม"
@@ -752,7 +771,8 @@ async def generate_mystery_script(topic: str = "", title: str = "", summary: str
         "- เล่า 3-4 ประโยคสั้น ค่อยๆ ปูเรื่อง สร้างบรรยากาศลึกลับ โดย**อ้างที่มาแบบเจาะจง 1 จุด** "
         "(ตำนาน/บันทึก/ความเชื่อท้องถิ่น + ชื่อ/ยุค/สถานที่) ให้ฟังดูค้นคว้ามา น่าเชื่อถือ\n"
         "- ปิดด้วยประโยคชวนขนลุก/ชวนเชื่อ/ชวนคิด ตามโทนความเชื่อ (ไม่การันตีผล ไม่ต้องหักมุม)\n"
-        'ตอบ JSON เท่านั้น: {"title": "หัวข้อสั้น", "lines": ["ประโยคสั้นๆ", "..."], '
+        'ตอบ JSON เท่านั้น: {"title": "หัวข้อสั้น", "lines": ["ประโยคสั้นๆ (ซับสะกดถูก)", "..."], '
+        '"lines_say": ["ประโยคเดียวกันแต่แปลงคำที่อ่านยากให้ TTS อ่านถูก จำนวนเท่า lines", "..."], '
         '"caption": "แคปชั่นโพสต์ + #แฮชแท็ก เช่น #สายมู #เครื่องราง #ความเชื่อ #ลึกลับ", '
         '"image_prompts": ["ภาพพื้นหลัง 5 ฉากเป็นภาษาอังกฤษ ไล่ตามเนื้อหาทีละช่วง บรรยากาศขลังๆ ไทย/เอเชีย (ไม่มีตัวหนังสือในภาพ)", "...", "...", "...", "..."], '
         '"video_queries": ["คำค้นวิดีโอสต็อกจริงสั้นๆ ภาษาอังกฤษ 1-3 คำ เน้นบรรยากาศไทย/เอเชีย ใส่คำว่า Thai หรือ Thailand เมื่อเข้ากับเรื่อง เช่น Thai temple, Thai monk, Thailand misty forest, incense smoke shrine, Thai river mist", "...", "..."], '
@@ -761,6 +781,7 @@ async def generate_mystery_script(topic: str = "", title: str = "", summary: str
     data = _parse_json(await _or_chat(SCRIPT_MODEL, system, prompt, 10000))
     lines = [_strip_quotes(str(x)) for x in (data.get("lines") or []) if str(x).strip()][:8]
     lines = [x for x in lines if x]
+    say_raw = [_strip_quotes(str(x)) for x in (data.get("lines_say") or []) if str(x).strip()]
     out_title = _strip_quotes(str(data.get("title") or title or topic or "เรื่องลึกลับ"))[:60]
     if not lines:
         lines = [out_title]
@@ -770,16 +791,19 @@ async def generate_mystery_script(topic: str = "", title: str = "", summary: str
         fixed, note = await _qc_facts(research, lines)
         if note:
             lines = [x for x in fixed if x][:8] or lines
+            say_raw = []  # QC changed the wording → re-pair say to the fixed display
             await _vlog("✏️ QC แก้ข้อมูล: " + note)
         else:
             await _vlog("✅ QC ผ่าน — ข้อมูลถูกต้อง")
+    # pair lines_say 1:1 with display lines (fall back to the display line itself)
+    lines_say = [(say_raw[i] if i < len(say_raw) and say_raw[i] else lines[i]) for i in range(len(lines))]
     caption = str(data.get("caption") or out_title).strip()[:300]
     image_prompts = [str(x).strip()[:300] for x in (data.get("image_prompts") or []) if str(x).strip()][:6]
     if not image_prompts:
         image_prompts = [out_title]
     video_queries = [str(x).strip()[:80] for x in (data.get("video_queries") or []) if str(x).strip()][:3]
     ai_video_prompt = str(data.get("ai_video_prompt") or "").strip()[:300]
-    return {"title": out_title, "lines": lines, "caption": caption,
+    return {"title": out_title, "lines": lines, "lines_say": lines_say, "caption": caption,
             "image_prompts": image_prompts, "video_queries": video_queries,
             "ai_video_prompt": ai_video_prompt}
 
@@ -859,7 +883,8 @@ async def make_mystery_short(topic: str = "", title: str = "", summary: str = ""
 
     await set_status("render", title=script.get("title", ""))
     await log_line("🎙️ พากย์ (เสียงคุณ V3)" + (" + 🗣️ หน้าพูด D-ID" if face_pip else "") + " + 🎬 ตัดต่อ…")
-    r = await _render_clip(script["title"], script["lines"], bg_items=items, face_pip=face_pip)
+    r = await _render_clip(script["title"], script["lines"], bg_items=items, face_pip=face_pip,
+                           say_lines=script.get("lines_say"))
     if r.get("ok"):
         kinds = [k for _, k in items]
         await log_line(f"✅ คลิปเสร็จ {r.get('duration', '?')} วิ" + (" · มีหน้าพูด" if r.get("talking_head") else ""))
