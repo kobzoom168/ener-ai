@@ -179,7 +179,10 @@
             <div style="position:absolute;inset:0;background:#0a1020;border:2px solid #1e293b;border-radius:10px;overflow:hidden">
               <div id="ap-status-bar" style="height:100%;width:0%;border-radius:8px;background:repeating-linear-gradient(45deg,#22c55e,#22c55e 8px,#16a34a 8px,#16a34a 16px);background-size:32px 32px;animation:apStripes .55s linear infinite;transition:width .5s;box-shadow:0 0 12px #22c55e"></div>
             </div>
-            <div id="ap-status-char" style="position:absolute;top:-13px;left:0%;font-size:22px;animation:apWalk .5s ease-in-out infinite;transition:left .5s;filter:drop-shadow(0 0 5px #22c55e)">🧙‍♂️</div>
+            <div id="ap-status-char" style="position:absolute;top:-16px;left:0%;animation:apWalk .5s ease-in-out infinite;transition:left .5s;filter:drop-shadow(0 0 5px #22c55e)">
+              <lottie-player id="ap-status-lottie" loop autoplay style="width:50px;height:50px;display:none"></lottie-player>
+              <span id="ap-status-emoji" style="font-size:22px">🧙‍♂️</span>
+            </div>
           </div>
           <div style="display:flex;align-items:center;gap:10px">
             <span id="ap-status-text" style="font-weight:600;font-size:13px"></span>

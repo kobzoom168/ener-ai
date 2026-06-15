@@ -2355,12 +2355,25 @@ document.addEventListener('DOMContentLoaded', function() {
         : 'repeating-linear-gradient(45deg,#22c55e,#22c55e 8px,#16a34a 8px,#16a34a 16px)';
       barEl.style.boxShadow = '0 0 12px ' + accent;
     }
-    // the pixel hero walks along the bar; cheers at the end, KO on error
+    // the hero walks along the bar; cheers at the end, KO on error
     const charEl = document.getElementById('ap-status-char');
     if (charEl) {
       charEl.style.left = Math.max(2, Math.min(98, pct)) + '%';
-      charEl.textContent = isErr ? '💀' : (stage === 'done' ? '🎉' : (stage === 'posting' ? '🏃' : '🧙‍♂️'));
       charEl.style.filter = 'drop-shadow(0 0 5px ' + accent + ')';
+    }
+    const lottieEl = document.getElementById('ap-status-lottie');
+    const emojiEl = document.getElementById('ap-status-emoji');
+    const heroUrl = window.AP_HERO_LOTTIE || '';
+    if (lottieEl && heroUrl && !isErr && stage !== 'done') {
+      if (lottieEl.getAttribute('src') !== heroUrl) lottieEl.load(heroUrl);
+      lottieEl.style.display = '';
+      if (emojiEl) emojiEl.style.display = 'none';
+    } else {
+      if (lottieEl) lottieEl.style.display = 'none';
+      if (emojiEl) {
+        emojiEl.style.display = '';
+        emojiEl.textContent = isErr ? '💀' : (stage === 'done' ? '🎉' : (stage === 'posting' ? '🏃' : '🧙‍♂️'));
+      }
     }
     bar.style.borderColor = accent;
     bar.style.animation = isErr ? 'none' : 'apGlow 2.4s ease-in-out infinite';
