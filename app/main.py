@@ -7050,6 +7050,26 @@ async def vdo_audio(name: str):
     return FileResponse(path, media_type="audio/mpeg")
 
 
+@app.get("/workspace/vdo/list")
+async def workspace_vdo_list(request: Request):
+    """List recently rendered clips (newest first) for the gallery."""
+    await _require_admin(request)
+    import os as _osl, re as _rel
+    d = "/app/data/vdo"
+    items = []
+    if _osl.path.isdir(d):
+        for n in _osl.listdir(d):
+            if _rel.fullmatch(r"vdo_\d+\.mp4", n):
+                try:
+                    stt = _osl.stat(_osl.path.join(d, n))
+                    items.append({"name": n, "url": f"/vdo/file/{n}",
+                                  "size": stt.st_size, "mtime": int(stt.st_mtime)})
+                except Exception:
+                    pass
+    items.sort(key=lambda x: x["mtime"], reverse=True)
+    return JSONResponse({"ok": True, "clips": items[:30]})
+
+
 @app.get("/avatar/face.jpg")
 async def avatar_face():
     """Serve the uploaded face photo (public so D-ID can fetch it as the talk source)."""

@@ -2254,7 +2254,32 @@ document.addEventListener('DOMContentLoaded', function() {
     } catch (e) {
       if (schDiv) schDiv.innerHTML = '<div style="color:#f87171">โหลดไม่สำเร็จ: ' + escapeHtml(e.message) + '</div>';
     }
+    loadAutopostClips();
     startApStatusPoll();
+  }
+
+  async function loadAutopostClips() {
+    const div = document.getElementById('autopost-clips');
+    if (!div) return;
+    div.innerHTML = '<div style="color:var(--muted-foreground);font-size:13px">กำลังโหลด…</div>';
+    try {
+      const d = await api('/workspace/vdo/list');
+      const clips = d.clips || [];
+      if (!clips.length) { div.innerHTML = '<div style="color:var(--muted-foreground);font-size:13px">ยังไม่มีคลิป</div>'; return; }
+      div.innerHTML = clips.map(c => {
+        const mb = (c.size / 1048576).toFixed(1);
+        const dt = new Date(c.mtime * 1000).toLocaleString('th-TH', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+        return '<div style="background:#1f2430;border:1px solid var(--border);border-radius:10px;overflow:hidden">' +
+          '<video src="' + escapeHtml(c.url) + '" controls preload="metadata" style="width:100%;aspect-ratio:9/16;background:#000;display:block"></video>' +
+          '<div style="padding:6px 8px;font-size:11px;color:var(--muted-foreground);display:flex;justify-content:space-between;align-items:center;gap:6px">' +
+            '<span>' + dt + ' · ' + mb + 'MB</span>' +
+            '<a href="' + escapeHtml(c.url) + '" download style="color:#22c55e;text-decoration:none;font-weight:700">⬇ โหลด</a>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+    } catch (e) {
+      div.innerHTML = '<div style="color:#f87171;font-size:13px">โหลดไม่สำเร็จ</div>';
+    }
   }
 
   function renderApPlatforms(schedPlatforms) {
@@ -2500,6 +2525,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   window.uploadFace = uploadFace;
   window.loadAutopost = loadAutopost;
+  window.loadAutopostClips = loadAutopostClips;
   window.saveAutopost = saveAutopost;
   window.runAutopostNow = runAutopostNow;
   window.resetAutopostForm = resetAutopostForm;

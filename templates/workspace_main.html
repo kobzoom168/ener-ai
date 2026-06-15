@@ -244,6 +244,12 @@
         <div style="font-weight:600;margin-bottom:10px">📅 ตารางที่ตั้งไว้</div>
         <div id="autopost-schedules" style="display:flex;flex-direction:column;gap:10px"></div>
 
+        <div style="display:flex;align-items:center;justify-content:space-between;margin:22px 0 10px">
+          <span style="font-weight:600">🎬 คลิปล่าสุด</span>
+          <button class="panel-action" onclick="loadAutopostClips()">↻</button>
+        </div>
+        <div id="autopost-clips" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px"></div>
+
         <div style="font-weight:600;margin:22px 0 10px">🧾 ประวัติการโพสต์ล่าสุด</div>
         <div id="autopost-log" style="display:flex;flex-direction:column;gap:6px"></div>
       </div>
