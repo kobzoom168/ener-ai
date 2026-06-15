@@ -2288,18 +2288,44 @@ document.addEventListener('DOMContentLoaded', function() {
       '<input type="checkbox" class="ap-day" value="' + i + '"' + (sel.includes(i) ? ' checked' : '') + '> ' + d + '</label>').join('');
   }
 
+  const AP_STAGES = [
+    { key: 'script', label: '📝 สคิป' },
+    { key: 'media', label: '🎨 VDO' },
+    { key: 'render', label: '🎬 ตัดต่อ' },
+    { key: 'posting', label: '📤 โพสต์' },
+    { key: 'done', label: '✅ Done' },
+  ];
   function renderApStatus(s) {
     const bar = document.getElementById('ap-status');
     if (!bar) return;
     const stage = (s && s.stage) || 'idle';
     if (stage === 'idle') { bar.style.display = 'none'; return; }
     bar.style.display = 'flex';
-    const colors = { script: '#3b82f6', media: '#a855f7', render: '#f59e0b', posting: '#22c55e', done: '#22c55e', error: '#ef4444' };
-    const c = colors[stage] || '#22c55e';
-    const dot = document.getElementById('ap-status-dot');
-    if (dot) { dot.style.background = c; dot.style.boxShadow = '0 0 8px ' + c; }
+    const isErr = stage === 'error';
+    let curIdx = AP_STAGES.findIndex(x => x.key === stage);
+    if (stage === 'done') curIdx = AP_STAGES.length;
+    if (isErr) curIdx = Math.max(0, AP_STAGES.findIndex(x => x.key === 'posting'));
+    const steps = document.getElementById('ap-status-steps');
+    if (steps) {
+      steps.innerHTML = AP_STAGES.map((st, i) => {
+        let col = '#3a4150', glow = '';
+        if (isErr && i >= curIdx) col = '#ef4444';
+        else if (i < curIdx) col = '#22c55e';
+        else if (i === curIdx) { col = '#f59e0b'; glow = 'box-shadow:0 0 10px #f59e0b;animation:apPulse 1s infinite'; }
+        const chip = '<span style="background:#1f2430;border:1px solid ' + col + ';color:' + col + ';border-radius:8px;padding:3px 9px;font-size:12px;font-weight:600;' + glow + '">' + st.label + '</span>';
+        return chip + (i < AP_STAGES.length - 1 ? '<span style="color:var(--muted-foreground)">→</span>' : '');
+      }).join('');
+    }
+    const pct = (s && s.pct != null) ? s.pct : 0;
+    const barEl = document.getElementById('ap-status-bar');
+    if (barEl) {
+      barEl.style.width = pct + '%';
+      barEl.style.background = isErr ? '#ef4444' : 'linear-gradient(90deg,#3b82f6,#22c55e)';
+      barEl.style.boxShadow = '0 0 10px ' + (isErr ? '#ef4444' : '#22c55e');
+    }
     const t = document.getElementById('ap-status-text'); if (t) t.textContent = (s && s.detail) || stage;
     const ti = document.getElementById('ap-status-title'); if (ti) ti.textContent = (s && s.title) ? ('· ' + s.title) : '';
+    const p = document.getElementById('ap-status-pct'); if (p) { p.textContent = pct + '%'; p.style.color = isErr ? '#ef4444' : '#22c55e'; }
     const at = document.getElementById('ap-status-at'); if (at) at.textContent = (s && s.at) || '';
   }
 

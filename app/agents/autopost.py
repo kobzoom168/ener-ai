@@ -115,6 +115,20 @@ async def _post_platform(name: str, mp4: str, caption: str) -> tuple[bool, str]:
     return False, f"ไม่รู้จักช่องทาง {name}"
 
 
+async def _send_telegram(mp4: str, caption: str) -> None:
+    """Always push the freshly made clip to Telegram so the user sees every one."""
+    try:
+        from app.core.config import settings
+        if not settings.telegram_bot_token or not settings.telegram_chat_id:
+            return
+        from telegram import Bot
+        with open(mp4, "rb") as fh:
+            await Bot(settings.telegram_bot_token).send_video(
+                chat_id=settings.telegram_chat_id, video=fh, caption=(caption or "")[:1000])
+    except Exception:
+        pass
+
+
 async def _ensure_clip(job: dict, today: str) -> tuple[str, str, str]:
     """Render the clip once per schedule per day; reuse across staggered platform times."""
     st = job.setdefault("_state", {})
@@ -127,6 +141,7 @@ async def _ensure_clip(job: dict, today: str) -> tuple[str, str, str]:
     st.update(gen_date=today, mp4=res["mp4"],
               caption=res.get("caption") or res.get("title") or "",
               title=res.get("title") or "")
+    await _send_telegram(st["mp4"], f"{st['title']}\n\n{st['caption']}".strip())
     return st["mp4"], st["caption"], st["title"]
 
 

@@ -162,12 +162,19 @@
           ประเภทเนื้อหา → AI สร้างคลิป → โพสต์อัตโนมัติ (Facebook / YouTube / TikTok — แยกเวลาได้)
         </p>
 
-        <!-- live pipeline status light -->
-        <div id="ap-status" class="surface" style="display:none;align-items:center;gap:10px;padding:10px 16px;border:1px solid var(--border);border-radius:12px;margin-bottom:14px;font-size:13px">
-          <span id="ap-status-dot" style="width:11px;height:11px;border-radius:50%;background:#22c55e;flex-shrink:0;box-shadow:0 0 8px #22c55e"></span>
-          <span id="ap-status-text" style="font-weight:600"></span>
-          <span id="ap-status-title" style="color:var(--muted-foreground)"></span>
-          <span id="ap-status-at" style="margin-left:auto;color:var(--muted-foreground);font-size:11px"></span>
+        <!-- live pipeline status box: steps + running light + percent -->
+        <style>@keyframes apPulse{0%,100%{opacity:1}50%{opacity:.45}}</style>
+        <div id="ap-status" class="surface" style="display:none;flex-direction:column;gap:8px;padding:12px 16px;border:1px solid var(--border);border-radius:12px;margin-bottom:14px">
+          <div id="ap-status-steps" style="display:flex;align-items:center;gap:5px;flex-wrap:wrap"></div>
+          <div style="height:8px;background:#141821;border-radius:6px;overflow:hidden">
+            <div id="ap-status-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#3b82f6,#22c55e);transition:width .4s;box-shadow:0 0 10px #22c55e"></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;font-size:13px">
+            <span id="ap-status-text" style="font-weight:600"></span>
+            <span id="ap-status-title" style="color:var(--muted-foreground)"></span>
+            <span id="ap-status-pct" style="margin-left:auto;font-weight:800;color:#22c55e"></span>
+            <span id="ap-status-at" style="color:var(--muted-foreground);font-size:11px"></span>
+          </div>
         </div>
 
         <div class="surface" style="padding:12px 16px;border:1px solid var(--border);border-radius:12px;margin-bottom:16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
