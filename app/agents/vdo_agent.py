@@ -485,7 +485,10 @@ def _render(audio_path: str, ass_path: str, duration: float, out_path: str,
         cmd = ["ffmpeg", "-y"]
         for p, k in items:
             if k == "image":
-                cmd += ["-loop", "1", "-t", f"{seg:.2f}", "-i", p]
+                # single frame in -> zoompan generates the motion (d frames). DON'T loop the
+                # input: a looped multi-frame still makes zoompan explode frames so only the
+                # first image ever shows.
+                cmd += ["-i", p]
             else:
                 cmd += ["-stream_loop", "-1", "-t", f"{seg:.2f}", "-i", p]
         cmd += ["-i", audio_path]
