@@ -7021,9 +7021,28 @@ async def workspace_autopost_run(request: Request):
         job = next((s for s in await autopost.load_schedules() if s.get("id") == jid), None)
     if job is None:
         job = _autopost_job_from_body(body)
+    preview = bool(body.get("preview"))
     import asyncio as _aio
-    _aio.create_task(autopost.run_job(job, source="manual"))
+    _aio.create_task(autopost.run_job(job, source="manual", preview=preview))
     return JSONResponse({"ok": True, "queued": True})
+
+
+@app.post("/workspace/vdo/delete")
+async def workspace_vdo_delete(request: Request):
+    """Delete a rendered clip from the server."""
+    await _require_admin(request)
+    import os as _osd, re as _red
+    body = await request.json()
+    name = str(body.get("name") or "").strip()
+    if not _red.fullmatch(r"vdo_\d+\.mp4", name):
+        raise HTTPException(status_code=400, detail="bad filename")
+    path = _osd.path.join("/app/data/vdo", name)
+    try:
+        if _osd.path.exists(path):
+            _osd.remove(path)
+        return JSONResponse({"ok": True})
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)[:160]})
 
 
 @app.get("/vdo/file/{name}")

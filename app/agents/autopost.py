@@ -145,16 +145,27 @@ async def _ensure_clip(job: dict, today: str) -> tuple[str, str, str]:
     return st["mp4"], st["caption"], st["title"]
 
 
-async def run_job(job: dict, source: str = "manual") -> dict:
-    """Render one clip now and post to every ENABLED platform (used by ▶ ทดสอบเลย)."""
+async def run_job(job: dict, source: str = "manual", preview: bool = False) -> dict:
+    """Render one clip now. preview=True → only render + Telegram (no posting); else post
+    to every ENABLED platform (▶ ทดสอบโพสต์เลย)."""
     label = job.get("label") or "autopost"
     now = datetime.now(_BANGKOK).strftime("%Y-%m-%d %H:%M")
     today = now.split(" ")[0]
+    # a preview always re-renders (no day cache reuse)
+    if preview:
+        job.setdefault("_state", {}).pop("gen_date", None)
     try:
         mp4, caption, title = await _ensure_clip(job, today)
     except Exception as exc:
         await set_status("error", str(exc)[:120])
         entry = {"at": now, "label": label, "ok": False, "src": source, "msg": str(exc)[:200]}
+        await _append_log(entry)
+        return entry
+
+    if preview:
+        await set_status("done", title=title)
+        entry = {"at": now, "label": label, "ok": True, "src": "preview", "title": title,
+                 "video": mp4.split("/")[-1], "msg": "📲 สร้าง+ส่ง Telegram แล้ว (ไม่โพสต์)"}
         await _append_log(entry)
         return entry
 

@@ -2269,11 +2269,15 @@ document.addEventListener('DOMContentLoaded', function() {
       div.innerHTML = clips.map(c => {
         const mb = (c.size / 1048576).toFixed(1);
         const dt = new Date(c.mtime * 1000).toLocaleString('th-TH', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-        return '<div style="background:#1f2430;border:1px solid var(--border);border-radius:10px;overflow:hidden">' +
+        const nm = escapeHtml(c.name);
+        return '<div data-clip="' + nm + '" style="background:#1f2430;border:1px solid var(--border);border-radius:10px;overflow:hidden">' +
           '<video src="' + escapeHtml(c.url) + '" controls preload="metadata" style="width:100%;aspect-ratio:9/16;background:#000;display:block"></video>' +
           '<div style="padding:6px 8px;font-size:11px;color:var(--muted-foreground);display:flex;justify-content:space-between;align-items:center;gap:6px">' +
             '<span>' + dt + ' · ' + mb + 'MB</span>' +
-            '<a href="' + escapeHtml(c.url) + '" download style="color:#22c55e;text-decoration:none;font-weight:700">⬇ โหลด</a>' +
+            '<span style="display:flex;gap:8px">' +
+              '<a href="' + escapeHtml(c.url) + '" download style="color:#22c55e;text-decoration:none;font-weight:700">⬇</a>' +
+              '<button onclick="deleteClip(\'' + nm + '\',this)" style="background:none;border:none;color:#f87171;cursor:pointer;font-size:13px;padding:0" title="ลบ">🗑</button>' +
+            '</span>' +
           '</div>' +
         '</div>';
       }).join('');
@@ -2421,6 +2425,28 @@ document.addEventListener('DOMContentLoaded', function() {
     } catch (e) { showToast('สั่งรันไม่สำเร็จ: ' + e.message); }
   }
 
+  async function runAutopostPreview() {
+    const body = _apFormBody();
+    body.preview = true;
+    const m = document.getElementById('ap-form-msg');
+    if (m) m.textContent = '⏳ กำลังสร้างคลิปทดสอบ… จะส่งเข้า Telegram (ไม่โพสต์)';
+    try {
+      await api('/workspace/autopost/run', { method: 'POST', body: JSON.stringify(body) });
+      showToast('เริ่มสร้างคลิปทดสอบ — ดูไฟสถานะ + Telegram');
+      startApStatusPoll();
+      setTimeout(loadAutopostClips, 90000);
+    } catch (e) { showToast('สั่งรันไม่สำเร็จ: ' + e.message); }
+  }
+
+  async function deleteClip(name, btn) {
+    if (!confirm('ลบคลิปนี้ออกจาก server?')) return;
+    try {
+      await api('/workspace/vdo/delete', { method: 'POST', body: JSON.stringify({ name }) });
+      const card = btn.closest('[data-clip]'); if (card) card.remove();
+      showToast('ลบคลิปแล้ว 🗑');
+    } catch (e) { showToast('ลบไม่สำเร็จ: ' + e.message); }
+  }
+
   function editAutopost(id) {
     const j = _apSchedules.find(s => s.id === id);
     if (!j) return;
@@ -2526,6 +2552,8 @@ document.addEventListener('DOMContentLoaded', function() {
   window.uploadFace = uploadFace;
   window.loadAutopost = loadAutopost;
   window.loadAutopostClips = loadAutopostClips;
+  window.runAutopostPreview = runAutopostPreview;
+  window.deleteClip = deleteClip;
   window.saveAutopost = saveAutopost;
   window.runAutopostNow = runAutopostNow;
   window.resetAutopostForm = resetAutopostForm;
