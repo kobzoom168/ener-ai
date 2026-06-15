@@ -2361,19 +2361,24 @@ document.addEventListener('DOMContentLoaded', function() {
       charEl.style.left = Math.max(2, Math.min(98, pct)) + '%';
       charEl.style.filter = 'drop-shadow(0 0 5px ' + accent + ')';
     }
+    const pixelEl = document.getElementById('ap-status-pixel');
     const lottieEl = document.getElementById('ap-status-lottie');
     const emojiEl = document.getElementById('ap-status-emoji');
     const heroUrl = window.AP_HERO_LOTTIE || '';
-    if (lottieEl && heroUrl && !isErr && stage !== 'done') {
+    // priority: error → 💀 ; Lottie if configured ; else the PixelLab dragon sprite
+    if (isErr) {
+      if (pixelEl) pixelEl.style.display = 'none';
+      if (lottieEl) lottieEl.style.display = 'none';
+      if (emojiEl) { emojiEl.style.display = ''; emojiEl.textContent = '💀'; }
+    } else if (heroUrl) {
       if (lottieEl.getAttribute('src') !== heroUrl) lottieEl.load(heroUrl);
-      lottieEl.style.display = '';
+      if (lottieEl) lottieEl.style.display = '';
+      if (pixelEl) pixelEl.style.display = 'none';
       if (emojiEl) emojiEl.style.display = 'none';
     } else {
+      if (pixelEl) pixelEl.style.display = 'block';
       if (lottieEl) lottieEl.style.display = 'none';
-      if (emojiEl) {
-        emojiEl.style.display = '';
-        emojiEl.textContent = isErr ? '💀' : (stage === 'done' ? '🎉' : (stage === 'posting' ? '🏃' : '🧙‍♂️'));
-      }
+      if (emojiEl) emojiEl.style.display = 'none';
     }
     bar.style.borderColor = accent;
     bar.style.animation = isErr ? 'none' : 'apGlow 2.4s ease-in-out infinite';
