@@ -804,9 +804,18 @@ async def generate_mystery_script(topic: str = "", title: str = "", summary: str
         '"video_queries": ["คำค้นวิดีโอสต็อกจริงสั้นๆ ภาษาอังกฤษ 1-3 คำ เน้นบรรยากาศไทย/เอเชีย ใส่คำว่า Thai หรือ Thailand เมื่อเข้ากับเรื่อง เช่น Thai temple, Thai monk, Thailand misty forest, incense smoke shrine, Thai river mist", "...", "..."], '
         '"ai_video_prompt": "พรอมต์ภาษาอังกฤษ 1 ประโยค สำหรับ AI สร้างวิดีโอ \\"ฉากเด็ด\\" ที่สต็อกไม่มี (เช่น พญานาค/ของขลังเรืองแสง/ควันวนรอบพระ) cinematic ขลังๆ"}'
     )
-    data = _parse_json(await _or_chat(SCRIPT_MODEL, system, prompt, 10000))
-    lines = [_strip_quotes(str(x)) for x in (data.get("lines") or []) if str(x).strip()][:9]
-    lines = [x for x in lines if x]
+    # MiniMax M3 is a reasoning model: with the long beat/hook system prompt it can spend
+    # its whole budget thinking and emit truncated/empty JSON. Give it room + retry once with
+    # a terse "JSON only" nudge so the default (no-topic) path doesn't fall back to a 1-liner.
+    data, lines = {}, []
+    for attempt in range(2):
+        p = prompt if attempt == 0 else (prompt + "\n\nตอบ JSON ที่ครบถ้วนทันที สั้นกระชับ ไม่ต้องอธิบาย")
+        data = _parse_json(await _or_chat(SCRIPT_MODEL, system, p, 16000))
+        lines = [_strip_quotes(str(x)) for x in (data.get("lines") or []) if str(x).strip()][:9]
+        lines = [x for x in lines if x]
+        if lines:
+            break
+        await _vlog("↻ บทยังว่าง ลองสร้างใหม่อีกครั้ง…")
     say_raw = [_strip_quotes(str(x)) for x in (data.get("lines_say") or []) if str(x).strip()]
     out_title = _strip_quotes(str(data.get("title") or title or topic or "เรื่องลึกลับ"))[:60]
     if not lines:
