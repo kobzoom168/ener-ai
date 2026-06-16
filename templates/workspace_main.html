@@ -200,9 +200,13 @@
 
         <!-- AI crew: each agent + a model selector -->
         <div class="surface" style="padding:14px 16px;border:1px solid var(--border);border-radius:12px;margin-bottom:16px">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:8px;flex-wrap:wrap">
             <div style="font-weight:600;font-size:13px">🤖 ทีม AI — เลือกโมเดลต่อ agent</div>
-            <button class="panel-action" onclick="loadVdoCrew()">↻</button>
+            <div style="display:flex;gap:8px;align-items:center">
+              <button class="panel-action" onclick="applyVdoRecommended()" title="ตั้งทุก agent เป็นตัวที่แนะนำ">⭐ ใช้ชุดแนะนำ</button>
+              <button class="panel-action" style="background:#7c3aed;color:#fff" onclick="saveVdoCrew(this)">💾 บันทึก</button>
+              <button class="panel-action" onclick="loadVdoCrew()">↻</button>
+            </div>
           </div>
           <div id="vdo-crew" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px">
             <div style="color:var(--muted-foreground);font-size:13px">กำลังโหลดทีม…</div>

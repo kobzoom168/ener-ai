@@ -2263,48 +2263,87 @@ document.addEventListener('DOMContentLoaded', function() {
     startApStatusPoll();
   }
 
+  function _vdoEnsureOption(sel, id, suffix) {
+    // add an <option> for `id` if the dropdown doesn't already have it (e.g. current/recommended)
+    if (!id) return;
+    if (![].some.call(sel.options, o => o.value === id)) {
+      const o = document.createElement('option');
+      o.value = id; o.textContent = id + (suffix || '');
+      sel.insertBefore(o, sel.firstChild);
+    }
+  }
+
   async function loadVdoCrew() {
     const box = document.getElementById('vdo-crew');
     if (!box) return;
     try {
       const d = await api('/workspace/vdo/agents');
       const models = d.models || [];
+      const optsHtml = models.map(m => '<option value="' + escapeHtml(m.id) + '">' + escapeHtml(m.label) + '</option>').join('');
       box.innerHTML = (d.agents || []).map(a => {
         const head = '<div style="font-size:13px;font-weight:600">' + a.emoji + ' ' + escapeHtml(a.label) + '</div>' +
           '<div style="font-size:11px;color:var(--muted-foreground);margin:2px 0 8px;min-height:28px">' + escapeHtml(a.role) + '</div>';
-        let ctrl;
-        if (a.model_backed) {
-          let opts = models.map(m => '<option value="' + escapeHtml(m.id) + '">' + escapeHtml(m.label) + '</option>').join('');
-          // make sure the current model is selectable even if not in the list
-          if (a.model && !models.some(m => m.id === a.model)) opts = '<option value="' + escapeHtml(a.model) + '">' + escapeHtml(a.model) + ' (ปัจจุบัน)</option>' + opts;
-          ctrl = '<select data-agent="' + a.key + '" onchange="setVdoAgentModel(this)" style="width:100%;background:#1f2430;border:1px solid var(--border);border-radius:7px;padding:6px 8px;color:var(--foreground);font-size:12px">' + opts + '</select>';
-        } else {
-          ctrl = '<div style="font-size:12px;color:#a78bfa;padding:6px 8px;background:#1f2430;border-radius:7px;text-align:center">⚙️ logic</div>';
+        if (!a.model_backed) {
+          return '<div style="background:#161b26;border:1px solid var(--border);border-radius:10px;padding:11px 12px">' + head +
+            '<div style="font-size:12px;color:#a78bfa;padding:6px 8px;background:#1f2430;border-radius:7px;text-align:center">⚙️ logic</div></div>';
         }
-        return '<div style="background:#161b26;border:1px solid var(--border);border-radius:10px;padding:11px 12px">' + head + ctrl + '</div>';
+        const sel = '<select data-agent="' + a.key + '" data-rec="' + escapeHtml(a.recommend || '') + '" style="width:100%;background:#1f2430;border:1px solid var(--border);border-radius:7px;padding:6px 8px;color:var(--foreground);font-size:12px">' + optsHtml + '</select>';
+        const rec = a.recommend
+          ? '<div style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:10.5px;color:#fbbf24">' +
+              '<span title="' + escapeHtml(a.why || '') + '">⭐ แนะนำ: ' + escapeHtml(a.recommend) + '</span>' +
+              '<button onclick="applyVdoRecommended(\'' + a.key + '\')" style="background:none;border:1px solid #fbbf2455;color:#fbbf24;border-radius:5px;font-size:10px;padding:1px 6px;cursor:pointer">ใช้</button>' +
+            '</div>' + (a.why ? '<div style="font-size:10px;color:var(--muted-foreground);margin-top:3px">' + escapeHtml(a.why) + '</div>' : '')
+          : '';
+        return '<div style="background:#161b26;border:1px solid var(--border);border-radius:10px;padding:11px 12px">' + head + sel + rec + '</div>';
       }).join('');
-      // set current selection per agent
+      // set current + ensure current/recommended options exist
       (d.agents || []).forEach(a => {
         if (!a.model_backed) return;
         const sel = box.querySelector('select[data-agent="' + a.key + '"]');
-        if (sel && a.model) sel.value = a.model;
+        if (!sel) return;
+        _vdoEnsureOption(sel, a.recommend, ' ⭐แนะนำ');
+        _vdoEnsureOption(sel, a.model, ' (ปัจจุบัน)');
+        if (a.model) sel.value = a.model;
       });
     } catch (e) {
       box.innerHTML = '<div style="color:#f87171;font-size:13px">โหลดทีม AI ไม่ได้</div>';
     }
   }
 
-  async function setVdoAgentModel(sel) {
-    const agent = sel.getAttribute('data-agent');
+  // set one agent (key) — or all (no key) — to its recommended model in the UI (not saved yet)
+  function applyVdoRecommended(key) {
+    const box = document.getElementById('vdo-crew');
+    if (!box) return;
+    const sels = box.querySelectorAll('select[data-agent]');
+    let n = 0;
+    sels.forEach(sel => {
+      if (key && sel.getAttribute('data-agent') !== key) return;
+      const rec = sel.getAttribute('data-rec');
+      if (rec) { _vdoEnsureOption(sel, rec, ' ⭐แนะนำ'); sel.value = rec; n++; }
+    });
+    if (n) showToast('ตั้งเป็นตัวแนะนำแล้ว (' + n + ') — กด 💾 บันทึก');
+  }
+
+  // save all agents' currently-selected models
+  async function saveVdoCrew(btn) {
+    const box = document.getElementById('vdo-crew');
+    if (!box) return;
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ กำลังบันทึก…'; }
     try {
-      await api('/workspace/vdo/agents/model', { method: 'POST', body: JSON.stringify({ agent: agent, model: sel.value }) });
-      showToast('✅ เปลี่ยนโมเดล ' + agent + ' แล้ว');
+      const sels = box.querySelectorAll('select[data-agent]');
+      for (const sel of sels) {
+        await api('/workspace/vdo/agents/model', { method: 'POST', body: JSON.stringify({ agent: sel.getAttribute('data-agent'), model: sel.value }) });
+      }
+      showToast('✅ บันทึกโมเดลทีม AI แล้ว');
     } catch (e) {
-      showToast('❌ ' + ((e && e.message) || 'เปลี่ยนไม่สำเร็จ'));
+      showToast('❌ ' + ((e && e.message) || 'บันทึกไม่สำเร็จ'));
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '💾 บันทึก'; }
     }
   }
   window.loadVdoCrew = loadVdoCrew;
-  window.setVdoAgentModel = setVdoAgentModel;
+  window.applyVdoRecommended = applyVdoRecommended;
+  window.saveVdoCrew = saveVdoCrew;
 
   function renderApChannels() {
     const sel = document.getElementById('ap-channel');
