@@ -36,7 +36,12 @@ def platform_status() -> dict:
         fb = facebook_client.enabled()
     except Exception:
         fb = False
-    return {"facebook": fb, "youtube": False, "tiktok": False}
+    try:
+        from app.agents import youtube_client
+        yt = youtube_client.enabled()
+    except Exception:
+        yt = False
+    return {"facebook": fb, "youtube": yt, "tiktok": False}
 
 
 def _migrate(s: dict) -> dict:
@@ -104,14 +109,18 @@ async def _render_for(job: dict) -> dict:
     return await make_channel_short(get_profile(channel), topic, tone=tone)  # topic optional
 
 
-async def _post_platform(name: str, mp4: str, caption: str) -> tuple[bool, str]:
+async def _post_platform(name: str, mp4: str, caption: str, title: str = "") -> tuple[bool, str]:
     if name == "facebook":
         from app.agents import facebook_client
         if facebook_client.enabled():
             return await facebook_client.post_video(mp4, caption)
         return False, "Facebook ยังไม่ได้ตั้ง token"
     if name == "youtube":
-        return False, "YouTube ยังไม่เชื่อม"
+        from app.agents import youtube_client
+        if youtube_client.enabled():
+            yt_title = (title or caption or "Short").strip()[:90]
+            return await youtube_client.upload_video(mp4, yt_title, caption)
+        return False, "YouTube ยังไม่เชื่อม (เชื่อมที่ /admin/youtube)"
     if name == "tiktok":
         return False, "TikTok ยังไม่เชื่อม"
     return False, f"ไม่รู้จักช่องทาง {name}"
@@ -177,7 +186,7 @@ async def run_job(job: dict, source: str = "manual", preview: bool = False) -> d
     for p in plats:
         await set_status("posting", f"{PLATFORM_LABEL.get(p['name'], p['name'])}", title)
         try:
-            ok, msg = await _post_platform(p["name"], mp4, caption)
+            ok, msg = await _post_platform(p["name"], mp4, caption, title)
         except Exception as exc:
             ok, msg = False, str(exc)[:160]
         await log_line(f"📤 {PLATFORM_LABEL.get(p['name'], p['name'])}: {'✅' if ok else '❌'} {msg}")
@@ -224,7 +233,7 @@ async def run_due() -> None:
         for p in due:
             await set_status("posting", PLATFORM_LABEL.get(p["name"], p["name"]), title)
             try:
-                ok, msg = await _post_platform(p["name"], mp4, caption)
+                ok, msg = await _post_platform(p["name"], mp4, caption, title)
             except Exception as exc:
                 ok, msg = False, str(exc)[:160]
             await log_line(f"📤 {PLATFORM_LABEL.get(p['name'], p['name'])}: {'✅' if ok else '❌'} {msg}")

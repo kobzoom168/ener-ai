@@ -3600,6 +3600,7 @@ def build_admin_config_html(configs: list[dict]) -> HTMLResponse:
   <div class="test-section">
     <h3 style="margin:0 0 12px">🧪 Test Connections</h3>
     <button class="test-btn" onclick="testLine()">📱 ทดสอบ LINE</button>
+    <a class="test-btn" style="text-decoration:none;display:inline-block;background:#dc2626" href="/admin/youtube">▶️ ตั้งค่า / เชื่อม YouTube</a>
     <div id="test-result"></div>
   </div>
 
@@ -11754,6 +11755,175 @@ async def admin_config_page(request: Request):
     await _verify_admin_session(request)
     configs = await get_all_config()
     return build_admin_config_html(configs)
+
+
+def _yt_redirect_uri(request: Request, configured: str) -> str:
+    """The redirect URI to use for the OAuth flow. Prefer the value the user registered in
+    Google Cloud (config); else derive one from the request, forcing https (Google rejects
+    http for non-localhost, and we sit behind a TLS proxy that may report http internally)."""
+    if configured.strip():
+        return configured.strip()
+    base = str(request.base_url).rstrip("/")
+    if base.startswith("http://") and "localhost" not in base and "127.0.0.1" not in base:
+        base = "https://" + base[len("http://"):]
+    return base + "/admin/youtube/callback"
+
+
+@app.get("/admin/youtube")
+async def admin_youtube_page(request: Request):
+    await _verify_admin_session(request)
+    from app.agents import youtube_client
+    cid, csec, redir, priv = await youtube_client._cfg()
+    connected = youtube_client.enabled()
+    chan_msg = ""
+    if connected:
+        ok, chan_msg = await youtube_client.check()
+        connected = ok
+    effective_redirect = _yt_redirect_uri(request, redir)
+    status_html = (
+        f'<span style="color:#22c55e">✅ เชื่อมแล้ว — {escape(chan_msg)}</span>'
+        if connected else
+        ('<span style="color:#f59e0b">⚠️ ยังไม่เชื่อม</span>' if (cid and csec)
+         else '<span style="color:#ef4444">⛔ ยังไม่ได้ตั้ง Client ID / Secret</span>')
+    )
+    can_connect = bool(cid and csec)
+    connect_cls = "" if can_connect else " ghost"
+    connect_guard = "" if can_connect else (
+        "onclick=\"alert('ตั้ง Client ID/Secret แล้วกด บันทึก ก่อน');return false;\"")
+    priv_opts = "".join(
+        f'<option value="{p}"{" selected" if priv == p else ""}>{p}</option>'
+        for p in ("public", "unlisted", "private"))
+    html = f"""<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8">
+<title>YouTube — Ener-AI Admin</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+ *{{box-sizing:border-box;margin:0;padding:0}}
+ body{{background:#0a0a0a;color:#e5e7eb;font-family:system-ui,sans-serif;min-height:100vh}}
+ .header{{background:#111;border-bottom:1px solid #222;padding:16px 24px;display:flex;gap:16px;align-items:center}}
+ .header h1{{font-size:1.2rem;font-weight:700;color:#f9fafb}}
+ .back-btn{{background:#1e293b;color:#94a3b8;border:1px solid #334;padding:6px 14px;border-radius:6px;text-decoration:none;font-size:.85rem}}
+ .container{{max-width:760px;margin:32px auto;padding:0 24px}}
+ .card{{background:#111;border:1px solid #1f2937;border-radius:12px;padding:24px;margin-bottom:20px}}
+ .card h2{{font-size:1rem;color:#f9fafb;margin-bottom:6px}}
+ .card p{{font-size:.82rem;color:#6b7280;margin-bottom:16px;line-height:1.6}}
+ label{{display:block;font-size:.8rem;color:#9ca3af;margin:12px 0 4px}}
+ input,select{{width:100%;background:#1f2937;color:#e5e7eb;border:1px solid #374151;padding:9px 11px;border-radius:7px;font-size:.85rem}}
+ input:focus,select:focus{{outline:none;border-color:#6366f1}}
+ .btn{{display:inline-block;background:#6366f1;color:#fff;border:none;padding:10px 18px;border-radius:7px;font-size:.85rem;cursor:pointer;text-decoration:none;margin-top:16px}}
+ .btn.ghost{{background:#1e293b;color:#e2e8f0;border:1px solid #334}}
+ .btn.red{{background:#dc2626}}
+ .status{{font-size:.9rem;padding:10px 0}}
+ code{{background:#1f2937;color:#fbbf24;padding:2px 6px;border-radius:4px;font-size:.8rem;word-break:break-all}}
+ .toast{{position:fixed;bottom:24px;right:24px;background:#1e293b;border:1px solid #334;color:#e2e8f0;padding:12px 20px;border-radius:8px;font-size:.9rem;display:none;z-index:99}}
+</style></head><body>
+<div class="header"><a class="back-btn" href="/admin/config">← Config</a><h1>▶️ เชื่อมต่อ YouTube</h1></div>
+<div class="container">
+  <div class="card">
+    <h2>สถานะ</h2>
+    <div class="status">{status_html}</div>
+    <button class="btn ghost" onclick="ytTest()">🧪 ทดสอบการเชื่อมต่อ</button>
+    <a class="btn{connect_cls}" href="/admin/youtube/connect" {connect_guard}>
+       🔗 Connect / เชื่อมใหม่</a>
+  </div>
+  <div class="card">
+    <h2>OAuth Credentials</h2>
+    <p>สร้างที่ Google Cloud Console → APIs &amp; Services → Credentials → OAuth client ID (ชนิด
+       <b>Web application</b>) แล้วเปิดใช้ <b>YouTube Data API v3</b>.<br>
+       ต้องใส่ <b>Authorized redirect URI</b> ใน Google ให้ตรงกับช่องล่างนี้เป๊ะ — ตอนนี้ระบบจะใช้:<br>
+       <code>{escape(effective_redirect)}</code></p>
+    <label>Client ID</label>
+    <input id="cid" value="{escape(cid)}" placeholder="xxxxx.apps.googleusercontent.com">
+    <label>Client Secret</label>
+    <input id="csec" value="{escape(csec)}" placeholder="GOCSPX-...">
+    <label>Redirect URI (ต้องตรงกับที่ลงทะเบียนใน Google — เว้นว่างได้ถ้าใช้ค่าที่ระบบเดาให้ด้านบน)</label>
+    <input id="redir" value="{escape(redir)}" placeholder="https://my-ener.uk/admin/youtube/callback">
+    <label>Privacy เริ่มต้นของคลิปที่อัป</label>
+    <select id="priv">{priv_opts}</select>
+    <button class="btn" onclick="ytSave()">💾 บันทึก</button>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+function toast(m){{var t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(function(){{t.style.display='none'}},3500);}}
+async function setCfg(k,v){{await fetch('/admin/config/update',{{method:'POST',headers:{{'Content-Type':'application/json'}},credentials:'same-origin',body:JSON.stringify({{key:k,value:v}})}});}}
+async function ytSave(){{
+  await setCfg('youtube_client_id',document.getElementById('cid').value.trim());
+  await setCfg('youtube_client_secret',document.getElementById('csec').value.trim());
+  await setCfg('youtube_redirect_uri',document.getElementById('redir').value.trim());
+  await setCfg('youtube_privacy',document.getElementById('priv').value);
+  toast('บันทึกแล้ว ✅ — ถ้ายังไม่เชื่อม กด Connect ได้เลย');
+  setTimeout(function(){{location.reload()}},1200);
+}}
+async function ytTest(){{
+  toast('กำลังทดสอบ…');
+  var r=await fetch('/admin/youtube/test',{{method:'POST',credentials:'same-origin'}});
+  var d=await r.json();
+  toast((d.ok?'✅ ':'❌ ')+(d.message||''));
+}}
+</script></body></html>"""
+    return HTMLResponse(html)
+
+
+@app.post("/admin/youtube/save")
+async def admin_youtube_save(request: Request):
+    await _verify_admin_session(request)
+    body = await request.json()
+    for k in ("youtube_client_id", "youtube_client_secret", "youtube_redirect_uri", "youtube_privacy"):
+        if k in body:
+            await set_config(k, str(body.get(k, "")).strip())
+    return JSONResponse({"ok": True})
+
+
+@app.get("/admin/youtube/connect")
+async def admin_youtube_connect(request: Request):
+    await _verify_admin_session(request)
+    from app.agents import youtube_client
+    cid, csec, redir, _ = await youtube_client._cfg()
+    if not cid or not csec:
+        return HTMLResponse(
+            "<h3 style='font-family:system-ui;padding:40px'>⛔ ยังไม่ได้ตั้ง Client ID / Secret — "
+            "<a href='/admin/youtube'>กลับไปตั้งค่า</a></h3>")
+    redirect_uri = _yt_redirect_uri(request, redir)
+    try:
+        url = await youtube_client.auth_url(redirect_uri, state="ener-yt")
+    except Exception as exc:
+        return HTMLResponse(
+            f"<h3 style='font-family:system-ui;padding:40px'>สร้างลิงก์เชื่อมไม่สำเร็จ: "
+            f"{escape(str(exc)[:300])}<br><a href='/admin/youtube'>กลับ</a></h3>")
+    return RedirectResponse(url, status_code=303)
+
+
+@app.get("/admin/youtube/callback")
+async def admin_youtube_callback(request: Request):
+    await _verify_admin_session(request)
+    from app.agents import youtube_client
+    err = request.query_params.get("error", "")
+    code = request.query_params.get("code", "")
+    if err or not code:
+        return HTMLResponse(
+            f"<h3 style='font-family:system-ui;padding:40px'>เชื่อม YouTube ไม่สำเร็จ: "
+            f"{escape(err or 'ไม่มี code')}<br><a href='/admin/youtube'>กลับ</a></h3>")
+    _, _, redir, _ = await youtube_client._cfg()
+    redirect_uri = _yt_redirect_uri(request, redir)
+    try:
+        await youtube_client.exchange_code(code, redirect_uri)
+        ok, msg = await youtube_client.check()
+    except Exception as exc:
+        return HTMLResponse(
+            f"<h3 style='font-family:system-ui;padding:40px'>แลกโทเคนไม่สำเร็จ: "
+            f"{escape(str(exc)[:400])}<br><a href='/admin/youtube'>กลับ</a></h3>")
+    icon = "✅" if ok else "⚠️"
+    return HTMLResponse(
+        f"<h3 style='font-family:system-ui;padding:40px'>{icon} {escape(msg)}<br>"
+        f"<a href='/admin/youtube'>กลับไปหน้า YouTube</a></h3>")
+
+
+@app.post("/admin/youtube/test")
+async def admin_youtube_test(request: Request):
+    await _verify_admin_session(request)
+    from app.agents import youtube_client
+    ok, msg = await youtube_client.check()
+    return JSONResponse({"ok": ok, "message": msg})
 
 
 @app.get("/admin/pipeline-metrics")
