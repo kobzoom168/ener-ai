@@ -1210,22 +1210,40 @@ async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: 
         await log_line(f"✅ ได้ภาพ {len(imgs)}/{n} รูป")
         items = [(p, "image") for p in imgs]
     else:
+        from app.agents import aivideo
+        items = []
+        # 🎬 AI-generated video shots (fal) for the scenes the Director flagged "aivideo".
+        # Count = config override → else the Director's plan → capped for cost.
+        plan = script.get("shot_plan") or []
+        plan_ai_notes = [s.get("note") for s in plan if s.get("medium") == "aivideo" and s.get("note")]
+        try:
+            from app.core.database import get_config
+            cfg_n = (await get_config("vdo_ai_video_count", "")).strip()
+            fal_model = (await get_config("FAL_VIDEO_MODEL", "")).strip()
+        except Exception:
+            cfg_n, fal_model = "", ""
+        ai_n = int(cfg_n) if cfg_n.isdigit() else (len(plan_ai_notes) or 1)
+        ai_n = max(0, min(ai_n, 3))  # hard cost cap
+        if aivideo.enabled() and ai_n > 0:
+            prompts = (plan_ai_notes or [script.get("ai_video_prompt") or script["title"]])
+            prompts = (prompts * ai_n)[:ai_n]
+            await log_line(f"🎬 AI สร้างวิดีโอ {len(prompts)} ช็อต ({fal_model or aivideo.current_model()})…")
+            avs = await asyncio.gather(*[
+                aivideo.generate_ai_video(p, os.path.join(VDO_DIR, f"hero_{int(time.time())}_{i}.mp4"), fal_model)
+                for i, p in enumerate(prompts)])
+            got = [(v, "video") for v in avs if v]
+            items += got
+            await log_line(f"✅ ได้ AI video {len(got)}/{len(prompts)} ช็อต")
+        # real stock video + AI image stills for the remaining scenes (keep clip dynamic: ~5 total)
+        n_fill = max(3, 5 - len(items))
         slots = []
-        for i in range(3):
+        for i in range(n_fill):
             vq = vqs[i] if i < len(vqs) else (vqs[0] if vqs else "")
             ip = imps[i] if i < len(imps) else (imps[0] if imps else script["title"])
             slots.append((vq, ip, i))
-        items = list(await asyncio.gather(*[_bg_item(vq, ip, i) for vq, ip, i in slots]))
-        try:  # one "hero" AI-video scene when fal.ai is configured (video/mixed mode only)
-            from app.agents import aivideo
-            hero = script.get("ai_video_prompt") or ""
-            if aivideo.enabled() and hero:
-                hv = await aivideo.generate_ai_video(hero, os.path.join(VDO_DIR, f"hero_{int(time.time())}.mp4"))
-                if hv:
-                    items.insert(1 if len(items) >= 2 else 0, (hv, "video"))
-                    items = items[:3]
-        except Exception:
-            pass
+        fill = list(await asyncio.gather(*[_bg_item(vq, ip, i) for vq, ip, i in slots]))
+        items += [it for it in fill if it]
+        items = items[:6]
 
     items = [it for it in items if it]
     if not items:  # last-resort so the clip still ships

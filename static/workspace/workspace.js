@@ -2326,6 +2326,20 @@ document.addEventListener('DOMContentLoaded', function() {
       const d = await api('/workspace/vdo/agents');
       const bgSel = document.getElementById('vdo-bgmode');
       if (bgSel && d.bg_mode) bgSel.value = d.bg_mode;
+      // AI-video (fal) controls
+      const fstat = document.getElementById('vdo-fal-status');
+      if (fstat) fstat.innerHTML = d.fal_enabled
+        ? '<span style="color:#22c55e">✅ พร้อม</span>'
+        : '<span style="color:#f59e0b">⚠️ ใส่ FAL_KEY ก่อน (กล่อง 🔑)</span>';
+      const fmodel = document.getElementById('vdo-fal-model');
+      if (fmodel) {
+        fmodel.innerHTML = (d.fal_models || []).map(m => '<option value="' + escapeHtml(m.id) + '">' + escapeHtml(m.label) + ' · ' + escapeHtml(m.cost || '') + '</option>').join('');
+        if (d.fal_model && ![].some.call(fmodel.options, o => o.value === d.fal_model))
+          fmodel.insertBefore(new Option(d.fal_model, d.fal_model), fmodel.firstChild);
+        if (d.fal_model) fmodel.value = d.fal_model;
+      }
+      const acount = document.getElementById('vdo-ai-count');
+      if (acount && d.ai_video_count) acount.value = d.ai_video_count;
       const models = d.models || [];
       const optsHtml = models.map(m => '<option value="' + escapeHtml(m.id) + '">' + escapeHtml(m.label) + '</option>').join('');
       box.innerHTML = (d.agents || []).map(a => {
@@ -2399,10 +2413,19 @@ document.addEventListener('DOMContentLoaded', function() {
       showToast('❌ ' + ((e && e.message) || 'เปลี่ยนไม่สำเร็จ'));
     }
   }
+  async function saveVideoCfg() {
+    const m = (document.getElementById('vdo-fal-model') || {}).value || '';
+    const c = (document.getElementById('vdo-ai-count') || {}).value || '';
+    try {
+      await api('/workspace/vdo/videocfg', { method: 'POST', body: JSON.stringify({ model: m, count: c }) });
+      showToast('✅ ตั้งค่า AI วิดีโอแล้ว (' + c + ' ช็อต)');
+    } catch (e) { showToast('❌ ' + ((e && e.message) || 'บันทึกไม่สำเร็จ')); }
+  }
   window.loadVdoCrew = loadVdoCrew;
   window.applyVdoRecommended = applyVdoRecommended;
   window.saveVdoCrew = saveVdoCrew;
   window.setVdoBgMode = setVdoBgMode;
+  window.saveVideoCfg = saveVideoCfg;
 
   function renderApChannels() {
     const sel = document.getElementById('ap-channel');

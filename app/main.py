@@ -7206,7 +7206,37 @@ async def workspace_vdo_agents(request: Request):
     except Exception:
         opts = []
     bg_mode = (await get_config("vdo_bg_mode", "")).strip() or "image"
-    return JSONResponse({"agents": agents, "models": opts, "bg_mode": bg_mode})
+    # AI video (fal) controls
+    import os as _ov
+    try:
+        from app.agents import aivideo
+        fal_enabled = aivideo.enabled()
+        fal_models = aivideo.MODELS
+    except Exception:
+        fal_enabled, fal_models = False, []
+    fal_model = (await get_config("FAL_VIDEO_MODEL", "")).strip() or _ov.environ.get("FAL_VIDEO_MODEL", "") or "fal-ai/ltx-video"
+    ai_video_count = (await get_config("vdo_ai_video_count", "")).strip() or "1"
+    return JSONResponse({"agents": agents, "models": opts, "bg_mode": bg_mode,
+                         "fal_enabled": fal_enabled, "fal_models": fal_models,
+                         "fal_model": fal_model, "ai_video_count": ai_video_count})
+
+
+@app.post("/workspace/vdo/videocfg")
+async def workspace_vdo_videocfg(request: Request):
+    """Set the fal AI-video model + how many AI-video shots per clip (0-3)."""
+    await _require_admin(request)
+    import os as _ov
+    body = await request.json()
+    if "model" in body:
+        m = str(body.get("model", "")).strip()
+        await set_config("FAL_VIDEO_MODEL", m)
+        if m:
+            _ov.environ["FAL_VIDEO_MODEL"] = m
+    if "count" in body:
+        c = str(body.get("count", "")).strip()
+        if c.isdigit() and 0 <= int(c) <= 3:
+            await set_config("vdo_ai_video_count", c)
+    return JSONResponse({"ok": True})
 
 
 @app.post("/workspace/vdo/bgmode")
