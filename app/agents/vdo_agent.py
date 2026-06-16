@@ -746,6 +746,30 @@ async def _render_clip(title: str, lines: list[str], bg_images: list[str] | None
             "talking_head": bool(pip_video)}
 
 
+def _sweep_intermediates(max_age_sec: int = 1800) -> None:
+    """Delete leftover render intermediates (stock clips, bg images, _bg/_pip/_seg, ass)
+    older than max_age_sec. The happy path already cleans these; this catches the ones a
+    crashed/interrupted render leaves behind so data/vdo doesn't bloat. Never touches the
+    final vdo_<stamp>.mp4 clips shown in the gallery."""
+    try:
+        now = time.time()
+        for n in os.listdir(VDO_DIR):
+            if re.fullmatch(r"vdo_\d+\.mp4", n):
+                continue  # keep final clips
+            is_junk = (n.startswith(("sv_", "bg_", "hero_")) or n.endswith(("_bg.mp4", "_pip.mp4", ".ass"))
+                       or re.search(r"_seg\d+\.mp3$", n) or n.endswith(".mp3"))
+            if not is_junk:
+                continue
+            p = os.path.join(VDO_DIR, n)
+            try:
+                if now - os.path.getmtime(p) > max_age_sec:
+                    os.remove(p)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 async def _vlog(msg: str) -> None:
     try:
         from app.core.pipeline_status import log_line
@@ -916,6 +940,7 @@ async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: 
     """
     from app.core.pipeline_status import set_status, log_line, clear_console
     tone = tone or profile.default_tone
+    _sweep_intermediates()  # tidy any leftover render junk from a previous crashed run
     await clear_console()
     await log_line(f"🚀 เริ่มสร้างคลิป — {profile.name}")
     await set_status("script")

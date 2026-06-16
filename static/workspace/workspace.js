@@ -2299,7 +2299,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const dt = new Date(c.mtime * 1000).toLocaleString('th-TH', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
         const nm = escapeHtml(c.name);
         return '<div data-clip="' + nm + '" style="background:#1f2430;border:1px solid var(--border);border-radius:10px;overflow:hidden">' +
-          '<video src="' + escapeHtml(c.url) + '" controls preload="metadata" style="width:100%;aspect-ratio:9/16;background:#000;display:block"></video>' +
+          '<video src="' + escapeHtml(c.url) + '" controls preload="none" style="width:100%;aspect-ratio:9/16;background:#000;display:block"></video>' +
           '<div style="padding:6px 8px;font-size:11px;color:var(--muted-foreground);display:flex;justify-content:space-between;align-items:center;gap:6px">' +
             '<span>' + dt + ' · ' + mb + 'MB</span>' +
             '<span style="display:flex;gap:8px">' +
