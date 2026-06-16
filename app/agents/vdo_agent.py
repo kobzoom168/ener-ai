@@ -835,7 +835,11 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
         f'"caption": "แคปชั่นโพสต์ + #แฮชแท็ก เช่น {profile.caption_hint}", '
         f'"image_prompts": ["ภาพพื้นหลัง 5 ฉากเป็นภาษาอังกฤษ ไล่ตามเนื้อหาทีละช่วง {profile.visual_style}", "...", "...", "...", "..."], '
         f'"video_queries": ["คำค้นวิดีโอสต็อกจริงสั้นๆ ภาษาอังกฤษ 1-3 คำ {profile.video_query_hint}", "...", "..."], '
-        f'"ai_video_prompt": "พรอมต์ภาษาอังกฤษ 1 ประโยค สำหรับ AI สร้างวิดีโอ {profile.ai_video_hint}"}}'
+        f'"ai_video_prompt": "พรอมต์ภาษาอังกฤษ 1 ประโยค สำหรับ AI สร้างวิดีโอ {profile.ai_video_hint}", '
+        f'"youtube_title": "พาดหัวคลิปสำหรับ YouTube — {profile.yt_title_hint}", '
+        '"youtube_description": "คำอธิบายคลิป YouTube 2-4 ประโยค เล่าว่าเรื่องเกี่ยวกับอะไรให้คนอยากดู '
+        '(ดึงจากเนื้อบท ห้ามสปอยจุดพีค) แล้วขึ้นบรรทัดใหม่ใส่ #แฮชแท็ก 5-8 ตัว แล้วปิดท้ายชวนกดติดตาม", '
+        '"youtube_tags": ["แท็กคีย์เวิร์ด 8-12 คำ ตรงเนื้อหา ทั้งไทยและอังกฤษ คำสั้นๆ", "..."]}'
     )
     # MiniMax M3 is a reasoning model: with the long beat/hook system prompt it can spend
     # its whole budget thinking and emit truncated/empty JSON. Give it room + retry once with
@@ -871,9 +875,15 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
         image_prompts = [out_title]
     video_queries = [str(x).strip()[:80] for x in (data.get("video_queries") or []) if str(x).strip()][:3]
     ai_video_prompt = str(data.get("ai_video_prompt") or "").strip()[:300]
+    # YouTube metadata (catchy title + richer description + tags). Fall back to the topic
+    # title / caption so a sparse model reply still uploads with something sensible.
+    yt_title = _strip_quotes(str(data.get("youtube_title") or "")).strip()[:100] or out_title
+    yt_description = str(data.get("youtube_description") or "").strip() or caption
+    yt_tags = [str(t).strip()[:60] for t in (data.get("youtube_tags") or []) if str(t).strip()][:15]
     return {"title": out_title, "lines": lines, "lines_say": lines_say, "caption": caption,
             "image_prompts": image_prompts, "video_queries": video_queries,
-            "ai_video_prompt": ai_video_prompt}
+            "ai_video_prompt": ai_video_prompt,
+            "youtube_title": yt_title, "youtube_description": yt_description, "youtube_tags": yt_tags}
 
 
 async def _bg_item(video_query: str, image_prompt: str, idx: int) -> tuple[str, str] | None:
@@ -969,6 +979,9 @@ async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: 
         kinds = [k for _, k in items]
         await log_line(f"✅ คลิปเสร็จ {r.get('duration', '?')} วิ" + (" · มีหน้าพูด" if r.get("talking_head") else ""))
         r.update({"caption": script["caption"], "lines": script["lines"], "title": script["title"],
+                  "youtube_title": script.get("youtube_title") or script["title"],
+                  "youtube_description": script.get("youtube_description") or script["caption"],
+                  "youtube_tags": script.get("youtube_tags") or [],
                   "bg_count": len(items),
                   "bg_kind": f"{kinds.count('video')}vid+{kinds.count('image')}img"})
     else:

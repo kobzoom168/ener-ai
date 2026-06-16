@@ -44,6 +44,7 @@ class ChannelProfile:
     brand_web: str          # watermark site (white)
     face_pip: bool = False  # talking-head PIP allowed for this channel
     default_tone: str = "evidence"
+    yt_title_hint: str = ""  # how to write the click-worthy YouTube title for this genre
 
 
 # Shared retention core injected into every channel's system prompt.
@@ -121,6 +122,12 @@ MYSTERY = ChannelProfile(
     brand_web="my-ener.uk",
     face_pip=True,
     default_tone="evidence",
+    yt_title_hint=(
+        "พาดหัว YouTube สายมู/ลึกลับ ที่คน 'อยากคลิก' — สั้นไม่เกิน 90 ตัวอักษร, "
+        "ขึ้นต้นด้วยชื่อเรื่อง/คำสำคัญที่สุด, ใส่คำกระตุกความสงสัยหรืออารมณ์ (เช่น เรื่องจริง, ตำนาน, "
+        "ความลับ, ห้ามดูคนเดียว, ขนลุก), ใช้ ! ได้บ้างแต่ห้ามเกินจริง/ห้ามหลอก/ห้ามการันตีโชคลาภ "
+        "เคารพความเชื่อ. ใส่อิโมจิได้ 0-1 ตัวถ้าเข้ากับเรื่อง"
+    ),
 )
 
 
@@ -194,6 +201,11 @@ DIDYOUKNOW = ChannelProfile(
     brand_web="",
     face_pip=False,
     default_tone="evidence",
+    yt_title_hint=(
+        "พาดหัว YouTube ความรู้ว้าวๆ ที่คน 'อยากคลิก' — สั้นไม่เกิน 90 ตัวอักษร, "
+        "กระตุกความสงสัย (เช่น รู้ไหมว่า…, ทำไม…, สิ่งที่ 99% ไม่รู้, ความจริงที่…), "
+        "ใส่ตัวเลข/ข้อเท็จจริงเด็ดถ้ามี, ตรงเนื้อหา ไม่โอเวอร์เคลม ไม่หลอก. ใส่อิโมจิได้ 0-1 ตัว"
+    ),
 )
 
 

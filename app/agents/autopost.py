@@ -109,7 +109,8 @@ async def _render_for(job: dict) -> dict:
     return await make_channel_short(get_profile(channel), topic, tone=tone)  # topic optional
 
 
-async def _post_platform(name: str, mp4: str, caption: str, title: str = "") -> tuple[bool, str]:
+async def _post_platform(name: str, mp4: str, caption: str, title: str = "",
+                         yt_meta: dict | None = None) -> tuple[bool, str]:
     if name == "facebook":
         from app.agents import facebook_client
         if facebook_client.enabled():
@@ -118,8 +119,11 @@ async def _post_platform(name: str, mp4: str, caption: str, title: str = "") -> 
     if name == "youtube":
         from app.agents import youtube_client
         if youtube_client.enabled():
-            yt_title = (title or caption or "Short").strip()[:90]
-            return await youtube_client.upload_video(mp4, yt_title, caption)
+            m = yt_meta or {}
+            yt_title = (m.get("title") or title or caption or "Short").strip()[:90]
+            yt_desc = (m.get("description") or caption or "").strip()
+            yt_tags = m.get("tags") or []
+            return await youtube_client.upload_video(mp4, yt_title, yt_desc, yt_tags)
         return False, "YouTube ยังไม่เชื่อม (เชื่อมที่ /admin/youtube)"
     if name == "tiktok":
         return False, "TikTok ยังไม่เชื่อม"
@@ -151,7 +155,10 @@ async def _ensure_clip(job: dict, today: str) -> tuple[str, str, str]:
         raise RuntimeError(str(res.get("error", "render failed"))[:200])
     st.update(gen_date=today, mp4=res["mp4"],
               caption=res.get("caption") or res.get("title") or "",
-              title=res.get("title") or "")
+              title=res.get("title") or "",
+              yt_title=res.get("youtube_title") or res.get("title") or "",
+              yt_desc=res.get("youtube_description") or res.get("caption") or "",
+              yt_tags=res.get("youtube_tags") or [])
     await _send_telegram(st["mp4"], f"{st['title']}\n\n{st['caption']}".strip())
     await log_line("📲 ส่งคลิปเข้า Telegram แล้ว")
     return st["mp4"], st["caption"], st["title"]
@@ -182,11 +189,14 @@ async def run_job(job: dict, source: str = "manual", preview: bool = False) -> d
         return entry
 
     plats = [p for p in (job.get("platforms") or []) if p.get("enabled")] or [{"name": "facebook"}]
+    st = job.get("_state", {})
+    yt_meta = {"title": st.get("yt_title", ""), "description": st.get("yt_desc", ""),
+               "tags": st.get("yt_tags", [])}
     results = []
     for p in plats:
         await set_status("posting", f"{PLATFORM_LABEL.get(p['name'], p['name'])}", title)
         try:
-            ok, msg = await _post_platform(p["name"], mp4, caption, title)
+            ok, msg = await _post_platform(p["name"], mp4, caption, title, yt_meta)
         except Exception as exc:
             ok, msg = False, str(exc)[:160]
         await log_line(f"📤 {PLATFORM_LABEL.get(p['name'], p['name'])}: {'✅' if ok else '❌'} {msg}")
@@ -230,10 +240,12 @@ async def run_due() -> None:
                 last_run[p["name"]] = today
             changed = True
             continue
+        yt_meta = {"title": st.get("yt_title", ""), "description": st.get("yt_desc", ""),
+                   "tags": st.get("yt_tags", [])}
         for p in due:
             await set_status("posting", PLATFORM_LABEL.get(p["name"], p["name"]), title)
             try:
-                ok, msg = await _post_platform(p["name"], mp4, caption, title)
+                ok, msg = await _post_platform(p["name"], mp4, caption, title, yt_meta)
             except Exception as exc:
                 ok, msg = False, str(exc)[:160]
             await log_line(f"📤 {PLATFORM_LABEL.get(p['name'], p['name'])}: {'✅' if ok else '❌'} {msg}")
