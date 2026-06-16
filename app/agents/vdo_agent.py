@@ -1037,14 +1037,23 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
     # a terse "JSON only" nudge so the default (no-topic) path doesn't fall back to a 1-liner.
     data, lines = {}, []
     writer_model = await _agent_model("scriptwriter")
-    for attempt in range(2):
-        p = prompt if attempt == 0 else (prompt + "\n\nตอบ JSON ที่ครบถ้วนทันที สั้นกระชับ ไม่ต้องอธิบาย")
-        data = _parse_json(await _or_chat(writer_model, system, p, 16000))
+    # Try the chosen model twice; if it still returns an empty/too-short script (some models
+    # choke on the big multi-field JSON), fall back to the reliable default so we never ship
+    # a 1-line clip. A real script is ≥4 lines.
+    attempts = [writer_model, writer_model]
+    if writer_model != SCRIPT_MODEL:
+        attempts.append(SCRIPT_MODEL)
+    for idx, mdl in enumerate(attempts):
+        p = prompt if idx == 0 else (prompt + "\n\nตอบ JSON ที่ครบถ้วนทันที สั้นกระชับ ไม่ต้องอธิบาย")
+        data = _parse_json(await _or_chat(mdl, system, p, 16000))
         lines = [_strip_quotes(str(x)) for x in (data.get("lines") or []) if str(x).strip()][:9]
         lines = [x for x in lines if x]
-        if lines:
+        if len(lines) >= 4:
             break
-        await _vlog("↻ บทยังว่าง ลองสร้างใหม่อีกครั้ง…")
+        nxt = attempts[idx + 1] if idx + 1 < len(attempts) else None
+        if nxt:
+            await _vlog(f"↻ บทไม่ครบ (ได้ {len(lines)} บรรทัด) — ลองใหม่"
+                        + (f" ด้วยโมเดลสำรอง {nxt}" if nxt != mdl else "") + "…")
     say_raw = [_strip_quotes(str(x)) for x in (data.get("lines_say") or []) if str(x).strip()]
     out_title = _strip_quotes(str(data.get("title") or title or topic or profile.fallback_title))[:60]
     if not lines:
