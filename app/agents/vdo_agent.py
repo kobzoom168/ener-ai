@@ -23,6 +23,31 @@ RESEARCH_MODEL = os.environ.get("VDO_RESEARCH_MODEL", "perplexity/sonar")
 # Per-channel history of recent clips (for the Originality Guard / Angle Diversifier).
 _CLIP_HISTORY_KEY = "vdo_clip_history"
 
+# Default model per crew agent. Each is overridable live from the Auto Post UI
+# (stored as config key vdo_model_<agent>); _agent_model() reads the override with fallback.
+AGENT_MODELS = {
+    "trend_scout": RESEARCH_MODEL,   # picks a fresh, real topic (web search) when none is given
+    "researcher": RESEARCH_MODEL,
+    "scriptwriter": SCRIPT_MODEL,
+    "fact_qc": SCRIPT_MODEL,
+    "retention_qc": SCRIPT_MODEL,
+    "compliance": SCRIPT_MODEL,
+    "director": SCRIPT_MODEL,        # plans per-beat shots (still vs stock vs AI video)
+    "analyst": SCRIPT_MODEL,         # reads YouTube Analytics → advice (activates with phase ②)
+}
+
+
+async def _agent_model(key: str) -> str:
+    """Resolve which model a crew agent uses: live config override → built-in default."""
+    try:
+        from app.core.database import get_config
+        v = (await get_config(f"vdo_model_{key}", "")).strip()
+        if v:
+            return v
+    except Exception:
+        pass
+    return AGENT_MODELS.get(key, SCRIPT_MODEL)
+
 # Narration tone presets for the mystery script (chosen in the Auto Post UI).
 TONE_GUIDE = {
     "evidence": "โทน: สารคดีจริงจัง น่าเชื่อถือ เน้นข้อเท็จจริง/หลักฐาน/แหล่งอ้างอิงจริง ปิดด้วยประโยคชวนคิด",
@@ -792,9 +817,9 @@ async def _research_topic(subject: str, profile: "ChannelProfile") -> str:
               "'ยืนยันได้' กับข้อไหน 'เป็นความเชื่อ/เล่าต่อ' ห้ามแต่งแหล่งอ้างอิงปลอม")
     prompt = (profile.research_question.format(subject=subject) +
               "\n\nตอบเป็น bullet พร้อม (แหล่ง) ต่อข้อ และทำเครื่องหมาย [ยืนยันได้]/[ความเชื่อ] หน้าแต่ละข้อ")
-    out = (await _or_chat(RESEARCH_MODEL, system, prompt, 2500)).strip()
+    out = (await _or_chat(await _agent_model("researcher"), system, prompt, 2500)).strip()
     if not out:  # search model unavailable → degrade to the writer model (still better than nothing)
-        out = (await _or_chat(SCRIPT_MODEL, system, prompt, 2500)).strip()
+        out = (await _or_chat(await _agent_model("scriptwriter"), system, prompt, 2500)).strip()
     return out
 
 
@@ -839,7 +864,7 @@ async def _retention_qc(lines: list[str], profile: "ChannelProfile") -> tuple[li
     prompt = ("บท:\n" + _json.dumps(lines, ensure_ascii=False) + "\n\n"
               'ตอบ JSON: {"strong": true ถ้าดีอยู่แล้ว/false ถ้าต้องปรับ, '
               '"fixed_lines": [บทที่ปรับให้ retention ดีขึ้น ครบทุกบรรทัด], "note": "จุดที่ปรับสั้นๆ"}')
-    qc = _parse_json(await _or_chat(SCRIPT_MODEL, system, prompt, 4500))
+    qc = _parse_json(await _or_chat(await _agent_model("retention_qc"), system, prompt, 4500))
     fixed = [_strip_quotes(str(x)) for x in (qc.get("fixed_lines") or []) if str(x).strip()]
     if not qc.get("strong", True) and fixed:
         return fixed, str(qc.get("note", "")).strip()[:140]
@@ -861,7 +886,7 @@ async def _compliance_pass(lines: list[str], profile: "ChannelProfile") -> tuple
     prompt = ("บท:\n" + _json.dumps(lines, ensure_ascii=False) + "\n\n"
               'ตอบ JSON: {"ok": true ถ้าปลอดภัย/false ถ้าต้องแก้, '
               '"fixed_lines": [บทที่แก้ให้ปลอดภัยแล้ว ครบทุกบรรทัด], "note": "จุดเสี่ยงที่แก้"}')
-    qc = _parse_json(await _or_chat(SCRIPT_MODEL, system, prompt, 4500))
+    qc = _parse_json(await _or_chat(await _agent_model("compliance"), system, prompt, 4500))
     fixed = [_strip_quotes(str(x)) for x in (qc.get("fixed_lines") or []) if str(x).strip()]
     if not qc.get("ok", True) and fixed:
         return fixed, str(qc.get("note", "")).strip()[:140]
@@ -878,11 +903,47 @@ async def _qc_facts(research: str, lines: list[str], profile: "ChannelProfile") 
               + _json.dumps(lines, ensure_ascii=False) + "\n\n"
               'ตรวจแล้วตอบ JSON: {"ok": true ถ้าข้อมูลถูกหมด/false ถ้าต้องแก้, '
               '"fixed_lines": [บทที่แก้ให้ถูกแล้ว ครบทุกบรรทัด คงโทนเดิม], "note": "จุดที่แก้สั้นๆ"}')
-    qc = _parse_json(await _or_chat(SCRIPT_MODEL, system, prompt, 5000))
+    qc = _parse_json(await _or_chat(await _agent_model("fact_qc"), system, prompt, 5000))
     fixed = [_strip_quotes(str(x)) for x in (qc.get("fixed_lines") or []) if str(x).strip()]
     if not qc.get("ok", True) and fixed:
         return fixed, str(qc.get("note", "")).strip()[:140]
     return lines, ""
+
+
+async def _trend_topic(profile: "ChannelProfile", recent: list[dict]) -> str:
+    """🔥 Trend Scout: when no topic is given, pick ONE fresh, real, currently-interesting
+    topic for this genre (web search) that doesn't repeat recent clips. Returns "" on failure
+    so the caller falls back to the profile's own topic_pick."""
+    avoid = ", ".join(c.get("title", "") for c in recent[:12] if c.get("title"))
+    system = ("คุณคือนักหาประเด็นคอนเทนต์ที่กำลังน่าสนใจ ค้นจากเว็บจริง "
+              "เลือกหัวข้อที่มีข้อมูล/หลักฐานจริง คนไทยสนใจ ไม่ซ้ำของเดิม")
+    prompt = (f"ช่อง: {profile.name}\nแนวทางเลือกหัวข้อ: {profile.topic_pick}\n"
+              + (f"ห้ามซ้ำกับที่เคยทำ: {avoid}\n" if avoid else "")
+              + "เสนอหัวข้อเดียวที่ดีที่สุดตอนนี้ ตอบเป็นชื่อหัวข้อสั้นๆ บรรทัดเดียว ไม่ต้องอธิบาย")
+    out = (await _or_chat(await _agent_model("trend_scout"), system, prompt, 200)).strip()
+    return _strip_quotes(out.splitlines()[0] if out else "")[:80]
+
+
+async def _shot_plan(lines: list[str], profile: "ChannelProfile") -> list[dict]:
+    """🎬 Director / Shot Planner: choose the best medium per beat — stock (real footage),
+    still (AI image + Ken Burns), or aivideo (AI hero shot, used sparingly for hook/peak).
+    Returned for logging + stored in the script result; full render wiring lands in ④."""
+    if not lines:
+        return []
+    system = ("คุณคือผู้กำกับภาพคลิปสั้น เลือก 'สื่อ' ที่เหมาะกับแต่ละประโยคของบท: "
+              "stock=ฟุตเทจจริง (สถานที่/บรรยากาศจริง), still=ภาพ AI นิ่งซูม (สัญลักษณ์/นามธรรม), "
+              "aivideo=วิดีโอ AI ช็อตเด็ด (ฉากที่สต็อกไม่มี เช่น พญานาค/ของขลังเรืองแสง). "
+              "ใช้ aivideo ให้น้อย (เฉพาะฮุค/จุดพีค) ที่เหลือเน้น stock/still เพื่อคุมงบ ตอบ JSON เท่านั้น")
+    prompt = ("บท (เรียงตามบรรทัด):\n" + _json.dumps(lines, ensure_ascii=False) + "\n\n"
+              'ตอบ JSON: {"plan": [{"i": index, "medium": "stock|still|aivideo", "note": "สิ่งที่ควรเห็นสั้นๆ"}, ...]}')
+    data = _parse_json(await _or_chat(await _agent_model("director"), system, prompt, 2500))
+    plan = []
+    for it in (data.get("plan") or []):
+        med = str(it.get("medium", "")).strip().lower()
+        if med not in ("stock", "still", "aivideo"):
+            med = "still"
+        plan.append({"i": int(it.get("i", len(plan))), "medium": med, "note": str(it.get("note", ""))[:80]})
+    return plan
 
 
 async def generate_mystery_script(topic: str = "", title: str = "", summary: str = "",
@@ -917,6 +978,13 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
             await _vlog("🛡️ Originality Guard: เลี่ยงซ้ำกับ " + str(len(recent)) + " คลิปล่าสุด")
     research = ""
     subject = (topic or title or "").strip()
+    # 🔥 Trend Scout: no topic supplied → pick a fresh, real, non-repeating one
+    if not subject and profile.research_mode != "none":
+        await _vlog("🔥 Trend Scout: หาหัวข้อที่กำลังน่าสนใจ…")
+        picked = await _trend_topic(profile, recent)
+        if picked:
+            subject = topic = picked  # feed the chosen topic into the writer body below
+            await _vlog("🔥 Trend Scout: เลือกหัวข้อ — " + subject)
     if subject and profile.research_mode != "none":
         await _vlog("🔎 Researcher: ค้นข้อมูลจริง — " + subject)
         research = await _research_topic(subject, profile)
@@ -968,9 +1036,10 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
     # its whole budget thinking and emit truncated/empty JSON. Give it room + retry once with
     # a terse "JSON only" nudge so the default (no-topic) path doesn't fall back to a 1-liner.
     data, lines = {}, []
+    writer_model = await _agent_model("scriptwriter")
     for attempt in range(2):
         p = prompt if attempt == 0 else (prompt + "\n\nตอบ JSON ที่ครบถ้วนทันที สั้นกระชับ ไม่ต้องอธิบาย")
-        data = _parse_json(await _or_chat(SCRIPT_MODEL, system, p, 16000))
+        data = _parse_json(await _or_chat(writer_model, system, p, 16000))
         lines = [_strip_quotes(str(x)) for x in (data.get("lines") or []) if str(x).strip()][:9]
         lines = [x for x in lines if x]
         if lines:
@@ -1023,6 +1092,17 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
     yt_tags = [str(t).strip()[:60] for t in (data.get("youtube_tags") or []) if str(t).strip()][:15]
     angle = _strip_quotes(str(data.get("angle") or "")).strip()[:80]
     hook_type = _strip_quotes(str(data.get("hook_type") or "")).strip()[:60]
+    # 🎬 Director / Shot Planner: plan the medium per beat (logged now; render wiring = ④)
+    shot_plan = []
+    if lines:
+        await _vlog("🎬 Director: วางแผนช็อต (ภาพนิ่ง/ฟุตเทจ/AI video)…")
+        try:
+            shot_plan = await _shot_plan(lines, profile)
+        except Exception:
+            shot_plan = []
+        if shot_plan:
+            mix = {m: sum(1 for s in shot_plan if s["medium"] == m) for m in ("stock", "still", "aivideo")}
+            await _vlog(f"🎬 Director: {mix['stock']} ฟุตเทจจริง · {mix['still']} ภาพนิ่ง · {mix['aivideo']} AI video")
     # 🛡️ record this clip's fingerprint so next run's Originality Guard can avoid repeating it
     await _record_clip(profile.id, {"title": out_title, "angle": angle, "hook_type": hook_type,
                                     "topic": subject, "at": int(time.time())})
@@ -1031,6 +1111,7 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
     return {"title": out_title, "lines": lines, "lines_say": lines_say, "caption": caption,
             "image_prompts": image_prompts, "video_queries": video_queries,
             "ai_video_prompt": ai_video_prompt, "angle": angle, "hook_type": hook_type,
+            "shot_plan": shot_plan,
             "youtube_title": yt_title, "youtube_description": yt_description, "youtube_tags": yt_tags}
 
 

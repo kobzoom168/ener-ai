@@ -7099,6 +7099,51 @@ async def workspace_vdo_list(request: Request):
     return JSONResponse({"ok": True, "clips": items[:30]})
 
 
+# The video-content crew, in pipeline order. model_backed=False → no model selector (logic only).
+VDO_CREW = [
+    {"key": "trend_scout",  "emoji": "🔥", "label": "Trend Scout",      "role": "หาหัวข้อที่กำลังน่าสนใจ (เมื่อไม่ระบุหัวข้อ)", "model_backed": True},
+    {"key": "researcher",   "emoji": "🔎", "label": "Researcher",       "role": "ค้นเว็บจริง + แหล่งอ้างอิง",        "model_backed": True},
+    {"key": "scriptwriter", "emoji": "✍️", "label": "Scriptwriter",     "role": "เขียนบทตามโครง retention + YT meta", "model_backed": True},
+    {"key": "fact_qc",      "emoji": "🧐", "label": "Fact-QC",          "role": "ตรวจข้อมูลตรงแหล่ง ตัดที่มั่ว",     "model_backed": True},
+    {"key": "retention_qc", "emoji": "🎯", "label": "Retention-QC",     "role": "ฮุค / ปมค้าง / จังหวะ",            "model_backed": True},
+    {"key": "compliance",   "emoji": "✅", "label": "Compliance",       "role": "กัน claim เสี่ยง (สายมู)",          "model_backed": True},
+    {"key": "originality",  "emoji": "🛡️", "label": "Originality Guard", "role": "เลี่ยงคลิปซ้ำ (logic ไม่ใช้โมเดล)", "model_backed": False},
+    {"key": "director",     "emoji": "🎬", "label": "Director",         "role": "วางแผนช็อต ภาพนิ่ง/ฟุตเทจ/AI video", "model_backed": True},
+    {"key": "analyst",      "emoji": "📊", "label": "Analyst",          "role": "เรียนจาก Analytics (เปิดใช้เฟส ②)", "model_backed": True},
+]
+
+
+@app.get("/workspace/vdo/agents")
+async def workspace_vdo_agents(request: Request):
+    """The video crew + each agent's current model + the model options for the dropdowns."""
+    await _require_admin(request)
+    from app.agents.vdo_agent import _agent_model
+    from app.core.openrouter_client import list_openrouter_models
+    agents = []
+    for a in VDO_CREW:
+        model = await _agent_model(a["key"]) if a["model_backed"] else ""
+        agents.append({**a, "model": model})
+    try:
+        opts = [{"id": i, "label": l} for i, l in await list_openrouter_models()]
+    except Exception:
+        opts = []
+    return JSONResponse({"agents": agents, "models": opts})
+
+
+@app.post("/workspace/vdo/agents/model")
+async def workspace_vdo_agent_model(request: Request):
+    """Set the model an individual crew agent uses (live, no restart)."""
+    await _require_admin(request)
+    body = await request.json()
+    key = str(body.get("agent", "")).strip()
+    model = str(body.get("model", "")).strip()
+    valid = {a["key"] for a in VDO_CREW if a["model_backed"]}
+    if key not in valid:
+        raise HTTPException(status_code=400, detail="unknown agent")
+    await set_config(f"vdo_model_{key}", model)
+    return JSONResponse({"ok": True})
+
+
 @app.get("/avatar/face.jpg")
 async def avatar_face():
     """Serve the uploaded face photo (public so D-ID can fetch it as the talk source)."""

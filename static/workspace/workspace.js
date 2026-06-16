@@ -2259,8 +2259,52 @@ document.addEventListener('DOMContentLoaded', function() {
       if (schDiv) schDiv.innerHTML = '<div style="color:#f87171">โหลดไม่สำเร็จ: ' + escapeHtml(e.message) + '</div>';
     }
     loadAutopostClips();
+    loadVdoCrew();
     startApStatusPoll();
   }
+
+  async function loadVdoCrew() {
+    const box = document.getElementById('vdo-crew');
+    if (!box) return;
+    try {
+      const d = await api('/workspace/vdo/agents');
+      const models = d.models || [];
+      box.innerHTML = (d.agents || []).map(a => {
+        const head = '<div style="font-size:13px;font-weight:600">' + a.emoji + ' ' + escapeHtml(a.label) + '</div>' +
+          '<div style="font-size:11px;color:var(--muted-foreground);margin:2px 0 8px;min-height:28px">' + escapeHtml(a.role) + '</div>';
+        let ctrl;
+        if (a.model_backed) {
+          let opts = models.map(m => '<option value="' + escapeHtml(m.id) + '">' + escapeHtml(m.label) + '</option>').join('');
+          // make sure the current model is selectable even if not in the list
+          if (a.model && !models.some(m => m.id === a.model)) opts = '<option value="' + escapeHtml(a.model) + '">' + escapeHtml(a.model) + ' (ปัจจุบัน)</option>' + opts;
+          ctrl = '<select data-agent="' + a.key + '" onchange="setVdoAgentModel(this)" style="width:100%;background:#1f2430;border:1px solid var(--border);border-radius:7px;padding:6px 8px;color:var(--foreground);font-size:12px">' + opts + '</select>';
+        } else {
+          ctrl = '<div style="font-size:12px;color:#a78bfa;padding:6px 8px;background:#1f2430;border-radius:7px;text-align:center">⚙️ logic</div>';
+        }
+        return '<div style="background:#161b26;border:1px solid var(--border);border-radius:10px;padding:11px 12px">' + head + ctrl + '</div>';
+      }).join('');
+      // set current selection per agent
+      (d.agents || []).forEach(a => {
+        if (!a.model_backed) return;
+        const sel = box.querySelector('select[data-agent="' + a.key + '"]');
+        if (sel && a.model) sel.value = a.model;
+      });
+    } catch (e) {
+      box.innerHTML = '<div style="color:#f87171;font-size:13px">โหลดทีม AI ไม่ได้</div>';
+    }
+  }
+
+  async function setVdoAgentModel(sel) {
+    const agent = sel.getAttribute('data-agent');
+    try {
+      await api('/workspace/vdo/agents/model', { method: 'POST', body: JSON.stringify({ agent: agent, model: sel.value }) });
+      showToast('✅ เปลี่ยนโมเดล ' + agent + ' แล้ว');
+    } catch (e) {
+      showToast('❌ ' + ((e && e.message) || 'เปลี่ยนไม่สำเร็จ'));
+    }
+  }
+  window.loadVdoCrew = loadVdoCrew;
+  window.setVdoAgentModel = setVdoAgentModel;
 
   function renderApChannels() {
     const sel = document.getElementById('ap-channel');
