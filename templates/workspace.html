@@ -748,6 +748,14 @@
         <span>🗣️ D-ID</span>
         <span id="ws-did-credits" style="color: oklch(0.72 0.04 320);">ยังไม่ตั้ง</span>
       </div>
+      <div class="flex justify-between mt-0.5" style="font-size:10px; color: var(--muted-foreground);">
+        <span>🎬 fal AI Video</span>
+        <a href="https://fal.ai/dashboard/usage-billing/credits" target="_blank" rel="noopener" id="ws-fal-credits" style="color: oklch(0.72 0.04 320);text-decoration:none;">ยังไม่ตั้ง</a>
+      </div>
+      <div class="flex justify-between mt-0.5" style="font-size:10px; color: var(--muted-foreground);">
+        <span>📹 Pexels</span>
+        <span id="ws-pexels-credits" style="color: oklch(0.72 0.04 320);">ยังไม่ตั้ง</span>
+      </div>
     </div>
 
     <div id="ws-widget-system" class="mx-3 mb-2 rounded-lg px-3 py-2.5" style="background: oklch(0.19 0.02 150); border: 1px solid oklch(0.30 0.04 150);">
@@ -878,6 +886,18 @@
       if (didEl) {
         const d = media.did;
         didEl.textContent = d && d.remaining != null ? (wsFormatNumber(d.remaining) + ' เครดิต') : 'ยังไม่ตั้ง';
+      }
+      const falEl = document.getElementById('ws-fal-credits');
+      if (falEl) {
+        const f = media.fal;
+        if (f && f.set) { falEl.textContent = '✅ พร้อม · ' + (f.model || ''); falEl.style.color = 'oklch(0.80 0.12 150)'; }
+        else { falEl.textContent = 'ยังไม่ตั้ง'; falEl.style.color = 'oklch(0.72 0.04 320)'; }
+      }
+      const pxEl = document.getElementById('ws-pexels-credits');
+      if (pxEl) {
+        const p = media.pexels;
+        pxEl.textContent = (p && p.set) ? '✅ พร้อม' : 'ยังไม่ตั้ง';
+        pxEl.style.color = (p && p.set) ? 'oklch(0.80 0.12 150)' : 'oklch(0.72 0.04 320)';
       }
 
       const sys = data.system_resource_stats || {};

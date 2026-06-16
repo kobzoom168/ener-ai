@@ -5605,9 +5605,13 @@ async def _media_credit_stats() -> dict:
     now = time.time()
     if now - _MEDIA_CREDITS_CACHE["at"] < 60 and _MEDIA_CREDITS_CACHE["data"]:
         return _MEDIA_CREDITS_CACHE["data"]
-    out: dict = {"elevenlabs": None, "did": None}
+    out: dict = {"elevenlabs": None, "did": None, "fal": None, "pexels": None}
     el_key = os.environ.get("ELEVENLABS_API_KEY", "").strip()
     did_key = os.environ.get("DID_API_KEY", "").strip()
+    # fal/Pexels API keys can't read billing — show connection status (balance lives on fal.ai).
+    fal_key = os.environ.get("FAL_KEY", "").strip()
+    out["fal"] = {"set": bool(fal_key), "model": (os.environ.get("FAL_VIDEO_MODEL", "") or "fal-ai/ltx-video").split("/")[-1][:18]}
+    out["pexels"] = {"set": bool(os.environ.get("PEXELS_API_KEY", "").strip())}
     try:
         async with httpx.AsyncClient(timeout=6.0) as c:
             if el_key:
