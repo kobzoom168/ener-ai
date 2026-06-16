@@ -2487,9 +2487,10 @@ document.addEventListener('DOMContentLoaded', function() {
       if (pixelEl) pixelEl.style.display = 'none';
       if (emojiEl) emojiEl.style.display = 'none';
     } else {
-      if (pixelEl) pixelEl.style.display = 'block';
+      // hero = rocket with fire (emoji, no sprite asset needed)
+      if (pixelEl) pixelEl.style.display = 'none';
       if (lottieEl) lottieEl.style.display = 'none';
-      if (emojiEl) emojiEl.style.display = 'none';
+      if (emojiEl) { emojiEl.style.display = ''; emojiEl.textContent = '🚀'; }
     }
     bar.style.borderColor = accent;
     bar.style.animation = isErr ? 'none' : 'apGlow 2.4s ease-in-out infinite';
