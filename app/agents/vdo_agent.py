@@ -995,10 +995,13 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
             subject = topic = picked  # feed the chosen topic into the writer body below
             await _vlog("🔥 Trend Scout: เลือกหัวข้อ — " + subject)
     if subject and profile.research_mode != "none":
-        await _vlog("🔎 Researcher: ค้นข้อมูลจริง — " + subject)
+        await _vlog(f"🔎 Researcher ({await _agent_model('researcher')}): ค้นเว็บ — {subject} … (รอ ~5-20 วิ)")
+        _t = time.time()
         research = await _research_topic(subject, profile)
         if research:
-            await _vlog("📚 Researcher: ได้ข้อมูล + แหล่งอ้างอิงแล้ว")
+            await _vlog(f"📚 Researcher: ได้ข้อมูล + แหล่งอ้างอิง · {int(time.time() - _t)} วิ")
+        else:
+            await _vlog(f"⚠️ Researcher: หาข้อมูลไม่ได้ ({int(time.time() - _t)} วิ) — เขียนจากความรู้โมเดลแทน")
     system = (
         f"{profile.persona} {profile.audience} "
         f"{_tone_guide(tone)} "
@@ -1024,7 +1027,7 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
         body += avoid_block
     if research:
         body += "\n\nข้อมูลอ้างอิงที่ถูกต้อง (ยึดตามนี้เป๊ะ ห้ามขัด ห้ามเข้าใจความหมายผิด):\n" + research[:1500]
-    await _vlog("✍️ Scriptwriter: เขียนบทตามโครง retention…")
+    await _vlog(f"✍️ Scriptwriter ({await _agent_model('scriptwriter')}): เขียนบทตามโครง retention… (รอ ~15-45 วิ)")
     prompt = (
         f"{body}\n\n"
         "เขียนบทตามโครงบีทข้างบนให้ครบทุกช่วง (ฮุค → ปมค้าง → ปูเรื่อง+อ้างอิงเจาะจง → จุดพีค → สรุป+ชวนติดตาม)\n"
@@ -1059,14 +1062,16 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
         attempts.append(SCRIPT_MODEL)
     for idx, mdl in enumerate(attempts):
         p = prompt if idx == 0 else (prompt + "\n\nตอบ JSON ที่ครบถ้วนทันที สั้นกระชับ ไม่ต้องอธิบาย")
+        _t = time.time()
         data = _parse_json(await _or_chat(mdl, system, p, 16000))
         lines = [_strip_quotes(str(x)) for x in (data.get("lines") or []) if str(x).strip()][:9]
         lines = [x for x in lines if x]
         if len(lines) >= 4:
+            await _vlog(f"✅ Scriptwriter: ร่างเสร็จ {len(lines)} บรรทัด · {int(time.time() - _t)} วิ")
             break
         nxt = attempts[idx + 1] if idx + 1 < len(attempts) else None
         if nxt:
-            await _vlog(f"↻ บทไม่ครบ (ได้ {len(lines)} บรรทัด) — ลองใหม่"
+            await _vlog(f"↻ บทไม่ครบ (ได้ {len(lines)} บรรทัด ใน {int(time.time() - _t)} วิ) — ลองใหม่"
                         + (f" ด้วยโมเดลสำรอง {nxt}" if nxt != mdl else "") + "…")
     say_raw = [_strip_quotes(str(x)) for x in (data.get("lines_say") or []) if str(x).strip()]
     out_title = _strip_quotes(str(data.get("title") or title or topic or profile.fallback_title))[:60]
@@ -1075,31 +1080,37 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
     # ── QC crew: each agent can fix the script in place; any change re-pairs lines_say ──
     # 🧐 Fact/Source-QC — cut/ correct claims that don't match the sourced research
     if research and lines:
-        await _vlog("🧐 " + profile.qc_label)
+        await _vlog(f"🧐 Fact-QC ({await _agent_model('fact_qc')}): ตรวจข้อมูลตรงแหล่ง… (รอ ~10-25 วิ)")
+        _t = time.time()
         fixed, note = await _qc_facts(research, lines, profile)
         if note:
             lines = [x for x in fixed if x][:9] or lines
             say_raw = []
-            await _vlog("✏️ Fact-QC แก้ข้อมูล: " + note)
+            await _vlog(f"✏️ Fact-QC แก้ข้อมูล ({int(time.time() - _t)} วิ): " + note)
         else:
-            await _vlog("✅ Fact-QC ผ่าน — ข้อมูลตรงแหล่งอ้างอิง")
+            await _vlog(f"✅ Fact-QC ผ่าน — ข้อมูลตรงแหล่ง · {int(time.time() - _t)} วิ")
     # ✅ Compliance — soften risky claims FIRST (sparingly), then…
-    if lines:
+    if lines and profile.research_mode == "belief":
+        await _vlog(f"✅ Compliance ({await _agent_model('compliance')}): เช็ค claim เสี่ยง… (รอ ~10-25 วิ)")
+        _t = time.time()
         fixed, note = await _compliance_pass(lines, profile)
         if note:
             lines = [x for x in fixed if x][:9] or lines
             say_raw = []
-            await _vlog("✅ Compliance แก้จุดเสี่ยง: " + note)
+            await _vlog(f"✏️ Compliance แก้จุดเสี่ยง ({int(time.time() - _t)} วิ): " + note)
+        else:
+            await _vlog(f"✅ Compliance ผ่าน — ปลอดภัย · {int(time.time() - _t)} วิ")
     # 🎯 Retention-QC LAST — re-sharpen hook/open-loop/payoff after compliance, strip repetition
     if lines:
-        await _vlog("🎯 Retention-QC: ตรวจฮุค + ปมค้าง + อยู่ในหัวข้อ…")
+        await _vlog(f"🎯 Retention-QC ({await _agent_model('retention_qc')}): ฮุค+ปมค้าง+อยู่ในหัวข้อ… (รอ ~10-25 วิ)")
+        _t = time.time()
         fixed, note = await _retention_qc(lines, profile, subject)
         if note:
             lines = [x for x in fixed if x][:9] or lines
             say_raw = []
-            await _vlog("✏️ Retention-QC ปรับ: " + note)
+            await _vlog(f"✏️ Retention-QC ปรับ ({int(time.time() - _t)} วิ): " + note)
         else:
-            await _vlog("✅ Retention-QC ผ่าน — ฮุคแรง ปมค้างครบ")
+            await _vlog(f"✅ Retention-QC ผ่าน — ฮุคแรง ปมค้างครบ · {int(time.time() - _t)} วิ")
     # pair lines_say 1:1 with display lines (fall back to the display line itself)
     lines_say = [(say_raw[i] if i < len(say_raw) and say_raw[i] else lines[i]) for i in range(len(lines))]
     caption = str(data.get("caption") or out_title).strip()[:300]
@@ -1118,14 +1129,15 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
     # 🎬 Director / Shot Planner: plan the medium per beat (logged now; render wiring = ④)
     shot_plan = []
     if lines:
-        await _vlog("🎬 Director: วางแผนช็อต (ภาพนิ่ง/ฟุตเทจ/AI video)…")
+        await _vlog(f"🎬 Director ({await _agent_model('director')}): วางแผนช็อต… (รอ ~10-20 วิ)")
+        _t = time.time()
         try:
             shot_plan = await _shot_plan(lines, profile)
         except Exception:
             shot_plan = []
         if shot_plan:
             mix = {m: sum(1 for s in shot_plan if s["medium"] == m) for m in ("stock", "still", "aivideo")}
-            await _vlog(f"🎬 Director: {mix['stock']} ฟุตเทจจริง · {mix['still']} ภาพนิ่ง · {mix['aivideo']} AI video")
+            await _vlog(f"🎬 Director: {mix['stock']} ฟุตเทจจริง · {mix['still']} ภาพนิ่ง · {mix['aivideo']} AI video · {int(time.time() - _t)} วิ")
     # 🛡️ record this clip's fingerprint so next run's Originality Guard can avoid repeating it
     await _record_clip(profile.id, {"title": out_title, "angle": angle, "hook_type": hook_type,
                                     "topic": subject, "at": int(time.time())})
