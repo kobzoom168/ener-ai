@@ -71,32 +71,42 @@ async def configured() -> bool:
     return bool(cid and csec)
 
 
-async def auth_url(redirect_uri: str, state: str = "") -> str:
-    """Build the Google consent URL. prompt=consent forces a refresh_token every time."""
+async def auth_url(redirect_uri: str, state: str = "") -> tuple[str, str]:
+    """Build the Google consent URL. prompt=consent forces a refresh_token every time.
+
+    Returns (url, code_verifier). The library uses PKCE: a code_verifier is generated here
+    and MUST be supplied at token exchange (in a different request), so the caller persists
+    it alongside the state. Returns "" for the verifier if PKCE is off.
+    """
     cid, csec, _, _ = await _cfg()
     if not cid or not csec:
         raise RuntimeError("ยังไม่ได้ตั้ง client id/secret")
 
-    def _do() -> str:
+    def _do() -> tuple[str, str]:
         from google_auth_oauthlib.flow import Flow
         flow = Flow.from_client_config(
             _client_config(cid, csec, redirect_uri), scopes=SCOPES, redirect_uri=redirect_uri)
         url, _ = flow.authorization_url(
             access_type="offline", include_granted_scopes="true",
             prompt="consent", state=state or "ener")
-        return url
+        return url, (flow.code_verifier or "")
 
     return await asyncio.to_thread(_do)
 
 
-async def exchange_code(code: str, redirect_uri: str) -> None:
-    """Exchange the consent code for tokens and persist them (with the refresh_token)."""
+async def exchange_code(code: str, redirect_uri: str, code_verifier: str = "") -> None:
+    """Exchange the consent code for tokens and persist them (with the refresh_token).
+
+    `code_verifier` is the PKCE verifier captured in auth_url(); required by Google when a
+    code_challenge was sent at the authorize step.
+    """
     cid, csec, _, _ = await _cfg()
 
     def _do() -> None:
         from google_auth_oauthlib.flow import Flow
         flow = Flow.from_client_config(
-            _client_config(cid, csec, redirect_uri), scopes=SCOPES, redirect_uri=redirect_uri)
+            _client_config(cid, csec, redirect_uri), scopes=SCOPES, redirect_uri=redirect_uri,
+            code_verifier=code_verifier or None, autogenerate_code_verifier=False)
         flow.fetch_token(code=code)
         _TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
         _TOKEN_PATH.write_text(flow.credentials.to_json(), encoding="utf-8")

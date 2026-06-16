@@ -11889,13 +11889,14 @@ async def admin_youtube_connect(request: Request):
     # by matching this state (set here, where the admin session IS valid) instead.
     import secrets as _secrets
     state = _secrets.token_urlsafe(24)
-    await set_config("youtube_oauth_state", state)
     try:
-        url = await youtube_client.auth_url(redirect_uri, state=state)
+        url, code_verifier = await youtube_client.auth_url(redirect_uri, state=state)
     except Exception as exc:
         return HTMLResponse(
             f"<h3 style='font-family:system-ui;padding:40px'>สร้างลิงก์เชื่อมไม่สำเร็จ: "
             f"{escape(str(exc)[:300])}<br><a href='/admin/youtube'>กลับ</a></h3>")
+    await set_config("youtube_oauth_state", state)
+    await set_config("youtube_oauth_verifier", code_verifier or "")
     return RedirectResponse(url, status_code=303)
 
 
@@ -11912,7 +11913,9 @@ async def admin_youtube_callback(request: Request):
         return HTMLResponse(
             "<h3 style='font-family:system-ui;padding:40px'>⛔ state ไม่ตรง (เริ่มเชื่อมใหม่จากปุ่ม Connect) "
             "<br><a href='/admin/youtube'>กลับ</a></h3>")
+    code_verifier = await get_config("youtube_oauth_verifier", "")
     await set_config("youtube_oauth_state", "")  # one-time use
+    await set_config("youtube_oauth_verifier", "")
     if err or not code:
         return HTMLResponse(
             f"<h3 style='font-family:system-ui;padding:40px'>เชื่อม YouTube ไม่สำเร็จ: "
@@ -11920,7 +11923,7 @@ async def admin_youtube_callback(request: Request):
     _, _, redir, _ = await youtube_client._cfg()
     redirect_uri = _yt_redirect_uri(request, redir)
     try:
-        await youtube_client.exchange_code(code, redirect_uri)
+        await youtube_client.exchange_code(code, redirect_uri, code_verifier)
         ok, msg = await youtube_client.check()
     except Exception as exc:
         return HTMLResponse(
