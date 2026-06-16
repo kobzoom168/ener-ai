@@ -7031,6 +7031,11 @@ async def workspace_autopost_run(request: Request):
         job = next((s for s in await autopost.load_schedules() if s.get("id") == jid), None)
     if job is None:
         job = _autopost_job_from_body(body)
+    # "post to just this platform" buttons: override the job to enable only the chosen one
+    only_platform = str(body.get("only_platform") or "").strip().lower()
+    if only_platform:
+        job = {**job, "platforms": [{"name": only_platform, "enabled": True, "time": "now"}],
+               "_state": {}}
     preview = bool(body.get("preview"))
     import asyncio as _aio
     _aio.create_task(autopost.run_job(job, source="manual", preview=preview))

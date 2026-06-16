@@ -2582,6 +2582,27 @@ document.addEventListener('DOMContentLoaded', function() {
     } catch (e) { showToast('สั่งรันไม่สำเร็จ: ' + e.message); }
   }
 
+  async function runAutopostToPlatform(platform, btn) {
+    const labels = { youtube: 'YouTube', tiktok: 'TikTok', facebook: 'Facebook' };
+    const nm = labels[platform] || platform;
+    if (!confirm('สร้างคลิปใหม่ + โพสต์ขึ้น ' + nm + ' เลยไหม?\n(ใช้ค่าจากฟอร์มด้านล่าง: ช่อง/โทน/หัวข้อ)')) return;
+    const body = _apFormBody();
+    body.only_platform = platform;   // backend forces posting to just this one
+    body.preview = false;
+    if (btn) { btn.disabled = true; }
+    const m = document.getElementById('ap-form-msg');
+    if (m) m.textContent = '⏳ กำลังสร้างคลิป + โพสต์ขึ้น ' + nm + '… ดูไฟสถานะด้านบน';
+    try {
+      await api('/workspace/autopost/run', { method: 'POST', body: JSON.stringify(body) });
+      showToast('เริ่มสร้างคลิป → โพสต์ ' + nm + ' — ดูไฟสถานะ + LOG');
+      startApStatusPoll();
+    } catch (e) {
+      showToast('สั่งรันไม่สำเร็จ: ' + ((e && e.message) || ''));
+    } finally {
+      if (btn) { setTimeout(() => { btn.disabled = false; }, 2000); }
+    }
+  }
+
   async function deleteClip(name, btn) {
     if (!confirm('ลบคลิปนี้ออกจาก server?')) return;
     try {
@@ -2701,6 +2722,7 @@ document.addEventListener('DOMContentLoaded', function() {
   window.deleteClip = deleteClip;
   window.saveAutopost = saveAutopost;
   window.runAutopostNow = runAutopostNow;
+  window.runAutopostToPlatform = runAutopostToPlatform;
   window.resetAutopostForm = resetAutopostForm;
   window.editAutopost = editAutopost;
   window.deleteAutopost = deleteAutopost;

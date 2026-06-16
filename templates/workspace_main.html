@@ -261,6 +261,12 @@
           <div style="text-align:center;margin:14px 0 10px">
             <div style="color:var(--muted-foreground);margin-bottom:6px">↓ ② AI สร้างคลิป ↓</div>
             <button class="primary-btn" onclick="runAutopostPreview()" style="background:linear-gradient(135deg,#7c3aed,#db2777)">▶ สร้างคลิปทดสอบ (ส่งดูใน Telegram)</button>
+            <div style="margin-top:10px;font-size:12px;color:var(--muted-foreground)">หรือสร้าง + โพสต์ไปแพลตฟอร์มเดียวเลย:</div>
+            <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:8px">
+              <button class="panel-action" style="background:#dc2626;color:#fff" onclick="runAutopostToPlatform('youtube',this)">▶️ YouTube</button>
+              <button class="panel-action" style="background:#111;color:#fff;border:1px solid #444" onclick="runAutopostToPlatform('tiktok',this)">🎵 TikTok</button>
+              <button class="panel-action" style="background:#1877f2;color:#fff" onclick="runAutopostToPlatform('facebook',this)">📘 Facebook</button>
+            </div>
           </div>
 
           <div style="font-size:12px;color:var(--muted-foreground);margin-bottom:6px">③ โพสต์อัตโนมัติขึ้น (แยกเวลาแต่ละช่อง)</div>
