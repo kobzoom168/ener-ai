@@ -13,13 +13,14 @@ import httpx
 
 _DEFAULT_MODEL = "fal-ai/ltx-video"
 
-# Models offered in the UI dropdown (fal.ai). label, id, rough $/sec — for the picker.
+# Models offered in the UI dropdown (fal.ai). `ups` = rough $/sec (for the live cost estimate).
+# LTX first = the default/cheap pick. Veo flagged ⚠️ because it burned ~$6 for 2 shots once.
 MODELS = [
-    {"id": "fal-ai/ltx-video", "label": "LTX Video — ถูกสุด เร็ว", "cost": "~$0.02/วิ"},
-    {"id": "fal-ai/kling-video/v2.5-turbo/pro/text-to-video", "label": "Kling 2.5 Turbo — คุ้มสุด cinematic", "cost": "~$0.07/วิ"},
-    {"id": "fal-ai/wan-25-preview/text-to-video", "label": "Wan 2.5 — กลางๆ", "cost": "~$0.05/วิ"},
-    {"id": "fal-ai/minimax/hailuo-02/standard/text-to-video", "label": "Hailuo 02 — ลื่น", "cost": "~$0.05/วิ"},
-    {"id": "fal-ai/veo3", "label": "Veo 3 — ท็อปสุด (แพง ใช้เฉพาะช็อตเด็ด)", "cost": "~$0.40/วิ"},
+    {"id": "fal-ai/ltx-video", "label": "LTX Video — ถูกสุด เร็ว (แนะนำ)", "cost": "~$0.02/วิ", "ups": 0.02},
+    {"id": "fal-ai/wan-25-preview/text-to-video", "label": "Wan 2.5 — กลางๆ", "cost": "~$0.05/วิ", "ups": 0.05},
+    {"id": "fal-ai/minimax/hailuo-02/standard/text-to-video", "label": "Hailuo 02 — ลื่น", "cost": "~$0.05/วิ", "ups": 0.05},
+    {"id": "fal-ai/kling-video/v2.5-turbo/pro/text-to-video", "label": "Kling 2.5 — cinematic คุ้ม", "cost": "~$0.07/วิ", "ups": 0.07},
+    {"id": "fal-ai/veo3", "label": "⚠️ Veo 3 — แพงมาก! ($0.40/วิ ~$3+/ช็อต)", "cost": "~$0.40/วิ", "ups": 0.40},
 ]
 
 

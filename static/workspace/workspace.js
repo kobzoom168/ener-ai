@@ -2331,15 +2331,17 @@ document.addEventListener('DOMContentLoaded', function() {
       if (fstat) fstat.innerHTML = d.fal_enabled
         ? '<span style="color:#22c55e">✅ พร้อม</span>'
         : '<span style="color:#f59e0b">⚠️ ใส่ FAL_KEY ก่อน (กล่อง 🔑)</span>';
+      _falModels = d.fal_models || [];
       const fmodel = document.getElementById('vdo-fal-model');
       if (fmodel) {
-        fmodel.innerHTML = (d.fal_models || []).map(m => '<option value="' + escapeHtml(m.id) + '">' + escapeHtml(m.label) + ' · ' + escapeHtml(m.cost || '') + '</option>').join('');
+        fmodel.innerHTML = _falModels.map(m => '<option value="' + escapeHtml(m.id) + '">' + escapeHtml(m.label) + ' · ' + escapeHtml(m.cost || '') + '</option>').join('');
         if (d.fal_model && ![].some.call(fmodel.options, o => o.value === d.fal_model))
           fmodel.insertBefore(new Option(d.fal_model, d.fal_model), fmodel.firstChild);
         if (d.fal_model) fmodel.value = d.fal_model;
       }
       const acount = document.getElementById('vdo-ai-count');
       if (acount && d.ai_video_count) acount.value = d.ai_video_count;
+      updateAiCost();
       const models = d.models || [];
       const optsHtml = models.map(m => '<option value="' + escapeHtml(m.id) + '">' + escapeHtml(m.label) + '</option>').join('');
       box.innerHTML = (d.agents || []).map(a => {
@@ -2413,9 +2415,30 @@ document.addEventListener('DOMContentLoaded', function() {
       showToast('❌ ' + ((e && e.message) || 'เปลี่ยนไม่สำเร็จ'));
     }
   }
+  let _falModels = [];
+  // live "≈ $X (~฿Y)" estimate so an expensive model can't silently burn money (Veo did once)
+  function updateAiCost() {
+    const el = document.getElementById('vdo-ai-cost');
+    if (!el) return;
+    const m = (document.getElementById('vdo-fal-model') || {}).value || '';
+    const c = parseInt((document.getElementById('vdo-ai-count') || {}).value || '0', 10) || 0;
+    const spec = _falModels.find(x => x.id === m);
+    if (!c || !spec || !spec.ups) { el.textContent = c ? '' : '✅ ฟรี (ฟุตเทจจริง)'; el.style.color = '#22c55e'; return; }
+    const usd = spec.ups * 8 * c;          // ~8s per shot
+    const baht = Math.round(usd * 35);
+    el.textContent = '≈ $' + usd.toFixed(2) + ' (~฿' + baht + ')/คลิป';
+    el.style.color = usd > 0.30 ? '#ef4444' : (usd > 0.12 ? '#f59e0b' : '#22c55e');
+  }
+
   async function saveVideoCfg() {
+    updateAiCost();
     const m = (document.getElementById('vdo-fal-model') || {}).value || '';
     const c = (document.getElementById('vdo-ai-count') || {}).value || '';
+    const spec = _falModels.find(x => x.id === m);
+    const usd = spec && spec.ups ? spec.ups * 8 * (parseInt(c, 10) || 0) : 0;
+    if (usd > 0.30 && !confirm('โหมดนี้ราคาประมาณ $' + usd.toFixed(2) + ' (~฿' + Math.round(usd * 35) + ') ต่อคลิป\nแพงนะ — ยืนยันไหม? (LTX ถูกกว่ามาก)')) {
+      loadVdoCrew(); return;  // revert UI
+    }
     try {
       await api('/workspace/vdo/videocfg', { method: 'POST', body: JSON.stringify({ model: m, count: c }) });
       showToast('✅ ตั้งค่า AI วิดีโอแล้ว (' + c + ' ช็อต)');
