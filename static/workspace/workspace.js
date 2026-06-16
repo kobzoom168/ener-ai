@@ -2329,10 +2329,11 @@ document.addEventListener('DOMContentLoaded', function() {
       const models = d.models || [];
       const optsHtml = models.map(m => '<option value="' + escapeHtml(m.id) + '">' + escapeHtml(m.label) + '</option>').join('');
       box.innerHTML = (d.agents || []).map(a => {
-        const head = '<div style="font-size:13px;font-weight:600">' + a.emoji + ' ' + escapeHtml(a.label) + '</div>' +
+        const head = '<div style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px">' +
+          '<span class="agent-dot"></span>' + a.emoji + ' ' + escapeHtml(a.label) + '</div>' +
           '<div style="font-size:11px;color:var(--muted-foreground);margin:2px 0 8px;min-height:28px">' + escapeHtml(a.role) + '</div>';
         if (!a.model_backed) {
-          return '<div style="background:#161b26;border:1px solid var(--border);border-radius:10px;padding:11px 12px">' + head +
+          return '<div data-agent-card="' + a.key + '" style="background:#161b26;border:1px solid var(--border);border-radius:10px;padding:11px 12px">' + head +
             '<div style="font-size:12px;color:#a78bfa;padding:6px 8px;background:#1f2430;border-radius:7px;text-align:center">⚙️ logic</div></div>';
         }
         const sel = '<select data-agent="' + a.key + '" data-rec="' + escapeHtml(a.recommend || '') + '" style="width:100%;background:#1f2430;border:1px solid var(--border);border-radius:7px;padding:6px 8px;color:var(--foreground);font-size:12px">' + optsHtml + '</select>';
@@ -2342,7 +2343,7 @@ document.addEventListener('DOMContentLoaded', function() {
               '<button onclick="applyVdoRecommended(\'' + a.key + '\')" style="background:none;border:1px solid #fbbf2455;color:#fbbf24;border-radius:5px;font-size:10px;padding:1px 6px;cursor:pointer">ใช้</button>' +
             '</div>' + (a.why ? '<div style="font-size:10px;color:var(--muted-foreground);margin-top:3px">' + escapeHtml(a.why) + '</div>' : '')
           : '';
-        return '<div style="background:#161b26;border:1px solid var(--border);border-radius:10px;padding:11px 12px">' + head + sel + rec + '</div>';
+        return '<div data-agent-card="' + a.key + '" style="background:#161b26;border:1px solid var(--border);border-radius:10px;padding:11px 12px">' + head + sel + rec + '</div>';
       }).join('');
       // set current + ensure current/recommended options exist
       (d.agents || []).forEach(a => {
@@ -2413,11 +2414,43 @@ document.addEventListener('DOMContentLoaded', function() {
     if (cur) sel.value = cur;
   }
 
+  const _AGENT_MATCH = [
+    { k: 'trend_scout', m: ['Trend Scout'] },
+    { k: 'researcher', m: ['Researcher'] },
+    { k: 'scriptwriter', m: ['Scriptwriter', 'เขียนบท'] },
+    { k: 'fact_qc', m: ['Fact-QC', 'QC ตรวจความถูก'] },
+    { k: 'retention_qc', m: ['Retention-QC'] },
+    { k: 'compliance', m: ['Compliance'] },
+    { k: 'originality', m: ['Originality'] },
+    { k: 'director', m: ['Director'] },
+  ];
+  // blink the crew card whose agent appears in the latest log line (clears when the clip is done)
+  function highlightCrewAgent(lines) {
+    const box = document.getElementById('vdo-crew');
+    if (!box) return;
+    const cards = box.querySelectorAll('[data-agent-card]');
+    if (!cards.length) return;
+    let active = null;
+    const last = (lines[lines.length - 1] || {}).msg || '';
+    const done = /เสร็จแล้ว|ส่งคลิป|คลิปเสร็จ|render พลาด|❌|พลาด/.test(last);
+    if (!done) {
+      for (let i = lines.length - 1; i >= 0 && !active; i--) {
+        const msg = lines[i].msg || '';
+        for (const a of _AGENT_MATCH) { if (a.m.some(s => msg.indexOf(s) >= 0)) { active = a.k; break; } }
+      }
+    }
+    cards.forEach(c => {
+      const on = !done && c.getAttribute('data-agent-card') === active;
+      c.classList.toggle('agent-active', on);
+    });
+  }
+
   function renderApConsole(lines) {
     const box = document.getElementById('ap-console');
     const el = document.getElementById('ap-console-lines');
     if (!box || !el) return;
     lines = lines || [];
+    highlightCrewAgent(lines);
     if (!lines.length) { box.style.display = 'none'; return; }
     box.style.display = 'block';
     const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
