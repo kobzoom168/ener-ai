@@ -11884,8 +11884,14 @@ async def admin_youtube_connect(request: Request):
             "<h3 style='font-family:system-ui;padding:40px'>⛔ ยังไม่ได้ตั้ง Client ID / Secret — "
             "<a href='/admin/youtube'>กลับไปตั้งค่า</a></h3>")
     redirect_uri = _yt_redirect_uri(request, redir)
+    # One-time state: Google's redirect back to /callback is cross-site, so the
+    # SameSite=strict admin_session cookie is dropped there. We authorize the callback
+    # by matching this state (set here, where the admin session IS valid) instead.
+    import secrets as _secrets
+    state = _secrets.token_urlsafe(24)
+    await set_config("youtube_oauth_state", state)
     try:
-        url = await youtube_client.auth_url(redirect_uri, state="ener-yt")
+        url = await youtube_client.auth_url(redirect_uri, state=state)
     except Exception as exc:
         return HTMLResponse(
             f"<h3 style='font-family:system-ui;padding:40px'>สร้างลิงก์เชื่อมไม่สำเร็จ: "
@@ -11895,10 +11901,18 @@ async def admin_youtube_connect(request: Request):
 
 @app.get("/admin/youtube/callback")
 async def admin_youtube_callback(request: Request):
-    await _verify_admin_session(request)
+    # Don't require the admin_session cookie here — it's SameSite=strict and Google's
+    # cross-site redirect drops it. Authorize via the one-time state set in /connect.
     from app.agents import youtube_client
     err = request.query_params.get("error", "")
     code = request.query_params.get("code", "")
+    state = request.query_params.get("state", "")
+    expected_state = await get_config("youtube_oauth_state", "")
+    if not expected_state or state != expected_state:
+        return HTMLResponse(
+            "<h3 style='font-family:system-ui;padding:40px'>⛔ state ไม่ตรง (เริ่มเชื่อมใหม่จากปุ่ม Connect) "
+            "<br><a href='/admin/youtube'>กลับ</a></h3>")
+    await set_config("youtube_oauth_state", "")  # one-time use
     if err or not code:
         return HTMLResponse(
             f"<h3 style='font-family:system-ui;padding:40px'>เชื่อม YouTube ไม่สำเร็จ: "
