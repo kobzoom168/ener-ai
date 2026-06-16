@@ -208,6 +208,15 @@
               <button class="panel-action" onclick="loadVdoCrew()">↻</button>
             </div>
           </div>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;background:#161b26;border:1px solid var(--border);border-radius:9px;padding:9px 12px">
+            <span style="font-size:13px;font-weight:600">🎞️ โหมดภาพพื้นหลัง</span>
+            <select id="vdo-bgmode" onchange="setVdoBgMode(this.value)" style="background:#1f2430;border:1px solid var(--border);border-radius:7px;padding:6px 10px;color:var(--foreground);font-size:12px">
+              <option value="image">ภาพนิ่ง AI (Nano Banana) — ถูกสุด ไม่ขยับ</option>
+              <option value="mixed">ผสม — วิดีโอจริง + ภาพ + AI hero (ขยับ)</option>
+              <option value="video">เน้นฟุตเทจวิดีโอจริง (ขยับมากสุด)</option>
+            </select>
+            <span style="font-size:11px;color:var(--muted-foreground)">เปลี่ยนแล้วมีผลคลิปถัดไป</span>
+          </div>
           <div id="vdo-crew" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px">
             <div style="color:var(--muted-foreground);font-size:13px">กำลังโหลดทีม…</div>
           </div>

@@ -2278,6 +2278,8 @@ document.addEventListener('DOMContentLoaded', function() {
     if (!box) return;
     try {
       const d = await api('/workspace/vdo/agents');
+      const bgSel = document.getElementById('vdo-bgmode');
+      if (bgSel && d.bg_mode) bgSel.value = d.bg_mode;
       const models = d.models || [];
       const optsHtml = models.map(m => '<option value="' + escapeHtml(m.id) + '">' + escapeHtml(m.label) + '</option>').join('');
       box.innerHTML = (d.agents || []).map(a => {
@@ -2341,9 +2343,19 @@ document.addEventListener('DOMContentLoaded', function() {
       if (btn) { btn.disabled = false; btn.textContent = '💾 บันทึก'; }
     }
   }
+  async function setVdoBgMode(mode) {
+    try {
+      await api('/workspace/vdo/bgmode', { method: 'POST', body: JSON.stringify({ mode: mode }) });
+      const labels = { image: 'ภาพนิ่ง AI', mixed: 'ผสมวิดีโอจริง', video: 'เน้นวิดีโอจริง' };
+      showToast('✅ โหมดภาพ: ' + (labels[mode] || mode) + ' (มีผลคลิปถัดไป)');
+    } catch (e) {
+      showToast('❌ ' + ((e && e.message) || 'เปลี่ยนไม่สำเร็จ'));
+    }
+  }
   window.loadVdoCrew = loadVdoCrew;
   window.applyVdoRecommended = applyVdoRecommended;
   window.saveVdoCrew = saveVdoCrew;
+  window.setVdoBgMode = setVdoBgMode;
 
   function renderApChannels() {
     const sel = document.getElementById('ap-channel');

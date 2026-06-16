@@ -1149,7 +1149,7 @@ async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: 
     await clear_console()
     await log_line(f"🚀 เริ่มสร้างคลิป — {profile.name}")
     await set_status("script")
-    await log_line("✍️ เขียนบท (MiniMax M3)…")
+    await log_line(f"✍️ ทีม AI เขียนบท (Scriptwriter: {await _agent_model('scriptwriter')})…")
     script = await generate_channel_script(profile, topic, title, summary, tone=tone)
     await log_line(f"📝 หัวข้อ: {script.get('title', '')}")
     for _ln in (script.get("lines") or []):
@@ -1165,7 +1165,16 @@ async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: 
     await set_status("media", title=script.get("title", ""))
     imps = script.get("image_prompts") or [script["title"]]
     vqs = script.get("video_queries") or []
-    bg_mode = os.environ.get("VDO_BG_MODE", "image")  # image (free, all AI images) | video | mixed
+    # image (free, all AI stills) | mixed (real stock video + AI hero + stills) | video (real footage first)
+    # UI config (vdo_bg_mode) wins over the deploy default env.
+    try:
+        from app.core.database import get_config
+        bg_mode = (await get_config("vdo_bg_mode", "")).strip()
+    except Exception:
+        bg_mode = ""
+    bg_mode = bg_mode or os.environ.get("VDO_BG_MODE", "image")
+    await log_line({"image": "🎨 โหมดภาพ: ภาพนิ่ง AI", "mixed": "🎬 โหมดภาพ: ผสมวิดีโอจริง+ภาพ",
+                    "video": "🎬 โหมดภาพ: เน้นฟุตเทจวิดีโอจริง"}.get(bg_mode, "🎨 โหมดภาพ: " + bg_mode))
 
     if bg_mode == "image":
         # all AI images via OpenRouter (no new bill) — several scenes per clip

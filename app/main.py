@@ -7143,7 +7143,20 @@ async def workspace_vdo_agents(request: Request):
         opts = [{"id": i, "label": l} for i, l in await list_openrouter_models()]
     except Exception:
         opts = []
-    return JSONResponse({"agents": agents, "models": opts})
+    bg_mode = (await get_config("vdo_bg_mode", "")).strip() or "image"
+    return JSONResponse({"agents": agents, "models": opts, "bg_mode": bg_mode})
+
+
+@app.post("/workspace/vdo/bgmode")
+async def workspace_vdo_bgmode(request: Request):
+    """Set background mode: image (AI stills) | mixed (real video+stills) | video (real footage)."""
+    await _require_admin(request)
+    body = await request.json()
+    mode = str(body.get("mode", "")).strip().lower()
+    if mode not in ("image", "mixed", "video"):
+        raise HTTPException(status_code=400, detail="bad mode")
+    await set_config("vdo_bg_mode", mode)
+    return JSONResponse({"ok": True})
 
 
 @app.post("/workspace/vdo/agents/model")
