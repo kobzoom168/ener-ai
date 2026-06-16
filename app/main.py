@@ -5907,6 +5907,15 @@ async def workspace_page(
     total_messages, projects = await _workspace_projects_for_page()
     stats = {**stats, "messages": total_messages}
 
+    # Cache-busting version for static JS/CSS: changes only when those files change (deploy),
+    # so the browser caches them between deploys but always picks up a new build immediately.
+    try:
+        _wsd = _STATIC_DIR / "workspace"
+        asset_v = str(int(max((_wsd / "workspace.js").stat().st_mtime,
+                              (_wsd / "workspace-markdown.js").stat().st_mtime,
+                              (_wsd / "workspace.css").stat().st_mtime)))
+    except Exception:
+        asset_v = "1"
     active_model_key = await get_active_model()
     model_groups, model_options = await _workspace_openrouter_model_groups()
     recent_messages = await _workspace_history_rows(
@@ -5945,6 +5954,7 @@ async def workspace_page(
             "today_label": _format_chat_date_label(today_key),
             "office": office,
             "now_ts": int(time.time()),
+            "asset_v": asset_v,
         },
     )
 
