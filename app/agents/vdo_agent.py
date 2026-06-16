@@ -17,6 +17,11 @@ from app.agents.channels import ChannelProfile, RETENTION_CORE, get_profile
 
 VDO_DIR = "/app/data/vdo"
 SCRIPT_MODEL = "minimax/minimax-m3"  # picks real documented mysteries; cheap, engaging Thai
+# Researcher agent uses a web-search model so facts are grounded in real sources (not the
+# writer model's memory). Falls back to SCRIPT_MODEL if the search model isn't available.
+RESEARCH_MODEL = os.environ.get("VDO_RESEARCH_MODEL", "perplexity/sonar")
+# Per-channel history of recent clips (for the Originality Guard / Angle Diversifier).
+_CLIP_HISTORY_KEY = "vdo_clip_history"
 
 # Narration tone presets for the mystery script (chosen in the Auto Post UI).
 TONE_GUIDE = {
@@ -779,11 +784,88 @@ async def _vlog(msg: str) -> None:
 
 
 async def _research_topic(subject: str, profile: "ChannelProfile") -> str:
-    """Accurate brief so the writer doesn't misread a term / fabricate facts.
-    The research persona + question come from the channel profile."""
-    system = profile.research_persona
-    prompt = profile.research_question.format(subject=subject)
-    return (await _or_chat(SCRIPT_MODEL, system, prompt, 2500)).strip()
+    """🔎 Researcher: ground the script in REAL, sourced facts (web-search model) so the
+    writer can't fabricate. Asks for a source per fact + a clear 'verified vs belief' split.
+    Falls back to the writer model if the search model isn't available on the account."""
+    system = (profile.research_persona +
+              " ค้นจากเว็บจริง แนบชื่อแหล่งที่มาสั้นๆ ต่อข้อเท็จจริง และแยกให้ชัดว่าข้อไหน "
+              "'ยืนยันได้' กับข้อไหน 'เป็นความเชื่อ/เล่าต่อ' ห้ามแต่งแหล่งอ้างอิงปลอม")
+    prompt = (profile.research_question.format(subject=subject) +
+              "\n\nตอบเป็น bullet พร้อม (แหล่ง) ต่อข้อ และทำเครื่องหมาย [ยืนยันได้]/[ความเชื่อ] หน้าแต่ละข้อ")
+    out = (await _or_chat(RESEARCH_MODEL, system, prompt, 2500)).strip()
+    if not out:  # search model unavailable → degrade to the writer model (still better than nothing)
+        out = (await _or_chat(SCRIPT_MODEL, system, prompt, 2500)).strip()
+    return out
+
+
+async def _recent_clips(channel_id: str, n: int = 20) -> list[dict]:
+    """Last N clips made for this channel — fuels the Originality Guard / Angle Diversifier."""
+    try:
+        from app.core.database import get_config
+        raw = await get_config(_CLIP_HISTORY_KEY, "")
+        data = _json.loads(raw) if raw else {}
+        return (data.get(channel_id) or [])[:n]
+    except Exception:
+        return []
+
+
+async def _record_clip(channel_id: str, entry: dict) -> None:
+    """Append a freshly made clip's fingerprint (title/hook_type/angle/topic) to history."""
+    try:
+        from app.core.database import get_config, set_config
+        raw = await get_config(_CLIP_HISTORY_KEY, "")
+        data = _json.loads(raw) if raw else {}
+        if not isinstance(data, dict):
+            data = {}
+        lst = data.get(channel_id) or []
+        lst.insert(0, entry)
+        data[channel_id] = lst[:40]
+        await set_config(_CLIP_HISTORY_KEY, _json.dumps(data, ensure_ascii=False))
+    except Exception:
+        pass
+
+
+async def _retention_qc(lines: list[str], profile: "ChannelProfile") -> tuple[list[str], str]:
+    """🎯 Retention-QC: hook strong enough? open-loop actually paid off? any draggy padding
+    that makes viewers swipe away? Tightens the script in place if weak (keeps line count/tone)."""
+    if not lines:
+        return lines, ""
+    system = (
+        "คุณคือ QC ด้าน retention ของคลิปสั้นแนวตั้ง ตรวจ 3 จุดที่ทำให้คนเลื่อนหนี: "
+        "(1) ประโยคแรก 'หยุดนิ้ว' ได้จริงไหม (2) มีปมค้าง(open loop)ที่ถูกเฉลยตอนพีคจริงไหม "
+        "(3) ช่วงปูเรื่องยืดยาว/น่าเบื่อตรงไหนที่ต้องตัดให้กระชับ ถ้าอ่อนให้แก้ให้แรง+กระชับขึ้น "
+        "คงจำนวนบรรทัดใกล้เดิม คงโทน/สำนวนเดิม ถ้าดีอยู่แล้วไม่ต้องแก้ ตอบ JSON เท่านั้น"
+    )
+    prompt = ("บท:\n" + _json.dumps(lines, ensure_ascii=False) + "\n\n"
+              'ตอบ JSON: {"strong": true ถ้าดีอยู่แล้ว/false ถ้าต้องปรับ, '
+              '"fixed_lines": [บทที่ปรับให้ retention ดีขึ้น ครบทุกบรรทัด], "note": "จุดที่ปรับสั้นๆ"}')
+    qc = _parse_json(await _or_chat(SCRIPT_MODEL, system, prompt, 4500))
+    fixed = [_strip_quotes(str(x)) for x in (qc.get("fixed_lines") or []) if str(x).strip()]
+    if not qc.get("strong", True) and fixed:
+        return fixed, str(qc.get("note", "")).strip()[:140]
+    return lines, ""
+
+
+async def _compliance_pass(lines: list[str], profile: "ChannelProfile") -> tuple[list[str], str]:
+    """✅ Compliance: keep belief content within platform policy — no guaranteed-outcome
+    claims (รวย/หาย/ปลอดภัยแน่), frame as 'ตามความเชื่อ/ตำนานเล่าว่า', no disrespect."""
+    if profile.research_mode != "belief" or not lines:
+        return lines, ""
+    system = (
+        "คุณคือ QC นโยบายแพลตฟอร์มสำหรับคอนเทนต์สายมู/ความเชื่อ ตรวจไม่ให้สุ่มเสี่ยงโดนจำกัด: "
+        "ห้ามสัญญาผลลัพธ์ (เช่น ทำแล้วรวยแน่/หายป่วยแน่/ปลอดภัยแน่), "
+        "ให้ใช้สำนวน 'ตามความเชื่อ/ตำนานเล่าว่า/บ้างว่า' แทนการยืนยันว่าเป็นเรื่องจริง 100%, "
+        "ไม่ลบหลู่ ไม่ขู่ให้กลัวเกินเหตุ ถ้ามีจุดเสี่ยงให้แก้เฉพาะจุด คงจำนวนบรรทัด/โทนเดิม "
+        "ถ้าปลอดภัยอยู่แล้วไม่ต้องแก้ ตอบ JSON เท่านั้น"
+    )
+    prompt = ("บท:\n" + _json.dumps(lines, ensure_ascii=False) + "\n\n"
+              'ตอบ JSON: {"ok": true ถ้าปลอดภัย/false ถ้าต้องแก้, '
+              '"fixed_lines": [บทที่แก้ให้ปลอดภัยแล้ว ครบทุกบรรทัด], "note": "จุดเสี่ยงที่แก้"}')
+    qc = _parse_json(await _or_chat(SCRIPT_MODEL, system, prompt, 4500))
+    fixed = [_strip_quotes(str(x)) for x in (qc.get("fixed_lines") or []) if str(x).strip()]
+    if not qc.get("ok", True) and fixed:
+        return fixed, str(qc.get("note", "")).strip()[:140]
+    return lines, ""
 
 
 async def _qc_facts(research: str, lines: list[str], profile: "ChannelProfile") -> tuple[list[str], str]:
@@ -820,13 +902,26 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
     lines_say (phonetic spelling the voice speaks) 1:1 with on-screen lines.
     """
     tone = tone or profile.default_tone
+    # 🛡️ Originality Guard / Angle Diversifier: pull recent clips so the writer avoids
+    # repeating angles/topics (YouTube July-2025 policy demonetises templated/repetitive channels).
+    recent = await _recent_clips(profile.id)
+    avoid_block = ""
+    if recent:
+        seen = "; ".join(f"{c.get('title','')}[{c.get('angle','')}]" for c in recent[:12] if c.get("title"))
+        if seen:
+            avoid_block = (
+                "\n\n[หลีกเลี่ยงความซ้ำ] คลิปล่าสุดของช่องนี้ทำไปแล้ว: " + seen +
+                "\nห้ามซ้ำหัวข้อ/มุมเดิม เลือก 'angle' ที่ต่างออกไป "
+                "(เล่าเรื่อง / พลิกความเชื่อผิด / เปรียบเทียบ / คำเตือน / เจาะที่มา-ประวัติศาสตร์) "
+                "และเปลี่ยนแบบฮุคไม่ให้เหมือนคลิปก่อน")
+            await _vlog("🛡️ Originality Guard: เลี่ยงซ้ำกับ " + str(len(recent)) + " คลิปล่าสุด")
     research = ""
     subject = (topic or title or "").strip()
     if subject and profile.research_mode != "none":
-        await _vlog("🔍 ค้นข้อมูลก่อน: " + subject)
+        await _vlog("🔎 Researcher: ค้นข้อมูลจริง — " + subject)
         research = await _research_topic(subject, profile)
         if research:
-            await _vlog("📚 ได้ข้อมูลอ้างอิงที่ถูกต้องแล้ว")
+            await _vlog("📚 Researcher: ได้ข้อมูล + แหล่งอ้างอิงแล้ว")
     system = (
         f"{profile.persona} {profile.audience} "
         f"{_tone_guide(tone)} "
@@ -846,9 +941,11 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
         body = f"หัวข้อ: {topic}\n\nเขียนบทคลิปที่น่าสนใจเรื่องนี้"
     else:
         body = profile.topic_pick
+    if avoid_block:
+        body += avoid_block
     if research:
         body += "\n\nข้อมูลอ้างอิงที่ถูกต้อง (ยึดตามนี้เป๊ะ ห้ามขัด ห้ามเข้าใจความหมายผิด):\n" + research[:1500]
-        await _vlog("✍️ เขียนบทตามข้อมูลจริง…")
+    await _vlog("✍️ Scriptwriter: เขียนบทตามโครง retention…")
     prompt = (
         f"{body}\n\n"
         "เขียนบทตามโครงบีทข้างบนให้ครบทุกช่วง (ฮุค → ปมค้าง → ปูเรื่อง+อ้างอิงเจาะจง → จุดพีค → สรุป+ชวนติดตาม)\n"
@@ -863,7 +960,9 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
         f'"youtube_title": "พาดหัวคลิปสำหรับ YouTube — {profile.yt_title_hint}", '
         '"youtube_description": "คำอธิบายคลิป YouTube 2-4 ประโยค เล่าว่าเรื่องเกี่ยวกับอะไรให้คนอยากดู '
         '(ดึงจากเนื้อบท ห้ามสปอยจุดพีค) แล้วขึ้นบรรทัดใหม่ใส่ #แฮชแท็ก 5-8 ตัว แล้วปิดท้ายชวนกดติดตาม", '
-        '"youtube_tags": ["แท็กคีย์เวิร์ด 8-12 คำ ตรงเนื้อหา ทั้งไทยและอังกฤษ คำสั้นๆ", "..."]}'
+        '"youtube_tags": ["แท็กคีย์เวิร์ด 8-12 คำ ตรงเนื้อหา ทั้งไทยและอังกฤษ คำสั้นๆ", "..."], '
+        '"angle": "มุมเล่าของคลิปนี้สั้นๆ (เล่าเรื่อง/พลิกความเชื่อ/เปรียบเทียบ/คำเตือน/เจาะที่มา)", '
+        '"hook_type": "แบบฮุคที่ใช้ (คำถามค้างใจ/พลิกความเชื่อ/ข้ออ้างเจาะจง/คำเตือน/โยนกลางฉาก)"}'
     )
     # MiniMax M3 is a reasoning model: with the long beat/hook system prompt it can spend
     # its whole budget thinking and emit truncated/empty JSON. Give it room + retry once with
@@ -881,16 +980,34 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
     out_title = _strip_quotes(str(data.get("title") or title or topic or profile.fallback_title))[:60]
     if not lines:
         lines = [out_title]
-    # QC: verify the facts against the research brief and fix mistakes
+    # ── QC crew: each agent can fix the script in place; any change re-pairs lines_say ──
+    # 🧐 Fact/Source-QC — cut/ correct claims that don't match the sourced research
     if research and lines:
-        await _vlog(profile.qc_label)
+        await _vlog("🧐 " + profile.qc_label)
         fixed, note = await _qc_facts(research, lines, profile)
         if note:
             lines = [x for x in fixed if x][:9] or lines
-            say_raw = []  # QC changed the wording → re-pair say to the fixed display
-            await _vlog("✏️ QC แก้ข้อมูล: " + note)
+            say_raw = []
+            await _vlog("✏️ Fact-QC แก้ข้อมูล: " + note)
         else:
-            await _vlog("✅ QC ผ่าน — ข้อมูลถูกต้อง")
+            await _vlog("✅ Fact-QC ผ่าน — ข้อมูลตรงแหล่งอ้างอิง")
+    # 🎯 Retention-QC — strengthen hook / open-loop / trim padding
+    if lines:
+        await _vlog("🎯 Retention-QC: ตรวจฮุค + ปมค้าง + จังหวะ…")
+        fixed, note = await _retention_qc(lines, profile)
+        if note:
+            lines = [x for x in fixed if x][:9] or lines
+            say_raw = []
+            await _vlog("✏️ Retention-QC ปรับ: " + note)
+        else:
+            await _vlog("✅ Retention-QC ผ่าน — ฮุคแรง ปมค้างครบ")
+    # ✅ Compliance — keep belief content within platform policy
+    if lines:
+        fixed, note = await _compliance_pass(lines, profile)
+        if note:
+            lines = [x for x in fixed if x][:9] or lines
+            say_raw = []
+            await _vlog("✅ Compliance แก้จุดเสี่ยง: " + note)
     # pair lines_say 1:1 with display lines (fall back to the display line itself)
     lines_say = [(say_raw[i] if i < len(say_raw) and say_raw[i] else lines[i]) for i in range(len(lines))]
     caption = str(data.get("caption") or out_title).strip()[:300]
@@ -904,9 +1021,16 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
     yt_title = _strip_quotes(str(data.get("youtube_title") or "")).strip()[:100] or out_title
     yt_description = str(data.get("youtube_description") or "").strip() or caption
     yt_tags = [str(t).strip()[:60] for t in (data.get("youtube_tags") or []) if str(t).strip()][:15]
+    angle = _strip_quotes(str(data.get("angle") or "")).strip()[:80]
+    hook_type = _strip_quotes(str(data.get("hook_type") or "")).strip()[:60]
+    # 🛡️ record this clip's fingerprint so next run's Originality Guard can avoid repeating it
+    await _record_clip(profile.id, {"title": out_title, "angle": angle, "hook_type": hook_type,
+                                    "topic": subject, "at": int(time.time())})
+    if angle:
+        await _vlog(f"🎬 มุมคลิปนี้: {angle}" + (f" · ฮุค: {hook_type}" if hook_type else ""))
     return {"title": out_title, "lines": lines, "lines_say": lines_say, "caption": caption,
             "image_prompts": image_prompts, "video_queries": video_queries,
-            "ai_video_prompt": ai_video_prompt,
+            "ai_video_prompt": ai_video_prompt, "angle": angle, "hook_type": hook_type,
             "youtube_title": yt_title, "youtube_description": yt_description, "youtube_tags": yt_tags}
 
 
