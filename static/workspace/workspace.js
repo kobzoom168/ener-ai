@@ -2259,9 +2259,55 @@ document.addEventListener('DOMContentLoaded', function() {
       if (schDiv) schDiv.innerHTML = '<div style="color:#f87171">โหลดไม่สำเร็จ: ' + escapeHtml(e.message) + '</div>';
     }
     loadAutopostClips();
+    loadVdoKeys();
     loadVdoCrew();
     startApStatusPoll();
   }
+
+  async function loadVdoKeys() {
+    const box = document.getElementById('vdo-keys');
+    if (!box) return;
+    try {
+      const d = await api('/workspace/vdo/keys');
+      box.innerHTML = (d.keys || []).map(k => {
+        const badge = k.set
+          ? '<span style="color:#22c55e;font-size:11px">✅ ตั้งแล้ว</span>'
+          : '<span style="color:var(--muted-foreground);font-size:11px">⚪ ยังไม่ตั้ง</span>';
+        const hint = k.hint ? ' · <a href="https://' + escapeHtml(k.hint) + '" target="_blank" rel="noopener" style="color:#60a5fa;font-size:11px">' + escapeHtml(k.hint) + '</a>' : '';
+        return '<div style="background:#161b26;border:1px solid var(--border);border-radius:10px;padding:10px 12px">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">' +
+            '<span style="font-size:12px;font-weight:600">' + escapeHtml(k.label) + '</span>' + badge + '</div>' +
+          '<input data-key="' + k.k + '" type="' + (k.secret ? 'password' : 'text') + '" autocomplete="off" ' +
+            'placeholder="' + (k.set ? '(ตั้งแล้ว — เว้นว่างถ้าไม่เปลี่ยน)' : 'วางคีย์ที่นี่') + '" ' +
+            'style="width:100%;background:#1f2430;border:1px solid var(--border);border-radius:7px;padding:7px 9px;color:var(--foreground);font-size:12px">' +
+          (hint ? '<div style="margin-top:4px">' + hint + '</div>' : '') +
+        '</div>';
+      }).join('');
+    } catch (e) {
+      box.innerHTML = '<div style="color:#f87171;font-size:13px">โหลดคีย์ไม่ได้</div>';
+    }
+  }
+
+  async function saveVdoKeys(btn) {
+    const box = document.getElementById('vdo-keys');
+    if (!box) return;
+    const inputs = [].slice.call(box.querySelectorAll('input[data-key]')).filter(i => i.value.trim());
+    if (!inputs.length) { showToast('ยังไม่ได้กรอกคีย์ไหนเลย'); return; }
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ กำลังบันทึก…'; }
+    try {
+      for (const inp of inputs) {
+        await api('/workspace/vdo/keys', { method: 'POST', body: JSON.stringify({ k: inp.getAttribute('data-key'), value: inp.value.trim() }) });
+      }
+      showToast('✅ บันทึก ' + inputs.length + ' คีย์แล้ว (มีผลทันที)');
+      loadVdoKeys();
+    } catch (e) {
+      showToast('❌ ' + ((e && e.message) || 'บันทึกไม่สำเร็จ'));
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '💾 บันทึกคีย์ที่กรอก'; }
+    }
+  }
+  window.loadVdoKeys = loadVdoKeys;
+  window.saveVdoKeys = saveVdoKeys;
 
   function _vdoEnsureOption(sel, id, suffix) {
     // add an <option> for `id` if the dropdown doesn't already have it (e.g. current/recommended)

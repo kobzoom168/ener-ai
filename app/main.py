@@ -5231,6 +5231,7 @@ def _parse_brainstorm_blocks(raw_text: str) -> dict:
 async def lifespan(app: FastAPI):
     global scheduler
     await init_db()
+    await _load_api_keys_to_env()  # config-stored API keys → process env (so os.environ readers work)
     await telegram_app.initialize()
     await telegram_app.bot.set_webhook(url=f"{settings.telegram_webhook_url}/webhook")
     await telegram_app.start()
@@ -7127,6 +7128,67 @@ VDO_CREW = [
     {"key": "director",     "emoji": "🎬", "label": "Director",         "role": "วางแผนช็อต ภาพนิ่ง/ฟุตเทจ/AI video", "model_backed": True, "recommend": "deepseek/deepseek-v4-flash", "why": "วางแผนเป็น logic ตัวกลางพอ"},
     {"key": "analyst",      "emoji": "📊", "label": "Analyst",          "role": "เรียนจาก Analytics (เปิดใช้เฟส ②)", "model_backed": True, "recommend": "minimax/minimax-m3",      "why": "ยังไม่ทำงาน (รอเฟส ②)"},
 ]
+
+
+# All API keys the video pipeline + posting use. config key `k` is the source of truth (DB);
+# its value is mirrored into os.environ[`env`] on save + at startup so existing os.environ
+# readers (TTS, Pexels, fal, D-ID, Facebook) pick it up with no per-module changes.
+VDO_KEYS = [
+    {"k": "openrouter_api_key", "env": "OPENROUTER_API_KEY", "label": "OpenRouter — สมอง AI ทั้งหมด (บท/ภาพ/วิดีโอ)", "hint": "openrouter.ai/keys", "secret": True},
+    {"k": "ELEVENLABS_API_KEY", "env": "ELEVENLABS_API_KEY", "label": "ElevenLabs — เสียงพากย์", "hint": "elevenlabs.io/app/settings/api-keys", "secret": True},
+    {"k": "ELEVENLABS_VOICE_ID", "env": "ELEVENLABS_VOICE_ID", "label": "ElevenLabs Voice ID — เสียงที่โคลนไว้", "hint": "", "secret": False},
+    {"k": "PEXELS_API_KEY", "env": "PEXELS_API_KEY", "label": "Pexels — ฟุตเทจวิดีโอจริง (ฟรี)", "hint": "pexels.com/api", "secret": True},
+    {"k": "FAL_KEY", "env": "FAL_KEY", "label": "fal.ai — AI สร้างวิดีโอ", "hint": "fal.ai/dashboard/keys", "secret": True},
+    {"k": "XAI_API_KEY", "env": "XAI_API_KEY", "label": "xAI (Grok) — AI วิดีโอต่อตรง (ทางเลือก)", "hint": "console.x.ai", "secret": True},
+    {"k": "DID_API_KEY", "env": "DID_API_KEY", "label": "D-ID — หน้าพูด (PIP)", "hint": "studio.d-id.com", "secret": True},
+    {"k": "FB_PAGE_ID", "env": "FB_PAGE_ID", "label": "Facebook Page ID", "hint": "", "secret": False},
+    {"k": "FB_PAGE_TOKEN", "env": "FB_PAGE_TOKEN", "label": "Facebook Page Token", "hint": "", "secret": True},
+]
+
+
+async def _load_api_keys_to_env() -> None:
+    """Mirror config-stored API keys into os.environ (only if env isn't already set)."""
+    import os as _o
+    try:
+        for spec in VDO_KEYS:
+            v = (await get_config(spec["k"], "") or "").strip()
+            if v and not _o.environ.get(spec["env"]):
+                _o.environ[spec["env"]] = v
+    except Exception:
+        pass
+
+
+@app.get("/workspace/vdo/keys")
+async def workspace_vdo_keys(request: Request):
+    """List API keys + whether each is set (never returns the secret values)."""
+    await _require_admin(request)
+    import os as _o
+    out = []
+    for spec in VDO_KEYS:
+        v = (await get_config(spec["k"], "") or "").strip()
+        is_set = bool(v or _o.environ.get(spec["env"], ""))
+        out.append({"k": spec["k"], "label": spec["label"], "hint": spec.get("hint", ""),
+                    "secret": spec["secret"], "set": is_set})
+    return JSONResponse({"keys": out})
+
+
+@app.post("/workspace/vdo/keys")
+async def workspace_vdo_keys_save(request: Request):
+    """Save one API key → DB config + live os.environ (so it takes effect immediately)."""
+    await _require_admin(request)
+    import os as _o
+    body = await request.json()
+    k = str(body.get("k", "")).strip()
+    value = str(body.get("value", "")).strip()
+    spec = next((s for s in VDO_KEYS if s["k"] == k), None)
+    if not spec:
+        raise HTTPException(status_code=400, detail="unknown key")
+    await set_config(k, value)
+    if value:
+        _o.environ[spec["env"]] = value
+    else:
+        _o.environ.pop(spec["env"], None)
+    return JSONResponse({"ok": True})
 
 
 @app.get("/workspace/vdo/agents")
