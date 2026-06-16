@@ -850,20 +850,26 @@ async def _record_clip(channel_id: str, entry: dict) -> None:
         pass
 
 
-async def _retention_qc(lines: list[str], profile: "ChannelProfile") -> tuple[list[str], str]:
-    """🎯 Retention-QC: hook strong enough? open-loop actually paid off? any draggy padding
-    that makes viewers swipe away? Tightens the script in place if weak (keeps line count/tone)."""
+async def _retention_qc(lines: list[str], profile: "ChannelProfile", subject: str = "") -> tuple[list[str], str]:
+    """🎯 Retention-QC (runs LAST): re-sharpen the script for retention AND topical coherence —
+    one topic only (no unrelated tangents), specific hook→concrete payoff, no repeated filler."""
     if not lines:
         return lines, ""
+    topic_line = f"หัวข้อของคลิปนี้คือ: '{subject}'. " if subject else ""
     system = (
-        "คุณคือ QC ด้าน retention ของคลิปสั้นแนวตั้ง ตรวจ 3 จุดที่ทำให้คนเลื่อนหนี: "
-        "(1) ประโยคแรก 'หยุดนิ้ว' ได้จริงไหม (2) มีปมค้าง(open loop)ที่ถูกเฉลยตอนพีคจริงไหม "
-        "(3) ช่วงปูเรื่องยืดยาว/น่าเบื่อตรงไหนที่ต้องตัดให้กระชับ ถ้าอ่อนให้แก้ให้แรง+กระชับขึ้น "
-        "คงจำนวนบรรทัดใกล้เดิม คงโทน/สำนวนเดิม ถ้าดีอยู่แล้วไม่ต้องแก้ ตอบ JSON เท่านั้น"
+        "คุณคือ QC ด้าน retention + ความสอดคล้องของเนื้อหาคลิปสั้น แก้บทให้คมขึ้นตามนี้: "
+        f"{topic_line}"
+        "(1) อยู่กับหัวข้อเดียว — ตัด/แก้ประโยคที่ 'หลุดเรื่อง' หรือลากเรื่องอื่นที่ไม่เกี่ยวมาปน "
+        "(เช่น หัวข้อ UFO ห้ามมีผีปอบ/ผีฟ้าโผล่มา เว้นแต่เกี่ยวกันจริงและเชื่อมให้เนียน) "
+        "(2) ฮุคประโยคแรกต้องปักคำถาม/ปม 'เฉพาะเจาะจง 1 ข้อ' ที่คนอยากรู้คำตอบ "
+        "(3) จุดพีคต้องเฉลยปมนั้นด้วยคำตอบ 'เป็นรูปธรรม' ไม่ใช่ลอยๆ ว่า 'อาจจะ…' "
+        "(4) ตัดสำนวนซ้ำๆ ที่ขึ้นหลายบรรทัด (เช่น 'ตามความเชื่อ' ซ้ำทุกประโยค) ให้เหลือเท่าที่จำเป็น "
+        "(5) ตัดช่วงปูเรื่องที่ยืด/น่าเบื่อ ให้กระชับ พูดลื่น "
+        "คงจำนวนบรรทัดใกล้เดิม คงข้อเท็จจริง/แหล่งอ้างอิงเดิม ห้ามทำให้ผิดข้อมูล ตอบ JSON เท่านั้น"
     )
     prompt = ("บท:\n" + _json.dumps(lines, ensure_ascii=False) + "\n\n"
-              'ตอบ JSON: {"strong": true ถ้าดีอยู่แล้ว/false ถ้าต้องปรับ, '
-              '"fixed_lines": [บทที่ปรับให้ retention ดีขึ้น ครบทุกบรรทัด], "note": "จุดที่ปรับสั้นๆ"}')
+              'ตอบ JSON: {"strong": true ถ้าดี+ตรงหัวข้ออยู่แล้ว/false ถ้าต้องปรับ, '
+              '"fixed_lines": [บทที่ปรับแล้ว ครบทุกบรรทัด], "note": "จุดที่ปรับสั้นๆ"}')
     qc = _parse_json(await _or_chat(await _agent_model("retention_qc"), system, prompt, 4500))
     fixed = [_strip_quotes(str(x)) for x in (qc.get("fixed_lines") or []) if str(x).strip()]
     if not qc.get("strong", True) and fixed:
@@ -877,11 +883,14 @@ async def _compliance_pass(lines: list[str], profile: "ChannelProfile") -> tuple
     if profile.research_mode != "belief" or not lines:
         return lines, ""
     system = (
-        "คุณคือ QC นโยบายแพลตฟอร์มสำหรับคอนเทนต์สายมู/ความเชื่อ ตรวจไม่ให้สุ่มเสี่ยงโดนจำกัด: "
-        "ห้ามสัญญาผลลัพธ์ (เช่น ทำแล้วรวยแน่/หายป่วยแน่/ปลอดภัยแน่), "
-        "ให้ใช้สำนวน 'ตามความเชื่อ/ตำนานเล่าว่า/บ้างว่า' แทนการยืนยันว่าเป็นเรื่องจริง 100%, "
-        "ไม่ลบหลู่ ไม่ขู่ให้กลัวเกินเหตุ ถ้ามีจุดเสี่ยงให้แก้เฉพาะจุด คงจำนวนบรรทัด/โทนเดิม "
-        "ถ้าปลอดภัยอยู่แล้วไม่ต้องแก้ ตอบ JSON เท่านั้น"
+        "คุณคือ QC นโยบายแพลตฟอร์มสายมู/ความเชื่อ แก้ 'เฉพาะจุดเสี่ยงจริง' เท่านั้น: "
+        "(1) ห้ามสัญญาผลลัพธ์ (ทำแล้วรวยแน่/หายป่วยแน่/ปลอดภัยแน่) "
+        "(2) ประโยคที่ยืนยันเรื่องเหนือธรรมชาติว่าจริง 100% ให้ frame เป็นความเชื่อ — "
+        "แต่ทำ 'เท่าที่จำเป็น สั้นๆ ไม่เกิน 1-2 จุดทั้งคลิป และห้ามใส่ซ้ำ' "
+        "ห้ามขึ้นต้นหลายบรรทัดด้วย 'ตามความเชื่อ/ตามทฤษฎี' (ทำให้บทจืด+ซ้ำ+อ่อน) สลับคำ/ตำแหน่งได้ "
+        "(3) ไม่ลบหลู่ ไม่ขู่เกินเหตุ "
+        "สำคัญมาก: ต้องคงความคม/น่าตื่นเต้น/จังหวะของบทไว้ ห้ามทำให้จืดลง "
+        "ถ้าปลอดภัยอยู่แล้วตอบ ok:true ไม่ต้องแก้ คงจำนวนบรรทัดเดิม ตอบ JSON เท่านั้น"
     )
     prompt = ("บท:\n" + _json.dumps(lines, ensure_ascii=False) + "\n\n"
               'ตอบ JSON: {"ok": true ถ้าปลอดภัย/false ถ้าต้องแก้, '
@@ -1017,6 +1026,9 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
     prompt = (
         f"{body}\n\n"
         "เขียนบทตามโครงบีทข้างบนให้ครบทุกช่วง (ฮุค → ปมค้าง → ปูเรื่อง+อ้างอิงเจาะจง → จุดพีค → สรุป+ชวนติดตาม)\n"
+        "สำคัญ: อยู่กับหัวข้อเดียวตลอดทั้งคลิป ห้ามลากเรื่อง/ความเชื่ออื่นที่ไม่เกี่ยวมาปน "
+        "(เช่น หัวข้อ UFO ก็เล่า UFO อย่าเอาผีปอบ/ผีฟ้ามาปนถ้าไม่ได้เกี่ยวกันจริง) "
+        "จุดพีคต้องเฉลยปมที่ค้างไว้ด้วยคำตอบที่เป็นรูปธรรม ไม่ใช่ลอยๆ ว่า 'อาจจะ'\n"
         "ก่อนเขียน คิดฮุค 3 แบบในใจ เลือกอันที่หยุดนิ้วที่สุดมาเป็นประโยคแรก\n"
         "1 บรรทัด = 1 ประโยคสั้นพูดลื่น (รวมทั้งคลิป 6-9 บรรทัด) ประโยคสุดท้ายคือชวนคอมเมนต์/ติดตามเสมอ\n"
         'ตอบ JSON เท่านั้น: {"title": "หัวข้อสั้น", "lines": ["ประโยคสั้นๆ (ซับสะกดถูก)", "..."], '
@@ -1069,23 +1081,23 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
             await _vlog("✏️ Fact-QC แก้ข้อมูล: " + note)
         else:
             await _vlog("✅ Fact-QC ผ่าน — ข้อมูลตรงแหล่งอ้างอิง")
-    # 🎯 Retention-QC — strengthen hook / open-loop / trim padding
-    if lines:
-        await _vlog("🎯 Retention-QC: ตรวจฮุค + ปมค้าง + จังหวะ…")
-        fixed, note = await _retention_qc(lines, profile)
-        if note:
-            lines = [x for x in fixed if x][:9] or lines
-            say_raw = []
-            await _vlog("✏️ Retention-QC ปรับ: " + note)
-        else:
-            await _vlog("✅ Retention-QC ผ่าน — ฮุคแรง ปมค้างครบ")
-    # ✅ Compliance — keep belief content within platform policy
+    # ✅ Compliance — soften risky claims FIRST (sparingly), then…
     if lines:
         fixed, note = await _compliance_pass(lines, profile)
         if note:
             lines = [x for x in fixed if x][:9] or lines
             say_raw = []
             await _vlog("✅ Compliance แก้จุดเสี่ยง: " + note)
+    # 🎯 Retention-QC LAST — re-sharpen hook/open-loop/payoff after compliance, strip repetition
+    if lines:
+        await _vlog("🎯 Retention-QC: ตรวจฮุค + ปมค้าง + อยู่ในหัวข้อ…")
+        fixed, note = await _retention_qc(lines, profile, subject)
+        if note:
+            lines = [x for x in fixed if x][:9] or lines
+            say_raw = []
+            await _vlog("✏️ Retention-QC ปรับ: " + note)
+        else:
+            await _vlog("✅ Retention-QC ผ่าน — ฮุคแรง ปมค้างครบ")
     # pair lines_say 1:1 with display lines (fall back to the display line itself)
     lines_say = [(say_raw[i] if i < len(say_raw) and say_raw[i] else lines[i]) for i in range(len(lines))]
     caption = str(data.get("caption") or out_title).strip()[:300]
