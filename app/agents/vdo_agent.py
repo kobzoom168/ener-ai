@@ -22,6 +22,9 @@ SCRIPT_MODEL = "minimax/minimax-m3"  # picks real documented mysteries; cheap, e
 RESEARCH_MODEL = os.environ.get("VDO_RESEARCH_MODEL", "perplexity/sonar")
 # Per-channel history of recent clips (for the Originality Guard / Angle Diversifier).
 _CLIP_HISTORY_KEY = "vdo_clip_history"
+# Color grade applied to every clip (ffmpeg eq). Brighter + more vivid than before
+# (was brightness=-0.19 = quite dark). Tune via env VDO_EQ if needed.
+VDO_EQ = os.environ.get("VDO_EQ", "brightness=-0.04:saturation=1.16:contrast=1.04")
 
 # Default model per crew agent. Each is overridable live from the Auto Post UI
 # (stored as config key vdo_model_<agent>); _agent_model() reads the override with fallback.
@@ -454,8 +457,10 @@ async def _gen_bg_image(prompt: str, idx: int = 0) -> str | None:
             "model": os.environ.get("VDO_IMAGE_MODEL", "google/gemini-3.1-flash-image-preview"),
             "modalities": ["image", "text"],
             "messages": [{"role": "user", "content": (
-                f"{prompt}. Vertical 9:16 cinematic atmospheric background, dark and moody, "
-                "mysterious mood, high quality. ABSOLUTELY NO text, no words, no letters, no captions."
+                f"{prompt}. Vertical 9:16 cinematic atmospheric background, "
+                "well-lit with vivid saturated colors, bright and clear, light mysterious mood "
+                "(NOT dark, NOT underexposed), high quality. "
+                "ABSOLUTELY NO text, no words, no letters, no captions."
             )}],
         }
         async with httpx.AsyncClient(timeout=90) as c:
@@ -486,18 +491,22 @@ async def _gen_bg_images(prompts: list[str]) -> list[str]:
 
 
 async def _pexels_pick(query: str, key: str) -> dict | None:
-    """Search Pexels for `query`, return the best portrait mp4 file (closest to 9:16)."""
+    """Search Pexels for `query` and return a RANDOM good portrait mp4 (not always the same
+    top result) so clips on similar topics don't reuse identical footage. Picks a random page
+    + a random candidate among the portrait videos that fit 9:16."""
     import httpx
+    import random
+    target = 1920 / 1080  # h/w for 9:16 ≈ 1.778
     async with httpx.AsyncClient(timeout=30) as c:
         r = await c.get(
             "https://api.pexels.com/videos/search",
             headers={"Authorization": key},
-            params={"query": query, "orientation": "portrait", "size": "medium", "per_page": 8},
+            params={"query": query, "orientation": "portrait", "size": "medium",
+                    "per_page": 15, "page": random.randint(1, 3)},
         )
     if r.status_code >= 300:
         return None
-    target = 1920 / 1080  # h/w for 9:16 ≈ 1.778
-    best, best_score = None, None
+    candidates = []
     for v in (r.json().get("videos") or []):
         vw, vh = v.get("width") or 0, v.get("height") or 0
         if (v.get("duration") or 0) < 2 or vw <= 0 or vh < vw:
@@ -507,11 +516,14 @@ async def _pexels_pick(query: str, key: str) -> dict | None:
                  and (f.get("height") or 0) >= (f.get("width") or 0)]  # portrait only
         if not files:
             continue
-        score = abs((vh / vw) - target)
-        if best is None or score < best_score:
-            files.sort(key=lambda f: abs((f.get("width") or 0) - 1080))
-            best, best_score = files[0], score
-    return best
+        files.sort(key=lambda f: abs((f.get("width") or 0) - 1080))
+        candidates.append((abs((vh / vw) - target), files[0]))
+    if not candidates:
+        return None
+    # keep the ones reasonably close to 9:16, then pick one at random for variety
+    candidates.sort(key=lambda x: x[0])
+    pool = candidates[:6] if len(candidates) >= 6 else candidates
+    return random.choice(pool)[1]
 
 
 async def _fetch_stock_video(query: str, idx: int = 0) -> str | None:
@@ -625,7 +637,7 @@ def _render(audio_path: str, ass_path: str, duration: float, out_path: str,
                 )
         cat = "".join(f"[v{i}]" for i in range(n))
         fc = (";".join(chains) +
-              f";{cat}concat=n={n}:v=1:a=0,eq=brightness=-0.19:saturation=1.08,"
+              f";{cat}concat=n={n}:v=1:a=0,eq={VDO_EQ},"
               f"subtitles={ass_path}[vout]")
         fc_a, amap = _audio_filter(voice_idx, bgm_idx, duration)
         if fc_a:
