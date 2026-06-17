@@ -7277,12 +7277,14 @@ async def workspace_vdo_agents(request: Request):
         fal_enabled, fal_models = False, []
     fal_model = (await get_config("FAL_VIDEO_MODEL", "")).strip() or _ov.environ.get("FAL_VIDEO_MODEL", "") or "fal-ai/ltx-video"
     ai_video_count = (await get_config("vdo_ai_video_count", "")).strip() or "1"
-    image_provider = (await get_config("vdo_image_provider", "")).strip() or "openrouter"
+    image_provider = (await get_config("vdo_image_provider", "")).strip() or "fal_flux"
     gemini_ready = bool(_ov.environ.get("GEMINI_API_KEY", "").strip())
+    fal_ready = bool(_ov.environ.get("FAL_KEY", "").strip())
     return JSONResponse({"agents": agents, "models": opts, "bg_mode": bg_mode,
                          "fal_enabled": fal_enabled, "fal_models": fal_models,
                          "fal_model": fal_model, "ai_video_count": ai_video_count,
-                         "image_provider": image_provider, "gemini_ready": gemini_ready})
+                         "image_provider": image_provider, "gemini_ready": gemini_ready,
+                         "fal_ready": fal_ready})
 
 
 @app.post("/workspace/vdo/videocfg")
@@ -7302,7 +7304,7 @@ async def workspace_vdo_videocfg(request: Request):
             await set_config("vdo_ai_video_count", c)
     if "image_provider" in body:
         p = str(body.get("image_provider", "")).strip().lower()
-        if p in ("openrouter", "gemini"):
+        if p in ("openrouter", "gemini", "fal_flux"):
             await set_config("vdo_image_provider", p)
     return JSONResponse({"ok": True})
 

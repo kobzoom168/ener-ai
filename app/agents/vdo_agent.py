@@ -501,7 +501,16 @@ async def _gen_bg_image(prompt: str, idx: int = 0) -> str | None:
         provider = (await get_config("vdo_image_provider", "")).strip()
     except Exception:
         provider = ""
-    if provider == "gemini":
+    if provider == "fal_flux":
+        try:
+            from app.agents import aivideo
+            f = await aivideo.generate_image(_img_style(prompt),
+                                             os.path.join(VDO_DIR, f"bg_{int(time.time() * 1000)}_{idx}.png"))
+            if f:
+                return f  # else fall through to OpenRouter
+        except Exception:
+            pass
+    elif provider == "gemini":
         g = await _gen_bg_image_gemini(prompt, idx)
         if g:
             return g  # else fall through to OpenRouter (free tier hit a limit / errored)
@@ -664,26 +673,38 @@ def _render(audio_path: str, ass_path: str, duration: float, out_path: str,
         # sync each background to its line's spoken duration (item_durations 1:1 with items);
         # else fall back to an even split across the clip.
         if item_durations and len(item_durations) == n:
-            durs = [max(0.8, float(d)) for d in item_durations]
+            durs = [max(0.3, float(d)) for d in item_durations]
         else:
             durs = [max(1.0, duration / n)] * n
+        # Snap scene boundaries onto the audio timeline: each scene's frame count is taken
+        # from the running cumulative total, so they sum EXACTLY to the audio length. No
+        # per-scene min-length padding or int() truncation piles up — this kills the slow
+        # drift where images lag behind the voice ("ภาพช้ากว่าเสียง").
+        _tot = sum(durs) or 1.0
+        _total_frames = max(n, int(round(duration * fps)))
+        _acc, _prev, dframes_list = 0.0, 0, []
+        for _d in durs:
+            _acc += _d
+            _cur = int(round(_acc / _tot * _total_frames))
+            dframes_list.append(max(1, _cur - _prev))
+            _prev = _cur
         cmd = ["ffmpeg", "-y"]
-        for (p, k), d in zip(items, durs):
+        for i, (p, k) in enumerate(items):
             if k == "image":
                 # single frame in -> zoompan generates the motion (d frames). DON'T loop the
                 # input: a looped multi-frame still makes zoompan explode frames so only the
                 # first image ever shows.
                 cmd += ["-i", p]
             else:
-                cmd += ["-stream_loop", "-1", "-t", f"{d:.2f}", "-i", p]
+                cmd += ["-stream_loop", "-1", "-t", f"{dframes_list[i] / fps:.3f}", "-i", p]
         cmd += ["-i", audio_path]
         voice_idx, bgm_idx = n, None
         if bgm:
             cmd += ["-stream_loop", "-1", "-i", bgm]
             bgm_idx = n + 1
         chains = []
-        for i, ((p, k), d) in enumerate(zip(items, durs)):
-            dframes = max(fps, int(d * fps))  # this scene shows for exactly its line's length
+        for i, (p, k) in enumerate(items):
+            dframes = dframes_list[i]  # exact frame budget for this scene (sums to audio len)
             if k == "image":  # smooth slow Ken Burns zoom-IN only. Big 2x upscale + tiny step
                 # makes zoompan's per-frame rounding sub-pixel → no jitter/shake.
                 chains.append(

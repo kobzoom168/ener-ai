@@ -2397,9 +2397,9 @@ document.addEventListener('DOMContentLoaded', function() {
       const ip = document.getElementById('vdo-img-provider');
       if (ip && d.image_provider) ip.value = d.image_provider;
       const gst = document.getElementById('vdo-gemini-status');
-      if (gst) gst.innerHTML = d.gemini_ready
-        ? '<span style="color:#22c55e">✅ Gemini พร้อม (ฟรี)</span>'
-        : '<span style="color:#f59e0b">⚠️ ใส่ GEMINI_API_KEY ก่อน (กล่อง 🔑)</span>';
+      if (gst) gst.innerHTML = d.fal_ready
+        ? '<span style="color:#22c55e">✅ Flux/fal พร้อม</span>'
+        : '<span style="color:#f59e0b">⚠️ ใส่ FAL_KEY ก่อน (กล่อง 🔑)</span>';
       updateAiCost();
       const models = d.models || [];
       const optsHtml = models.map(m => '<option value="' + escapeHtml(m.id) + '">' + escapeHtml(m.label) + '</option>').join('');
@@ -2506,7 +2506,8 @@ document.addEventListener('DOMContentLoaded', function() {
   async function setVdoImgProvider(p) {
     try {
       await api('/workspace/vdo/videocfg', { method: 'POST', body: JSON.stringify({ image_provider: p }) });
-      showToast(p === 'gemini' ? '✅ ใช้ Gemini API ฟรี gen ภาพ' : '✅ ใช้ OpenRouter gen ภาพ');
+      const msg = { fal_flux: '✅ ใช้ Flux ผ่าน fal — ถูกสุด ~฿1/คลิป', openrouter: '✅ ใช้ OpenRouter (Nano Banana) — คมสุด', gemini: '⚠️ Gemini ตรง ต้องเปิด billing ก่อน ไม่งั้น 429' };
+      showToast(msg[p] || '✅ บันทึกแล้ว');
     } catch (e) { showToast('❌ ' + ((e && e.message) || 'บันทึกไม่สำเร็จ')); }
   }
   window.loadVdoCrew = loadVdoCrew;
