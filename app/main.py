@@ -7155,12 +7155,14 @@ VDO_KEYS = [
 
 
 async def _load_api_keys_to_env() -> None:
-    """Mirror config-stored API keys into os.environ (only if env isn't already set)."""
+    """Mirror config-stored API keys into os.environ. Config is the source of truth: a
+    value saved in the 🔑 panel OVERRIDES a stale value baked into the deploy .env (so
+    e.g. switching the Facebook page just means pasting the new token — no SSH needed)."""
     import os as _o
     try:
         for spec in VDO_KEYS:
             v = (await get_config(spec["k"], "") or "").strip()
-            if v and not _o.environ.get(spec["env"]):
+            if v:  # only override when the user actually saved a value
                 _o.environ[spec["env"]] = v
     except Exception:
         pass
