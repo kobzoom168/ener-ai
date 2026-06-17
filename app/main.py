@@ -12369,6 +12369,7 @@ async def admin_facebook_page(request: Request):
     await _verify_admin_session(request)
     from app.agents import facebook_client
     aid, asec, redir = await facebook_client._oauth_cfg()
+    fb_config_id = (await get_config("facebook_config_id", "")).strip()
     connected = facebook_client.enabled()
     page_msg = ""
     if connected:
@@ -12426,6 +12427,8 @@ async def admin_facebook_page(request: Request):
     <input id="asec" value="{escape(asec)}" placeholder="ข้อมูลลับของแอพ">
     <label>Redirect URI (เว้นว่างได้ถ้าใช้ค่าที่ระบบเดาให้ด้านบน)</label>
     <input id="redir" value="{escape(redir)}" placeholder="https://my-ener.uk/admin/facebook/callback">
+    <label>Config ID (เฉพาะแอพ "Facebook Login for Business" — ดูที่ Configurations)</label>
+    <input id="cfgid" value="{escape(fb_config_id)}" placeholder="เว้นว่างถ้าเป็น Facebook Login ธรรมดา">
     <button class="btn" onclick="fbSave()">💾 บันทึก</button>
   </div>
 </div>
@@ -12437,6 +12440,7 @@ async function fbSave(){{
   await setCfg('facebook_app_id',document.getElementById('aid').value.trim());
   await setCfg('facebook_app_secret',document.getElementById('asec').value.trim());
   await setCfg('facebook_redirect_uri',document.getElementById('redir').value.trim());
+  await setCfg('facebook_config_id',document.getElementById('cfgid').value.trim());
   toast('บันทึกแล้ว ✅ — กด Connect เพื่อเลือกเพจได้เลย');
   setTimeout(function(){{location.reload()}},1200);
 }}

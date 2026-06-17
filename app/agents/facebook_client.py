@@ -69,10 +69,18 @@ async def oauth_url(redirect_uri: str, state: str = "") -> str:
     if not aid or not asec:
         raise RuntimeError("ยังไม่ได้ตั้ง Facebook App ID/Secret")
     ver = os.environ.get("FB_API_VERSION", "v21.0").strip() or "v21.0"
+    from app.core.database import get_config
+    config_id = (await get_config("facebook_config_id", "")).strip()
+    params = {"client_id": aid, "redirect_uri": redirect_uri, "state": state or "ener",
+              "response_type": "code"}
+    if config_id:
+        # "Facebook Login for Business" apps reject a raw scope= and require a Configuration
+        # (a saved permission/asset set) referenced by config_id instead.
+        params["config_id"] = config_id
+    else:
+        params["scope"] = OAUTH_SCOPES
     from urllib.parse import urlencode
-    q = urlencode({"client_id": aid, "redirect_uri": redirect_uri, "state": state or "ener",
-                   "scope": OAUTH_SCOPES, "response_type": "code"})
-    return f"https://www.facebook.com/{ver}/dialog/oauth?{q}"
+    return f"https://www.facebook.com/{ver}/dialog/oauth?{urlencode(params)}"
 
 
 async def fetch_pages(code: str, redirect_uri: str) -> list[dict]:
