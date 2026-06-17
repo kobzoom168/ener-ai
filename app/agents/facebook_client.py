@@ -112,6 +112,33 @@ async def fetch_pages(code: str, redirect_uri: str) -> list[dict]:
             for p in (pd.get("data") or []) if p.get("id") and p.get("access_token")]
 
 
+async def pages_from_user_token(user_token: str) -> list[dict]:
+    """Take a (short-lived) User Access Token pasted from Graph API Explorer, extend it to
+    long-lived, and return the Pages it manages (each with a long-lived Page token).
+    Sidesteps the whole Business-Login Configuration / App-Review maze: as an app admin you
+    can grant pages_manage_posts to yourself in Graph Explorer with no review."""
+    aid, asec, _ = await _oauth_cfg()
+    user_token = (user_token or "").strip()
+    if not user_token:
+        raise RuntimeError("ยังไม่ได้วาง User Token")
+    ver = os.environ.get("FB_API_VERSION", "v21.0").strip() or "v21.0"
+    base = f"https://graph.facebook.com/{ver}"
+    async with httpx.AsyncClient(timeout=30) as c:
+        long_user = user_token
+        if aid and asec:  # extend to long-lived (~60 days) so the derived Page tokens persist
+            r = await c.get(f"{base}/oauth/access_token",
+                            params={"grant_type": "fb_exchange_token", "client_id": aid,
+                                    "client_secret": asec, "fb_exchange_token": user_token})
+            long_user = r.json().get("access_token") or user_token
+        r = await c.get(f"{base}/me/accounts",
+                        params={"access_token": long_user, "fields": "id,name,access_token"})
+        pd = r.json()
+        if r.status_code >= 300:
+            raise RuntimeError(f"ดึงเพจไม่สำเร็จ: {str(pd)[:200]}")
+    return [{"id": p.get("id"), "name": p.get("name"), "access_token": p.get("access_token")}
+            for p in (pd.get("data") or []) if p.get("id") and p.get("access_token")]
+
+
 async def save_page(page_id: str, page_token: str) -> None:
     """Persist the chosen Page's id + (long-lived) token so post_video() uses it."""
     from app.core.database import set_config

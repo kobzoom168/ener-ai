@@ -12431,6 +12431,18 @@ async def admin_facebook_page(request: Request):
     <input id="cfgid" value="{escape(fb_config_id)}" placeholder="เว้นว่างถ้าเป็น Facebook Login ธรรมดา">
     <button class="btn" onclick="fbSave()">💾 บันทึก</button>
   </div>
+  <div class="card">
+    <h2>⚡ เชื่อมแบบง่าย — วาง User Token</h2>
+    <p>วิธีที่ง่ายสุด ไม่ต้องผ่าน App Review:<br>
+       1. เปิด <b>developers.facebook.com/tools/explorer</b> → เลือกแอพนี้<br>
+       2. กด <b>Generate Access Token</b> → ติ๊กสิทธิ์ <code>pages_show_list</code>, <code>pages_manage_posts</code>,
+          <code>pages_read_engagement</code> → login + เลือกเพจ Ener<br>
+       3. copy token ในช่อง Access Token → วางข้างล่าง</p>
+    <label>User Access Token (จาก Graph API Explorer)</label>
+    <input id="utok" placeholder="EAAB...">
+    <button class="btn" onclick="fbUserToken()">🔗 เชื่อมเพจจาก Token นี้</button>
+    <div id="fb-pages" style="margin-top:14px"></div>
+  </div>
 </div>
 <div class="toast" id="toast"></div>
 <script>
@@ -12449,6 +12461,19 @@ async function fbTest(){{
   var r=await fetch('/admin/facebook/test',{{method:'POST',credentials:'same-origin'}});
   var d=await r.json();
   toast((d.ok?'✅ ':'❌ ')+(d.message||''));
+}}
+async function fbUserToken(){{
+  var tok=document.getElementById('utok').value.trim();
+  if(!tok){{toast('วาง token ก่อน');return;}}
+  toast('กำลังเชื่อม…');
+  var r=await fetch('/admin/facebook/usertoken',{{method:'POST',headers:{{'Content-Type':'application/json'}},credentials:'same-origin',body:JSON.stringify({{token:tok}})}});
+  var d=await r.json();
+  var box=document.getElementById('fb-pages');
+  if(d.saved){{toast('✅ '+(d.message||'เชื่อมเพจแล้ว'));setTimeout(function(){{location.reload()}},1500);return;}}
+  if(d.ok&&d.pages){{
+    box.innerHTML='<div style="font-size:.85rem;margin-bottom:8px">เลือกเพจ:</div>'+d.pages.map(function(p){{
+      return '<a href="/admin/facebook/pick?i='+p.i+'" style="display:block;background:#1877f2;color:#fff;padding:10px 14px;border-radius:7px;text-decoration:none;margin:6px 0">📘 '+p.name+'</a>';}}).join('');
+  }}else{{toast('❌ '+(d.message||'เชื่อมไม่สำเร็จ'));}}
 }}
 </script></body></html>"""
     return HTMLResponse(html)
@@ -12552,6 +12577,30 @@ async def admin_facebook_test(request: Request):
     from app.agents import facebook_client
     ok, msg = await facebook_client.check_token()
     return JSONResponse({"ok": ok, "message": msg})
+
+
+@app.post("/admin/facebook/usertoken")
+async def admin_facebook_usertoken(request: Request):
+    """Connect a Page from a User Token pasted from Graph API Explorer (no app review)."""
+    await _verify_admin_session(request)
+    from app.agents import facebook_client
+    import json as _json
+    body = await request.json()
+    token = str(body.get("token", "")).strip()
+    try:
+        pages = await facebook_client.pages_from_user_token(token)
+    except Exception as exc:
+        return JSONResponse({"ok": False, "message": str(exc)[:300]})
+    if not pages:
+        return JSONResponse({"ok": False, "message": "ไม่พบเพจ (เช็คว่าให้สิทธิ์เพจตอน Generate Token)"})
+    await set_config("facebook_oauth_pages", _json.dumps(pages))
+    if len(pages) == 1:
+        await facebook_client.save_page(pages[0]["id"], pages[0]["access_token"])
+        await set_config("facebook_oauth_pages", "")
+        ok, msg = await facebook_client.check_token()
+        return JSONResponse({"ok": ok, "saved": True, "message": msg})
+    return JSONResponse({"ok": True, "saved": False,
+                         "pages": [{"i": i, "name": p.get("name") or p.get("id")} for i, p in enumerate(pages)]})
 
 
 @app.get("/admin/pipeline-metrics")
