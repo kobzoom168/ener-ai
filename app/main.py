@@ -3602,6 +3602,7 @@ def build_admin_config_html(configs: list[dict]) -> HTMLResponse:
     <button class="test-btn" onclick="testLine()">📱 ทดสอบ LINE</button>
     <a class="test-btn" style="text-decoration:none;display:inline-block;background:#dc2626" href="/admin/youtube">▶️ ตั้งค่า / เชื่อม YouTube</a>
     <a class="test-btn" style="text-decoration:none;display:inline-block;background:#000" href="/admin/tiktok">🎵 ตั้งค่า / เชื่อม TikTok</a>
+    <a class="test-btn" style="text-decoration:none;display:inline-block;background:#1877f2" href="/admin/facebook">📘 ตั้งค่า / เชื่อม Facebook</a>
     <div id="test-result"></div>
   </div>
 
@@ -12350,6 +12351,202 @@ async def admin_tiktok_test(request: Request):
     await _verify_admin_session(request)
     from app.agents import tiktok_client
     ok, msg = await tiktok_client.check()
+    return JSONResponse({"ok": ok, "message": msg})
+
+
+# ───────────────────────── Facebook (one-click Connect) ─────────────────────────
+def _fb_redirect_uri(request: Request, configured: str) -> str:
+    if configured.strip():
+        return configured.strip()
+    base = str(request.base_url).rstrip("/")
+    if base.startswith("http://") and "localhost" not in base and "127.0.0.1" not in base:
+        base = "https://" + base[len("http://"):]
+    return base + "/admin/facebook/callback"
+
+
+@app.get("/admin/facebook")
+async def admin_facebook_page(request: Request):
+    await _verify_admin_session(request)
+    from app.agents import facebook_client
+    aid, asec, redir = await facebook_client._oauth_cfg()
+    connected = facebook_client.enabled()
+    page_msg = ""
+    if connected:
+        ok, page_msg = await facebook_client.check_token()
+        connected = ok
+    effective_redirect = _fb_redirect_uri(request, redir)
+    status_html = (
+        f'<span style="color:#22c55e">✅ เชื่อมแล้ว — {escape(page_msg)}</span>'
+        if connected else
+        ('<span style="color:#f59e0b">⚠️ ยังไม่เชื่อมเพจ</span>' if (aid and asec)
+         else '<span style="color:#ef4444">⛔ ยังไม่ได้ตั้ง App ID / Secret</span>')
+    )
+    can_connect = bool(aid and asec)
+    connect_cls = "" if can_connect else " ghost"
+    connect_guard = "" if can_connect else (
+        "onclick=\"alert('ตั้ง App ID/Secret แล้วกด บันทึก ก่อน');return false;\"")
+    html = f"""<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8">
+<title>Facebook — Ener-AI Admin</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+ *{{box-sizing:border-box;margin:0;padding:0}}
+ body{{background:#0a0a0a;color:#e5e7eb;font-family:system-ui,sans-serif;min-height:100vh}}
+ .header{{background:#111;border-bottom:1px solid #222;padding:16px 24px;display:flex;gap:16px;align-items:center}}
+ .header h1{{font-size:1.2rem;font-weight:700;color:#f9fafb}}
+ .back-btn{{background:#1e293b;color:#94a3b8;border:1px solid #334;padding:6px 14px;border-radius:6px;text-decoration:none;font-size:.85rem}}
+ .container{{max-width:760px;margin:32px auto;padding:0 24px}}
+ .card{{background:#111;border:1px solid #1f2937;border-radius:12px;padding:24px;margin-bottom:20px}}
+ .card h2{{font-size:1rem;color:#f9fafb;margin-bottom:6px}}
+ .card p{{font-size:.82rem;color:#6b7280;margin-bottom:16px;line-height:1.6}}
+ label{{display:block;font-size:.8rem;color:#9ca3af;margin:12px 0 4px}}
+ input{{width:100%;background:#1f2937;color:#e5e7eb;border:1px solid #374151;padding:9px 11px;border-radius:7px;font-size:.85rem}}
+ input:focus{{outline:none;border-color:#6366f1}}
+ .btn{{display:inline-block;background:#1877f2;color:#fff;border:none;padding:10px 18px;border-radius:7px;font-size:.85rem;cursor:pointer;text-decoration:none;margin-top:16px}}
+ .btn.ghost{{background:#1e293b;color:#e2e8f0;border:1px solid #334}}
+ .status{{font-size:.9rem;padding:10px 0}}
+ code{{background:#1f2937;color:#fbbf24;padding:2px 6px;border-radius:4px;font-size:.8rem;word-break:break-all}}
+ .toast{{position:fixed;bottom:24px;right:24px;background:#1e293b;border:1px solid #334;color:#e2e8f0;padding:12px 20px;border-radius:8px;font-size:.9rem;display:none;z-index:99}}
+</style></head><body>
+<div class="header"><a class="back-btn" href="/admin/config">← Config</a><h1>📘 เชื่อมต่อ Facebook</h1></div>
+<div class="container">
+  <div class="card">
+    <h2>สถานะ</h2>
+    <div class="status">{status_html}</div>
+    <button class="btn ghost" onclick="fbTest()">🧪 ทดสอบการเชื่อมต่อ</button>
+    <a class="btn{connect_cls}" href="/admin/facebook/connect" {connect_guard}>🔗 Connect / เลือกเพจ</a>
+  </div>
+  <div class="card">
+    <h2>App Credentials</h2>
+    <p>จากแอพที่สร้างใน developers.facebook.com → Settings → Basic.<br>
+       ต้องไปที่ <b>Facebook Login → Settings</b> ของแอพ แล้วเพิ่ม <b>Valid OAuth Redirect URI</b> ให้ตรงกับ:<br>
+       <code>{escape(effective_redirect)}</code></p>
+    <label>App ID</label>
+    <input id="aid" value="{escape(aid)}" placeholder="1296090622283586">
+    <label>App Secret</label>
+    <input id="asec" value="{escape(asec)}" placeholder="ข้อมูลลับของแอพ">
+    <label>Redirect URI (เว้นว่างได้ถ้าใช้ค่าที่ระบบเดาให้ด้านบน)</label>
+    <input id="redir" value="{escape(redir)}" placeholder="https://my-ener.uk/admin/facebook/callback">
+    <button class="btn" onclick="fbSave()">💾 บันทึก</button>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+function toast(m){{var t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(function(){{t.style.display='none'}},3500);}}
+async function setCfg(k,v){{await fetch('/admin/config/update',{{method:'POST',headers:{{'Content-Type':'application/json'}},credentials:'same-origin',body:JSON.stringify({{key:k,value:v}})}});}}
+async function fbSave(){{
+  await setCfg('facebook_app_id',document.getElementById('aid').value.trim());
+  await setCfg('facebook_app_secret',document.getElementById('asec').value.trim());
+  await setCfg('facebook_redirect_uri',document.getElementById('redir').value.trim());
+  toast('บันทึกแล้ว ✅ — กด Connect เพื่อเลือกเพจได้เลย');
+  setTimeout(function(){{location.reload()}},1200);
+}}
+async function fbTest(){{
+  toast('กำลังทดสอบ…');
+  var r=await fetch('/admin/facebook/test',{{method:'POST',credentials:'same-origin'}});
+  var d=await r.json();
+  toast((d.ok?'✅ ':'❌ ')+(d.message||''));
+}}
+</script></body></html>"""
+    return HTMLResponse(html)
+
+
+@app.get("/admin/facebook/connect")
+async def admin_facebook_connect(request: Request):
+    await _verify_admin_session(request)
+    from app.agents import facebook_client
+    aid, asec, redir = await facebook_client._oauth_cfg()
+    if not aid or not asec:
+        return HTMLResponse(
+            "<h3 style='font-family:system-ui;padding:40px'>⛔ ยังไม่ได้ตั้ง App ID / Secret — "
+            "<a href='/admin/facebook'>กลับไปตั้งค่า</a></h3>")
+    redirect_uri = _fb_redirect_uri(request, redir)
+    import secrets as _secrets
+    state = _secrets.token_urlsafe(24)
+    try:
+        url = await facebook_client.oauth_url(redirect_uri, state=state)
+    except Exception as exc:
+        return HTMLResponse(
+            f"<h3 style='font-family:system-ui;padding:40px'>สร้างลิงก์เชื่อมไม่สำเร็จ: "
+            f"{escape(str(exc)[:300])}<br><a href='/admin/facebook'>กลับ</a></h3>")
+    await set_config("facebook_oauth_state", state)
+    return RedirectResponse(url, status_code=303)
+
+
+@app.get("/admin/facebook/callback")
+async def admin_facebook_callback(request: Request):
+    from app.agents import facebook_client
+    err = request.query_params.get("error", "") or request.query_params.get("error_message", "")
+    code = request.query_params.get("code", "")
+    state = request.query_params.get("state", "")
+    expected_state = await get_config("facebook_oauth_state", "")
+    if not expected_state or state != expected_state:
+        return HTMLResponse(
+            "<h3 style='font-family:system-ui;padding:40px'>⛔ state ไม่ตรง (เริ่มเชื่อมใหม่จากปุ่ม Connect) "
+            "<br><a href='/admin/facebook'>กลับ</a></h3>")
+    await set_config("facebook_oauth_state", "")
+    if err or not code:
+        return HTMLResponse(
+            f"<h3 style='font-family:system-ui;padding:40px'>เชื่อม Facebook ไม่สำเร็จ: "
+            f"{escape(err or 'ไม่มี code')}<br><a href='/admin/facebook'>กลับ</a></h3>")
+    _, _, redir = await facebook_client._oauth_cfg()
+    redirect_uri = _fb_redirect_uri(request, redir)
+    try:
+        pages = await facebook_client.fetch_pages(code, redirect_uri)
+    except Exception as exc:
+        return HTMLResponse(
+            f"<h3 style='font-family:system-ui;padding:40px'>ดึงเพจไม่สำเร็จ: "
+            f"{escape(str(exc)[:400])}<br><a href='/admin/facebook'>กลับ</a></h3>")
+    if not pages:
+        return HTMLResponse(
+            "<h3 style='font-family:system-ui;padding:40px'>⚠️ ไม่พบเพจที่จัดการได้ "
+            "(ตรวจว่าให้สิทธิ์เพจตอนเชื่อม)<br><a href='/admin/facebook'>กลับ</a></h3>")
+    import json as _json
+    await set_config("facebook_oauth_pages", _json.dumps(pages))
+    if len(pages) == 1:
+        await facebook_client.save_page(pages[0]["id"], pages[0]["access_token"])
+        await set_config("facebook_oauth_pages", "")
+        ok, msg = await facebook_client.check_token()
+        icon = "✅" if ok else "⚠️"
+        return HTMLResponse(
+            f"<h3 style='font-family:system-ui;padding:40px'>{icon} เชื่อมเพจแล้ว: {escape(msg)}<br>"
+            f"<a href='/admin/facebook'>กลับไปหน้า Facebook</a></h3>")
+    # multiple pages → let the admin pick (same-site, cookie present)
+    btns = "".join(
+        f"<a href='/admin/facebook/pick?i={i}' style='display:block;background:#1877f2;color:#fff;"
+        f"padding:12px 18px;border-radius:8px;text-decoration:none;margin:8px 0'>📘 {escape(p['name'] or p['id'])}</a>"
+        for i, p in enumerate(pages))
+    return HTMLResponse(
+        f"<div style='font-family:system-ui;padding:40px;max-width:520px;margin:auto;color:#e5e7eb;background:#0a0a0a;min-height:100vh'>"
+        f"<h3 style='margin-bottom:16px'>เลือกเพจที่จะโพสต์</h3>{btns}</div>")
+
+
+@app.get("/admin/facebook/pick")
+async def admin_facebook_pick(request: Request):
+    await _verify_admin_session(request)
+    from app.agents import facebook_client
+    import json as _json
+    try:
+        i = int(request.query_params.get("i", "-1"))
+    except ValueError:
+        i = -1
+    pages = _json.loads(await get_config("facebook_oauth_pages", "") or "[]")
+    if not (0 <= i < len(pages)):
+        return HTMLResponse("<h3 style='font-family:system-ui;padding:40px'>⛔ เลือกเพจไม่ถูกต้อง "
+                            "<br><a href='/admin/facebook'>กลับ</a></h3>")
+    await facebook_client.save_page(pages[i]["id"], pages[i]["access_token"])
+    await set_config("facebook_oauth_pages", "")
+    ok, msg = await facebook_client.check_token()
+    icon = "✅" if ok else "⚠️"
+    return HTMLResponse(
+        f"<h3 style='font-family:system-ui;padding:40px'>{icon} เชื่อมเพจแล้ว: {escape(msg)}<br>"
+        f"<a href='/admin/facebook'>กลับไปหน้า Facebook</a></h3>")
+
+
+@app.post("/admin/facebook/test")
+async def admin_facebook_test(request: Request):
+    await _verify_admin_session(request)
+    from app.agents import facebook_client
+    ok, msg = await facebook_client.check_token()
     return JSONResponse({"ok": ok, "message": msg})
 
 
