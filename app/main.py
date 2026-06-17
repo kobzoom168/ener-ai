@@ -7196,21 +7196,24 @@ async def workspace_vdo_keys_save(request: Request):
     return JSONResponse({"ok": True})
 
 
-_TRENDS_CACHE: dict = {}  # channel -> (ts, topics)
-
-
 @app.get("/workspace/vdo/trends")
 async def workspace_vdo_trends(request: Request):
-    """🔥 Trend Radar: ranked, currently-trending topic suggestions for the channel (cached ~30m)."""
+    """🔥 Trend Radar: ranked trending topics for the channel. Results are PERSISTED in the DB
+    (survive restarts) — served on tab open; only the refresh button regenerates."""
     await _require_admin(request)
-    import time as _t
+    import time as _t, json as _j
     channel = str(request.query_params.get("channel", "mystery")).strip().lower()
     force = request.query_params.get("refresh") == "1"
-    cached = _TRENDS_CACHE.get(channel)
-    if cached and (_t.time() - cached[0] < 1800) and not force:
-        return JSONResponse({"topics": cached[1], "cached": True})
-    if not force and not cached:
-        # don't run the slow trend-gen on tab open — wait for the refresh button
+    raw = await get_config("vdo_trends_cache", "")
+    try:
+        store = _j.loads(raw) if raw else {}
+    except Exception:
+        store = {}
+    ent = store.get(channel)
+    if ent and not force:  # serve the last saved result (doesn't vanish on re-entry/restart)
+        return JSONResponse({"topics": ent.get("topics", []), "cached": True,
+                             "age_min": int((_t.time() - ent.get("at", 0)) // 60)})
+    if not force:
         return JSONResponse({"topics": [], "needs_refresh": True})
     from app.agents.vdo_agent import suggest_topics
     from app.agents.channels import get_profile
@@ -7218,30 +7221,34 @@ async def workspace_vdo_trends(request: Request):
         topics = await suggest_topics(get_profile(channel), 6)
     except Exception as exc:
         return JSONResponse({"topics": [], "error": str(exc)[:160]})
-    _TRENDS_CACHE[channel] = (_t.time(), topics)
+    store[channel] = {"at": int(_t.time()), "topics": topics}
+    await set_config("vdo_trends_cache", _j.dumps(store, ensure_ascii=False))
     return JSONResponse({"topics": topics, "cached": False})
-
-
-_ANALYTICS_CACHE: dict = {}  # ts, payload
 
 
 @app.get("/workspace/vdo/analytics")
 async def workspace_vdo_analytics(request: Request):
-    """📊 Analyst (phase ②): live YouTube stats of our clips + learned 'what works' insight."""
+    """📊 Analyst (phase ②): live YouTube stats + learned insight. Persisted in the DB so it
+    doesn't vanish on re-entry/restart; only the refresh button re-fetches."""
     await _require_admin(request)
-    import time as _t
+    import time as _t, json as _j
     force = request.query_params.get("refresh") == "1"
-    cached = _ANALYTICS_CACHE.get("data")
-    if cached and not force and (_t.time() - cached[0] < 600):
-        return JSONResponse({**cached[1], "cached": True})
-    if not force and not cached:
+    raw = await get_config("vdo_analytics_cache", "")
+    try:
+        ent = _j.loads(raw) if raw else None
+    except Exception:
+        ent = None
+    if ent and not force:
+        return JSONResponse({**ent.get("payload", {}), "cached": True,
+                             "age_min": int((_t.time() - ent.get("at", 0)) // 60)})
+    if not force:
         return JSONResponse({"clips": [], "insight": "", "needs_refresh": True})
     from app.agents.vdo_agent import analyze_performance
     try:
         payload = await analyze_performance()
     except Exception as exc:
         return JSONResponse({"clips": [], "insight": "", "error": str(exc)[:160]})
-    _ANALYTICS_CACHE["data"] = (_t.time(), payload)
+    await set_config("vdo_analytics_cache", _j.dumps({"at": int(_t.time()), "payload": payload}, ensure_ascii=False))
     return JSONResponse({**payload, "cached": False})
 
 
