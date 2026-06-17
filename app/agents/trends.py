@@ -22,8 +22,14 @@ async def _autocomplete(seed: str, ds: str = "yt") -> list[str]:
             )
         if r.status_code < 300:
             import json
-            data = json.loads(r.text)
-            return [str(x) for x in (data[1] if len(data) > 1 else []) if str(x).strip()]
+            raw = r.content
+            for enc in ("utf-8", "tis-620", "cp874", "latin-1"):
+                try:
+                    data = json.loads(raw.decode(enc))
+                    if isinstance(data, list) and len(data) > 1 and isinstance(data[1], list):
+                        return [str(x) for x in data[1] if str(x).strip()]
+                except Exception:
+                    continue
     except Exception:
         pass
     return []
