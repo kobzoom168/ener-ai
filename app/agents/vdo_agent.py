@@ -444,8 +444,57 @@ def _build_ass(title: str, segments: list[tuple[str, float]], ass_path: str,
         f.write(_ASS_HEADER + "\n".join(events) + "\n")
 
 
+def _img_style(prompt: str) -> str:
+    return (f"{prompt}. Vertical 9:16 cinematic atmospheric background, "
+            "well-lit with vivid saturated colors, bright and clear, light mysterious mood "
+            "(NOT dark, NOT underexposed), high quality. "
+            "ABSOLUTELY NO text, no words, no letters, no captions.")
+
+
+async def _gen_bg_image_gemini(prompt: str, idx: int = 0) -> str | None:
+    """Generate the image via Google's Gemini API directly (free tier, GEMINI_API_KEY).
+    Fail-open → None so the caller falls back to OpenRouter."""
+    key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not key or not str(prompt).strip():
+        return None
+
+    def _do() -> bytes | None:
+        from google import genai
+        client = genai.Client(api_key=key)
+        model = os.environ.get("VDO_GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image")
+        resp = client.models.generate_content(model=model, contents=_img_style(prompt))
+        for cand in (getattr(resp, "candidates", None) or []):
+            for part in (getattr(getattr(cand, "content", None), "parts", None) or []):
+                data = getattr(getattr(part, "inline_data", None), "data", None)
+                if data:
+                    return data
+        return None
+
+    try:
+        img = await asyncio.to_thread(_do)
+        if not img:
+            return None
+        os.makedirs(VDO_DIR, exist_ok=True)
+        path = os.path.join(VDO_DIR, f"bg_{int(time.time() * 1000)}_{idx}.png")
+        with open(path, "wb") as f:
+            f.write(img)
+        return path if os.path.getsize(path) > 2000 else None
+    except Exception:
+        return None
+
+
 async def _gen_bg_image(prompt: str, idx: int = 0) -> str | None:
-    """Generate a topical 9:16 background image via OpenRouter (Gemini image). Fail-open."""
+    """Generate a topical 9:16 background image. Uses the free Gemini API when the image
+    provider is set to 'gemini' (falls back to OpenRouter on any failure/limit), else OpenRouter."""
+    try:
+        from app.core.database import get_config
+        provider = (await get_config("vdo_image_provider", "")).strip()
+    except Exception:
+        provider = ""
+    if provider == "gemini":
+        g = await _gen_bg_image_gemini(prompt, idx)
+        if g:
+            return g  # else fall through to OpenRouter (free tier hit a limit / errored)
     try:
         import base64 as _b64
         import httpx
@@ -456,12 +505,7 @@ async def _gen_bg_image(prompt: str, idx: int = 0) -> str | None:
         body = {
             "model": os.environ.get("VDO_IMAGE_MODEL", "google/gemini-3.1-flash-image-preview"),
             "modalities": ["image", "text"],
-            "messages": [{"role": "user", "content": (
-                f"{prompt}. Vertical 9:16 cinematic atmospheric background, "
-                "well-lit with vivid saturated colors, bright and clear, light mysterious mood "
-                "(NOT dark, NOT underexposed), high quality. "
-                "ABSOLUTELY NO text, no words, no letters, no captions."
-            )}],
+            "messages": [{"role": "user", "content": _img_style(prompt)}],
         }
         async with httpx.AsyncClient(timeout=90) as c:
             r = await c.post(openrouter_base_url() + "/chat/completions",

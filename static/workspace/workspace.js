@@ -2341,6 +2341,12 @@ document.addEventListener('DOMContentLoaded', function() {
       }
       const acount = document.getElementById('vdo-ai-count');
       if (acount && d.ai_video_count) acount.value = d.ai_video_count;
+      const ip = document.getElementById('vdo-img-provider');
+      if (ip && d.image_provider) ip.value = d.image_provider;
+      const gst = document.getElementById('vdo-gemini-status');
+      if (gst) gst.innerHTML = d.gemini_ready
+        ? '<span style="color:#22c55e">✅ Gemini พร้อม (ฟรี)</span>'
+        : '<span style="color:#f59e0b">⚠️ ใส่ GEMINI_API_KEY ก่อน (กล่อง 🔑)</span>';
       updateAiCost();
       const models = d.models || [];
       const optsHtml = models.map(m => '<option value="' + escapeHtml(m.id) + '">' + escapeHtml(m.label) + '</option>').join('');
@@ -2444,11 +2450,18 @@ document.addEventListener('DOMContentLoaded', function() {
       showToast('✅ ตั้งค่า AI วิดีโอแล้ว (' + c + ' ช็อต)');
     } catch (e) { showToast('❌ ' + ((e && e.message) || 'บันทึกไม่สำเร็จ')); }
   }
+  async function setVdoImgProvider(p) {
+    try {
+      await api('/workspace/vdo/videocfg', { method: 'POST', body: JSON.stringify({ image_provider: p }) });
+      showToast(p === 'gemini' ? '✅ ใช้ Gemini API ฟรี gen ภาพ' : '✅ ใช้ OpenRouter gen ภาพ');
+    } catch (e) { showToast('❌ ' + ((e && e.message) || 'บันทึกไม่สำเร็จ')); }
+  }
   window.loadVdoCrew = loadVdoCrew;
   window.applyVdoRecommended = applyVdoRecommended;
   window.saveVdoCrew = saveVdoCrew;
   window.setVdoBgMode = setVdoBgMode;
   window.saveVideoCfg = saveVideoCfg;
+  window.setVdoImgProvider = setVdoImgProvider;
 
   function renderApChannels() {
     const sel = document.getElementById('ap-channel');

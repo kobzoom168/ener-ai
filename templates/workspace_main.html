@@ -235,6 +235,14 @@
             </select>
             <span style="font-size:11px;color:var(--muted-foreground)">เปลี่ยนแล้วมีผลคลิปถัดไป</span>
           </div>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;background:#161b26;border:1px solid var(--border);border-radius:9px;padding:9px 12px">
+            <span style="font-size:13px;font-weight:600">🖼️ แหล่งภาพ AI</span>
+            <select id="vdo-img-provider" onchange="setVdoImgProvider(this.value)" style="background:#1f2430;border:1px solid var(--border);border-radius:7px;padding:6px 10px;color:var(--foreground);font-size:12px">
+              <option value="gemini">Gemini API (ฟรี) — ประหยัด</option>
+              <option value="openrouter">OpenRouter (จ่ายนิดเดียว) — เสถียร</option>
+            </select>
+            <span id="vdo-gemini-status" style="font-size:11px"></span>
+          </div>
           <div id="vdo-aivideo" style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;background:#161b26;border:1px solid var(--border);border-radius:9px;padding:9px 12px">
             <span style="font-size:13px;font-weight:600">🎬 AI สร้างวิดีโอ (fal)</span>
             <span id="vdo-fal-status" style="font-size:11px"></span>
