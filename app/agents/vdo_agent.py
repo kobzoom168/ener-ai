@@ -623,11 +623,15 @@ def _render(audio_path: str, ass_path: str, duration: float, out_path: str,
             cmd += ["-stream_loop", "-1", "-i", bgm]
             bgm_idx = n + 1
         chains = []
+        img_idx = 0
         for i, (p, k) in enumerate(items):
-            if k == "image":  # still image -> slow Ken Burns zoom
+            if k == "image":  # still image -> slow Ken Burns; alternate zoom-in / zoom-out per scene
+                z = (f"min(zoom+0.0012,1.35)" if img_idx % 2 == 0
+                     else f"max(1.0,1.35-0.0012*on)")  # even=zoom in, odd=zoom out
+                img_idx += 1
                 chains.append(
                     f"[{i}:v]scale=1620:2880:force_original_aspect_ratio=increase,crop=1620:2880,"
-                    f"zoompan=z='min(zoom+0.0012,1.35)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+                    f"zoompan=z='{z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
                     f"d={dframes}:s=1080x1920:fps={fps},setsar=1[v{i}]"
                 )
             else:  # real video -> fill 9:16
