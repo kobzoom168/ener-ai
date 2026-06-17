@@ -2379,6 +2379,7 @@ document.addEventListener('DOMContentLoaded', function() {
       const d = await api('/workspace/vdo/agents');
       const bgSel = document.getElementById('vdo-bgmode');
       if (bgSel && d.bg_mode) bgSel.value = d.bg_mode;
+      applyBgModeUI((bgSel && bgSel.value) || d.bg_mode || 'image');
       // AI-video (fal) controls
       const fstat = document.getElementById('vdo-fal-status');
       if (fstat) fstat.innerHTML = d.fal_enabled
@@ -2465,9 +2466,15 @@ document.addEventListener('DOMContentLoaded', function() {
       if (btn) { btn.disabled = false; btn.textContent = '💾 บันทึก'; }
     }
   }
+  // AI-video (fal) controls only matter when the clip actually uses moving video.
+  function applyBgModeUI(mode) {
+    const av = document.getElementById('vdo-aivideo');
+    if (av) av.style.display = (mode === 'mixed' || mode === 'video') ? '' : 'none';
+  }
   async function setVdoBgMode(mode) {
     try {
       await api('/workspace/vdo/bgmode', { method: 'POST', body: JSON.stringify({ mode: mode }) });
+      applyBgModeUI(mode);
       const labels = { image: 'ภาพนิ่ง AI', mixed: 'ผสมวิดีโอจริง', video: 'เน้นวิดีโอจริง' };
       showToast('✅ โหมดภาพ: ' + (labels[mode] || mode) + ' (มีผลคลิปถัดไป)');
     } catch (e) {
