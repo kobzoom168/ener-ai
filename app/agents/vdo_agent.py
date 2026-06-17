@@ -100,7 +100,7 @@ _ASS_HEADER = (
     "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, "
     "Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
     "Style: Default,Garuda,74,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,2,0,1,5,3,2,70,70,330,0\n"
-    "Style: Title,Garuda,62,&H00A5B4FC,&H00111111,&H64000000,-1,0,0,0,100,100,0,0,1,5,3,8,70,70,250,0\n"
+    "Style: Title,Garuda,86,&H0000F0FF,&H00000000,&H64000000,-1,0,0,0,100,100,1,0,1,7,4,8,60,60,180,0\n"
     "Style: Brand,Garuda,40,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,1,0,1,2,2,7,40,40,60,0\n\n"
     "[Events]\n"
     "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
@@ -404,7 +404,7 @@ def _synth_lines(lines: list[str], base: str, out_mp3: str,
 
 
 def _build_ass(title: str, segments: list[tuple[str, float]], ass_path: str,
-               brand: tuple[str, str] | None = None) -> None:
+               brand: tuple[str, str] | None = None, title_card: str = "") -> None:
     """Caption track: one short row on screen at a time, voice-synced.
 
     Each spoken line is timed to its real audio duration, then split into single display
@@ -427,6 +427,16 @@ def _build_ass(title: str, segments: list[tuple[str, float]], ass_path: str,
     if brand_parts:
         events.append(
             f"Dialogue: 0,{_ass_ts(0)},{_ass_ts(total)},Brand,,0,0,0,,{'  '.join(brand_parts)}"
+        )
+    # big eye-catching TITLE card for the opening (grabs attention like a thumbnail headline)
+    tc = _ass_escape(title_card or title)
+    if tc:
+        tc_rows = _wrap_rows(tc, 16)[:3] or [tc]
+        card_end = min(4.0, max(2.2, total * 0.4))
+        fade = "{\\fad(250,300)}"
+        joined = "\\N".join(tc_rows)
+        events.append(
+            f"Dialogue: 1,{_ass_ts(0)},{_ass_ts(card_end)},Title,,0,0,0,,{fade}{joined}"
         )
     t = 0.0
     for ln, d in segments:
@@ -637,7 +647,8 @@ def _audio_filter(voice_idx: int, bgm_idx: int | None, duration: float) -> tuple
 def _render(audio_path: str, ass_path: str, duration: float, out_path: str,
             bg_images: list[str] | None = None,
             bg_videos: list[str] | None = None,
-            bg_items: list[tuple[str, str]] | None = None) -> tuple[bool, str]:
+            bg_items: list[tuple[str, str]] | None = None,
+            item_durations: list[float] | None = None) -> tuple[bool, str]:
     bgm = BGM_PATH if os.path.exists(BGM_PATH) else None
     fps = 25
     # normalize backgrounds into an ordered list of (path, kind) — videos and AI images
@@ -650,27 +661,31 @@ def _render(audio_path: str, ass_path: str, duration: float, out_path: str,
 
     if items:
         n = len(items)
-        seg = max(1.0, duration / n)
-        dframes = max(fps, int(seg * fps))
+        # sync each background to its line's spoken duration (item_durations 1:1 with items);
+        # else fall back to an even split across the clip.
+        if item_durations and len(item_durations) == n:
+            durs = [max(0.8, float(d)) for d in item_durations]
+        else:
+            durs = [max(1.0, duration / n)] * n
         cmd = ["ffmpeg", "-y"]
-        for p, k in items:
+        for (p, k), d in zip(items, durs):
             if k == "image":
                 # single frame in -> zoompan generates the motion (d frames). DON'T loop the
                 # input: a looped multi-frame still makes zoompan explode frames so only the
                 # first image ever shows.
                 cmd += ["-i", p]
             else:
-                cmd += ["-stream_loop", "-1", "-t", f"{seg:.2f}", "-i", p]
+                cmd += ["-stream_loop", "-1", "-t", f"{d:.2f}", "-i", p]
         cmd += ["-i", audio_path]
         voice_idx, bgm_idx = n, None
         if bgm:
             cmd += ["-stream_loop", "-1", "-i", bgm]
             bgm_idx = n + 1
         chains = []
-        for i, (p, k) in enumerate(items):
+        for i, ((p, k), d) in enumerate(zip(items, durs)):
+            dframes = max(fps, int(d * fps))  # this scene shows for exactly its line's length
             if k == "image":  # smooth slow Ken Burns zoom-IN only. Big 2x upscale + tiny step
-                # makes zoompan's per-frame rounding sub-pixel → no jitter/shake. (Zoom-OUT was
-                # the shaky one — removed.)
+                # makes zoompan's per-frame rounding sub-pixel → no jitter/shake.
                 chains.append(
                     f"[{i}:v]scale=2160:3840:force_original_aspect_ratio=increase,crop=2160:3840,"
                     f"zoompan=z='min(zoom+0.0006,1.18)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
@@ -768,7 +783,8 @@ async def _render_clip(title: str, lines: list[str], bg_images: list[str] | None
                        bg_videos: list[str] | None = None, face_pip: bool = False,
                        bg_items: list[tuple[str, str]] | None = None,
                        say_lines: list[str] | None = None,
-                       brand: tuple[str, str] | None = None) -> dict:
+                       brand: tuple[str, str] | None = None,
+                       title_card: str = "") -> dict:
     """Shared render: lines -> TTS -> ASS captions -> MP4 (stock-video or image slideshow).
 
     `lines` is shown on screen as the subtitle; `say_lines` (optional, 1:1 with lines) is the
@@ -796,7 +812,7 @@ async def _render_clip(title: str, lines: list[str], bg_images: list[str] | None
         return {"ok": False, "error": f"TTS ล้มเหลว: {str(exc)[:200]}"}
     if not segments or duration <= 0:
         return {"ok": False, "error": "อ่านความยาวเสียงไม่ได้"}
-    await asyncio.to_thread(_build_ass, title, segments, ass, brand)
+    await asyncio.to_thread(_build_ass, title, segments, ass, brand, title_card)
 
     # talking-head PIP (optional): generate while the mp3 is still on disk + served publicly
     pip_video = None
@@ -808,8 +824,11 @@ async def _render_clip(title: str, lines: list[str], bg_images: list[str] | None
         except Exception:
             pip_video = None
 
+    # sync backgrounds to lines when there's one bg per line (image mode) → image follows voice
+    seg_durs = [d for _, d in segments]
+    item_durs = seg_durs if len(bg_items) == len(seg_durs) else None
     render_target = (base + "_bg.mp4") if pip_video else mp4
-    ok, err = await asyncio.to_thread(_render, mp3, ass, duration, render_target, None, None, bg_items)
+    ok, err = await asyncio.to_thread(_render, mp3, ass, duration, render_target, None, None, bg_items, item_durs)
     if not ok and bg_items:
         # the slideshow/zoom render broke → retry plain solid so the clip still ships
         ok, err = await asyncio.to_thread(_render, mp3, ass, duration, render_target, None, None, None)
@@ -924,6 +943,8 @@ async def _retention_qc(lines: list[str], profile: "ChannelProfile", subject: st
         "(3) จุดพีคต้องเฉลยปมนั้นด้วยคำตอบ 'เป็นรูปธรรม' ไม่ใช่ลอยๆ ว่า 'อาจจะ…' "
         "(4) ต้องมี 1 'ประโยคแชร์' (insight ที่อยากส่งต่อ) ก่อน CTA; CTA ต้องชวนคอมเมนต์ประสบการณ์ ไม่ใช่แค่ 'กดติดตาม' "
         "(5) ตัดสำนวนซ้ำๆ ('ตามความเชื่อ' ซ้ำทุกบรรทัด) + ตัดช่วงปูเรื่องที่ยืด ให้แต่ละบรรทัดสั้น≤14 คำ พูดลื่น "
+        "(6) ภาษาต้องเข้าใจง่ายมากๆ คนทั่วไปฟังแล้วเก็ตทันที — แก้ประโยคที่นามธรรม/กำกวม/ศัพท์ยากที่คนงง "
+        "(เช่น 'โลกมีชั้นซ่อน', 'พื้นที่ว่างจะไม่ว่าง') ให้พูดตรงๆ หรืออธิบายด้วยของใกล้ตัว "
         "คงจำนวนบรรทัดใกล้เดิม คงข้อเท็จจริง/แหล่งอ้างอิงเดิม ห้ามทำให้ผิดข้อมูล ตอบ JSON เท่านั้น"
     )
     prompt = ("บท:\n" + _json.dumps(lines, ensure_ascii=False) + "\n\n"
@@ -1099,6 +1120,9 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
         "(เช่น 'ทำไมไหว้ราหูต้องของดำ 8 อย่าง') — หัวข้อยิ่งเฉพาะคนยิ่งกดดู\n"
         "ประโยคแรกห้ามขึ้นต้นด้วยทักทาย/เกริ่น (สวัสดี/วันนี้จะมาเล่า) — โยนฮุคใส่หน้าเลย\n"
         "ต้องมี 1 'ประโยคแชร์' (insight ที่ฟังแล้วอยากส่งต่อ) ก่อนช่วง CTA เสมอ\n"
+        "ใช้ภาษาบ้านๆ ที่คนทั่วไปฟังแล้ว 'เก็ตทันที' — ห้ามศัพท์ยาก/นามธรรมลอยๆ ที่คนงง "
+        "(เช่น อย่าพูด 'โลกมีชั้นซ่อน', 'พื้นที่ว่างจะไม่ว่าง' แบบไม่อธิบาย) "
+        "ถ้าต้องใช้คำยาก ให้อธิบายด้วยของใกล้ตัวที่เห็นภาพชัด ทุกประโยคต้องเข้าใจง่ายไม่กำกวม\n"
         "ก่อนเขียน คิดฮุค 3 แบบในใจ เลือกอันที่หยุดนิ้วที่สุดมาเป็นประโยคแรก\n"
         "1 บรรทัด = 1 ประโยคสั้นพูดลื่น (รวมทั้งคลิป 6-9 บรรทัด) ประโยคสุดท้ายคือชวนคอมเมนต์/ติดตามเสมอ\n"
         'ตอบ JSON เท่านั้น: {"title": "หัวข้อสั้น", "lines": ["ประโยคสั้นๆ (ซับสะกดถูก)", "..."], '
@@ -1283,8 +1307,8 @@ async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: 
         # one AI image PER LINE (prompts are 1:1 with lines & content-specific) → many scenes
         # that match the narration. Cap 8 for cost/time.
         n_lines = len(script.get("lines") or [])
-        n = max(3, min(8, n_lines or 5))
-        await log_line(f"🎨 สร้างภาพ AI {n} ฉาก (1 ฉาก/บรรทัด · Nano Banana)…")
+        n = max(3, min(9, n_lines or 5))  # 1:1 with lines so each image syncs to its line
+        await log_line(f"🎨 สร้างภาพ AI {n} ฉาก (1 ฉาก/บรรทัด ตรงเสียง · Nano Banana)…")
         prompts = list(imps)
         while len(prompts) < n:
             prompts.append(imps[len(prompts) % len(imps)] if imps else script["title"])
@@ -1336,7 +1360,8 @@ async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: 
     await log_line("🎙️ พากย์ (เสียงคุณ V3)" + (" + 🗣️ หน้าพูด D-ID" if face_pip else "") + " + 🎬 ตัดต่อ…")
     r = await _render_clip(script["title"], script["lines"], bg_items=items, face_pip=face_pip,
                            say_lines=script.get("lines_say"),
-                           brand=(profile.brand_handle, profile.brand_web))
+                           brand=(profile.brand_handle, profile.brand_web),
+                           title_card=(script.get("youtube_title") or script["title"]))
     if r.get("ok"):
         kinds = [k for _, k in items]
         await log_line(f"✅ คลิปเสร็จ {r.get('duration', '?')} วิ" + (" · มีหน้าพูด" if r.get("talking_head") else ""))

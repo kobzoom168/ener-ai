@@ -207,8 +207,8 @@ DIDYOUKNOW = ChannelProfile(
     ),
     ai_video_hint="ฉากเด็ดที่อธิบายข้อเท็จจริงให้เห็นภาพ (เช่น โลกหมุน/เซลล์แบ่งตัว/จักรวาลขยาย) cinematic",
     caption_hint="#รู้ไว้ใช่ว่า #สาระความรู้ #เกร็ดความรู้ #ความรู้รอบตัว #DidYouKnow",
-    brand_handle="",   # ตั้งชื่อ/แบรนด์ช่องใหม่ทีหลัง (ปล่อยว่าง = ยังไม่ใส่ลายน้ำ)
-    brand_web="",
+    brand_handle="@ener",
+    brand_web="my-ener.uk",
     face_pip=False,
     default_tone="evidence",
     yt_title_hint=(
