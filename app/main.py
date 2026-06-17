@@ -7155,15 +7155,23 @@ VDO_KEYS = [
 ]
 
 
+# Keys where a value saved in the 🔑 panel must REPLACE a stale value baked into the deploy
+# .env (e.g. switching the Facebook page). For every other key, a real .env value WINS over
+# config — so a junk/partial value left in config can't silently break a working .env key
+# (this exact bug once knocked out OpenRouter when a 12-char value overrode the real key).
+_ENV_OVERRIDE_KEYS = {"FB_PAGE_ID", "FB_PAGE_TOKEN"}
+
+
 async def _load_api_keys_to_env() -> None:
-    """Mirror config-stored API keys into os.environ. Config is the source of truth: a
-    value saved in the 🔑 panel OVERRIDES a stale value baked into the deploy .env (so
-    e.g. switching the Facebook page just means pasting the new token — no SSH needed)."""
+    """Mirror config-stored API keys into os.environ. .env wins by default; only the
+    allowlisted keys let a panel value override an already-set env var."""
     import os as _o
     try:
         for spec in VDO_KEYS:
             v = (await get_config(spec["k"], "") or "").strip()
-            if v:  # only override when the user actually saved a value
+            if not v:
+                continue
+            if spec["env"] in _ENV_OVERRIDE_KEYS or not _o.environ.get(spec["env"]):
                 _o.environ[spec["env"]] = v
     except Exception:
         pass
