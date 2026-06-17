@@ -2261,7 +2261,39 @@ document.addEventListener('DOMContentLoaded', function() {
     loadAutopostClips();
     loadVdoKeys();
     loadVdoCrew();
+    loadTrends(false);
     startApStatusPoll();
+  }
+
+  async function loadTrends(force) {
+    const box = document.getElementById('vdo-trends');
+    if (!box) return;
+    const ch = (document.getElementById('ap-channel') || {}).value || 'mystery';
+    if (force) box.innerHTML = '<div style="color:var(--muted-foreground);font-size:13px">🔎 กำลังดึงกระแส (autocomplete + ข่าว)… ~10-20 วิ</div>';
+    try {
+      const d = await api('/workspace/vdo/trends?channel=' + encodeURIComponent(ch) + (force ? '&refresh=1' : ''));
+      const topics = d.topics || [];
+      if (!topics.length) { box.innerHTML = '<div style="color:var(--muted-foreground);font-size:13px">ยังไม่มีหัวข้อ — กด "↻ ดึงกระแสใหม่"</div>'; return; }
+      box.innerHTML = topics.map(t => {
+        const score = t.score || 0;
+        const col = score >= 75 ? '#22c55e' : (score >= 50 ? '#f59e0b' : '#94a3b8');
+        return '<div style="background:#161b26;border:1px solid var(--border);border-radius:10px;padding:11px 12px">' +
+          '<div style="display:flex;justify-content:space-between;gap:8px;align-items:start">' +
+            '<div style="font-size:13px;font-weight:600;line-height:1.4">' + escapeHtml(t.topic) + '</div>' +
+            '<span style="font-size:11px;font-weight:700;color:' + col + ';white-space:nowrap">' + score + '</span></div>' +
+          (t.why ? '<div style="font-size:11px;color:var(--muted-foreground);margin:5px 0 7px">' + escapeHtml(t.why) + '</div>' : '') +
+          '<button class="panel-action" style="background:#7c3aed;color:#fff;font-size:11px;padding:4px 10px" onclick="useTrendTopic(' + JSON.stringify(t.topic).replace(/"/g, '&quot;') + ')">ใช้หัวข้อนี้</button>' +
+        '</div>';
+      }).join('');
+    } catch (e) {
+      box.innerHTML = '<div style="color:#f87171;font-size:13px">ดึงกระแสไม่สำเร็จ: ' + escapeHtml((e && e.message) || '') + '</div>';
+    }
+  }
+
+  function useTrendTopic(topic) {
+    const inp = document.getElementById('ap-topic');
+    if (inp) { inp.value = topic; inp.scrollIntoView({ behavior: 'smooth', block: 'center' }); inp.focus(); }
+    showToast('ตั้งหัวข้อแล้ว: ' + topic + ' — กดสร้างคลิปได้เลย');
   }
 
   async function loadVdoKeys() {
@@ -2462,6 +2494,8 @@ document.addEventListener('DOMContentLoaded', function() {
   window.setVdoBgMode = setVdoBgMode;
   window.saveVideoCfg = saveVideoCfg;
   window.setVdoImgProvider = setVdoImgProvider;
+  window.loadTrends = loadTrends;
+  window.useTrendTopic = useTrendTopic;
 
   function renderApChannels() {
     const sel = document.getElementById('ap-channel');

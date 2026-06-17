@@ -1014,6 +1014,49 @@ async def _trend_topic(profile: "ChannelProfile", recent: list[dict]) -> str:
     return _strip_quotes(out.splitlines()[0] if out else "")[:80]
 
 
+async def suggest_topics(profile: "ChannelProfile", n: int = 6) -> list[dict]:
+    """🔥 Trend Radar: pull free trend signals (autocomplete + news + daily trending) and have
+    the Trend Scout model turn them into N ranked, specific-question topics for this channel —
+    bridging to the niche WITHOUT forcing/fabricating. Returns [] on failure (fail-open)."""
+    from app.agents import trends as _trends
+    if profile.research_mode == "belief":
+        seeds = ["ดูดวง", "เครื่องราง", "สายมู", "ฮวงจุ้ย", "เลขมงคล", "ผีพราย", "พญานาค", "ของขลัง"]
+        news_q = ["มูเตลู", "สายมู", "ดูดวง", "วัดดัง"]
+        niche = "สายมู/ลึกลับ/ความเชื่อไทย"
+    else:
+        seeds = ["รู้ไหมว่า", "ทำไม", "เรื่องลับ", "อวกาศ", "ร่างกายมนุษย์", "ประวัติศาสตร์", "วิทยาศาสตร์"]
+        news_q = ["วิทยาศาสตร์", "เทคโนโลยี", "อวกาศ", "ค้นพบ"]
+        niche = "ความรู้ว้าวๆ (did-you-know)"
+    sig = await _trends.collect_signals(seeds, news_q)
+    recent = "; ".join(c.get("title", "") for c in (await _recent_clips(profile.id))[:12] if c.get("title"))
+    system = (
+        f"คุณคือนักวางแผนคอนเทนต์ช่อง {niche} ที่เก่งเรื่อง 'จับกระแส'. "
+        "ดูสัญญาณกระแส/คำค้นด้านล่าง แล้วเสนอหัวข้อคลิปที่คนกำลังสนใจตอนนี้และมีโอกาสปัง. "
+        "กฎ: หัวข้อต้องเป็น 'คำถามเฉพาะเจาะจง' (ไม่ใช่คำกว้าง), โยงเข้าแนวช่องแบบไม่ฝืน/ไม่กุข้อมูล, "
+        "เลี่ยงหัวข้อที่ทำไปแล้ว, มีข้อมูลจริงให้เล่าได้. ตอบ JSON เท่านั้น"
+    )
+    prompt = (
+        "สัญญาณกระแสตอนนี้:\n"
+        f"- คำค้น (autocomplete): {', '.join(sig.get('autocomplete', [])[:40])}\n"
+        f"- ข่าว/กระแส: {' | '.join(sig.get('news', [])[:15])}\n"
+        f"- เทรนด์วันนี้: {', '.join(sig.get('daily_trending', [])[:15])}\n"
+        + (f"- ทำไปแล้ว (เลี่ยง): {recent}\n" if recent else "")
+        + f"\nเสนอ {n} หัวข้อที่ดีที่สุด ตอบ JSON: "
+        '{"topics": [{"topic": "หัวข้อแบบคำถามเฉพาะ", "why": "ทำไมตอนนี้/เกี่ยวกระแสอะไร สั้นๆ", '
+        '"hook": "ประโยคฮุคแรกที่จะใช้", "score": คะแนนน่าทำ 0-100}]}'
+    )
+    data = _parse_json(await _or_chat(await _agent_model("trend_scout"), system, prompt, 3000))
+    out = []
+    for t in (data.get("topics") or []):
+        topic = _strip_quotes(str(t.get("topic", ""))).strip()[:120]
+        if topic:
+            out.append({"topic": topic, "why": str(t.get("why", ""))[:160],
+                        "hook": _strip_quotes(str(t.get("hook", "")))[:160],
+                        "score": int(t.get("score", 0)) if str(t.get("score", "")).strip().isdigit() else 0})
+    out.sort(key=lambda x: x["score"], reverse=True)
+    return out[:n]
+
+
 async def _shot_plan(lines: list[str], profile: "ChannelProfile") -> list[dict]:
     """🎬 Director / Shot Planner: choose the best medium per beat — stock (real footage),
     still (AI image + Ken Burns), or aivideo (AI hero shot, used sparingly for hook/peak).

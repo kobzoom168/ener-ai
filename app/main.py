@@ -7196,6 +7196,32 @@ async def workspace_vdo_keys_save(request: Request):
     return JSONResponse({"ok": True})
 
 
+_TRENDS_CACHE: dict = {}  # channel -> (ts, topics)
+
+
+@app.get("/workspace/vdo/trends")
+async def workspace_vdo_trends(request: Request):
+    """🔥 Trend Radar: ranked, currently-trending topic suggestions for the channel (cached ~30m)."""
+    await _require_admin(request)
+    import time as _t
+    channel = str(request.query_params.get("channel", "mystery")).strip().lower()
+    force = request.query_params.get("refresh") == "1"
+    cached = _TRENDS_CACHE.get(channel)
+    if cached and (_t.time() - cached[0] < 1800) and not force:
+        return JSONResponse({"topics": cached[1], "cached": True})
+    if not force and not cached:
+        # don't run the slow trend-gen on tab open — wait for the refresh button
+        return JSONResponse({"topics": [], "needs_refresh": True})
+    from app.agents.vdo_agent import suggest_topics
+    from app.agents.channels import get_profile
+    try:
+        topics = await suggest_topics(get_profile(channel), 6)
+    except Exception as exc:
+        return JSONResponse({"topics": [], "error": str(exc)[:160]})
+    _TRENDS_CACHE[channel] = (_t.time(), topics)
+    return JSONResponse({"topics": topics, "cached": False})
+
+
 @app.get("/workspace/vdo/agents")
 async def workspace_vdo_agents(request: Request):
     """The video crew + each agent's current model + the model options for the dropdowns."""
