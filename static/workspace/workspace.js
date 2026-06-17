@@ -2296,6 +2296,27 @@ document.addEventListener('DOMContentLoaded', function() {
     showToast('ตั้งหัวข้อแล้ว: ' + topic + ' — กดสร้างคลิปได้เลย');
   }
 
+  async function loadAnalytics(force) {
+    const ins = document.getElementById('vdo-analyst-insight');
+    const list = document.getElementById('vdo-analyst-clips');
+    if (!ins || !list) return;
+    if (force) ins.textContent = '📊 กำลังดึงวิวจริงจาก YouTube + วิเคราะห์… ~10-20 วิ';
+    try {
+      const d = await api('/workspace/vdo/analytics' + (force ? '?refresh=1' : ''));
+      ins.textContent = d.insight || 'ยังไม่มี insight — โพสต์คลิปขึ้น YouTube เพิ่มแล้วกดวิเคราะห์';
+      const clips = d.clips || [];
+      list.innerHTML = clips.slice(0, 12).map(c =>
+        '<a href="' + escapeHtml(c.url) + '" target="_blank" rel="noopener" style="text-decoration:none;background:#161b26;border:1px solid var(--border);border-radius:9px;padding:8px 10px;display:block">' +
+          '<div style="font-size:12px;color:var(--foreground);font-weight:600;line-height:1.35">' + escapeHtml(c.title || '(no title)') + '</div>' +
+          '<div style="font-size:11px;color:#22c55e;margin-top:3px">👁 ' + (c.views || 0) + ' · ❤ ' + (c.likes || 0) + ' · 💬 ' + (c.comments || 0) + '</div>' +
+          '<div style="font-size:10px;color:var(--muted-foreground);margin-top:2px">hook: ' + escapeHtml(c.hook_type || '-') + '</div>' +
+        '</a>'
+      ).join('');
+    } catch (e) {
+      ins.textContent = 'วิเคราะห์ไม่สำเร็จ: ' + ((e && e.message) || '');
+    }
+  }
+
   async function loadVdoKeys() {
     const box = document.getElementById('vdo-keys');
     if (!box) return;
@@ -2496,6 +2517,7 @@ document.addEventListener('DOMContentLoaded', function() {
   window.setVdoImgProvider = setVdoImgProvider;
   window.loadTrends = loadTrends;
   window.useTrendTopic = useTrendTopic;
+  window.loadAnalytics = loadAnalytics;
 
   function renderApChannels() {
     const sel = document.getElementById('ap-channel');

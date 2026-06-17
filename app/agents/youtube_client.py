@@ -146,6 +146,33 @@ async def check() -> tuple[bool, str]:
         return False, str(exc)[:240]
 
 
+async def video_stats(video_ids: list[str]) -> dict:
+    """Fetch public stats (views/likes/comments) for uploaded videos — works with the
+    youtube.readonly scope we already have. Returns {video_id: {views,likes,comments}}."""
+    ids = [v for v in (video_ids or []) if v][:50]
+    if not enabled() or not ids:
+        return {}
+
+    def _do() -> dict:
+        from googleapiclient.discovery import build
+        yt = build("youtube", "v3", credentials=_creds_sync(), cache_discovery=False)
+        resp = yt.videos().list(part="statistics", id=",".join(ids)).execute()
+        out = {}
+        for it in (resp.get("items") or []):
+            st = it.get("statistics", {})
+            out[it.get("id")] = {
+                "views": int(st.get("viewCount") or 0),
+                "likes": int(st.get("likeCount") or 0),
+                "comments": int(st.get("commentCount") or 0),
+            }
+        return out
+
+    try:
+        return await asyncio.to_thread(_do)
+    except Exception:
+        return {}
+
+
 async def upload_video(mp4_path: str, title: str, description: str = "",
                        tags: list[str] | None = None, privacy: str | None = None) -> tuple[bool, str]:
     """Resumable-upload an mp4 as a YouTube video (vertical + #Shorts → shows as a Short)."""

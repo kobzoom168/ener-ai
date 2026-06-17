@@ -130,6 +130,23 @@ async def _post_platform(name: str, mp4: str, caption: str, title: str = "",
     return False, f"ไม่รู้จักช่องทาง {name}"
 
 
+async def _record_yt(job: dict, msg: str) -> None:
+    """On a successful YouTube post, log the video_id + this clip's hook/angle/topic so the
+    Analyst (phase ②) can later learn which formulas got the most views."""
+    import re as _re
+    m = _re.search(r"youtu\.be/([\w-]+)", msg or "")
+    if not m:
+        return
+    st = job.get("_state", {})
+    try:
+        from app.agents.vdo_agent import record_yt_clip
+        await record_yt_clip(job.get("channel") or "mystery", m.group(1),
+                             st.get("title", ""), st.get("yt_hook", ""),
+                             st.get("yt_angle", ""), st.get("yt_topic", ""))
+    except Exception:
+        pass
+
+
 async def _send_telegram(mp4: str, caption: str) -> None:
     """Always push the freshly made clip to Telegram so the user sees every one."""
     try:
@@ -158,7 +175,9 @@ async def _ensure_clip(job: dict, today: str) -> tuple[str, str, str]:
               title=res.get("title") or "",
               yt_title=res.get("youtube_title") or res.get("title") or "",
               yt_desc=res.get("youtube_description") or res.get("caption") or "",
-              yt_tags=res.get("youtube_tags") or [])
+              yt_tags=res.get("youtube_tags") or [],
+              yt_angle=res.get("angle", ""), yt_hook=res.get("hook_type", ""),
+              yt_topic=res.get("subject") or res.get("title") or "")
     await _send_telegram(st["mp4"], f"{st['title']}\n\n{st['caption']}".strip())
     await log_line("📲 ส่งคลิปเข้า Telegram แล้ว")
     return st["mp4"], st["caption"], st["title"]
@@ -199,6 +218,8 @@ async def run_job(job: dict, source: str = "manual", preview: bool = False) -> d
             ok, msg = await _post_platform(p["name"], mp4, caption, title, yt_meta)
         except Exception as exc:
             ok, msg = False, str(exc)[:160]
+        if ok and p["name"] == "youtube":
+            await _record_yt(job, msg)
         await log_line(f"📤 {PLATFORM_LABEL.get(p['name'], p['name'])}: {'✅' if ok else '❌'} {msg}")
         results.append(f"{'✅' if ok else '❌'} {PLATFORM_LABEL.get(p['name'], p['name'])}: {msg}")
     await set_status("done", title=title)
@@ -248,6 +269,8 @@ async def run_due() -> None:
                 ok, msg = await _post_platform(p["name"], mp4, caption, title, yt_meta)
             except Exception as exc:
                 ok, msg = False, str(exc)[:160]
+            if ok and p["name"] == "youtube":
+                await _record_yt(job, msg)
             await log_line(f"📤 {PLATFORM_LABEL.get(p['name'], p['name'])}: {'✅' if ok else '❌'} {msg}")
             last_run[p["name"]] = today
             await _append_log({"at": now.strftime("%Y-%m-%d %H:%M"), "label": job.get("label"),

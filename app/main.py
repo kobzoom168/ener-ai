@@ -7222,6 +7222,29 @@ async def workspace_vdo_trends(request: Request):
     return JSONResponse({"topics": topics, "cached": False})
 
 
+_ANALYTICS_CACHE: dict = {}  # ts, payload
+
+
+@app.get("/workspace/vdo/analytics")
+async def workspace_vdo_analytics(request: Request):
+    """📊 Analyst (phase ②): live YouTube stats of our clips + learned 'what works' insight."""
+    await _require_admin(request)
+    import time as _t
+    force = request.query_params.get("refresh") == "1"
+    cached = _ANALYTICS_CACHE.get("data")
+    if cached and not force and (_t.time() - cached[0] < 600):
+        return JSONResponse({**cached[1], "cached": True})
+    if not force and not cached:
+        return JSONResponse({"clips": [], "insight": "", "needs_refresh": True})
+    from app.agents.vdo_agent import analyze_performance
+    try:
+        payload = await analyze_performance()
+    except Exception as exc:
+        return JSONResponse({"clips": [], "insight": "", "error": str(exc)[:160]})
+    _ANALYTICS_CACHE["data"] = (_t.time(), payload)
+    return JSONResponse({**payload, "cached": False})
+
+
 @app.get("/workspace/vdo/agents")
 async def workspace_vdo_agents(request: Request):
     """The video crew + each agent's current model + the model options for the dropdowns."""

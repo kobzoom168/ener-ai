@@ -280,6 +280,16 @@
           </div>
         </div>
 
+        <!-- 📊 Analyst (phase ②): learn from real YouTube stats which topics/hooks win -->
+        <div class="surface" style="padding:14px 16px;border:1px solid var(--border);border-radius:12px;margin-bottom:16px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:8px;flex-wrap:wrap">
+            <div style="font-weight:600;font-size:13px">📊 Analyst — สูตรที่ปังบนช่อง (เรียนจากวิวจริง)</div>
+            <button class="panel-action" onclick="loadAnalytics(true)">↻ วิเคราะห์ใหม่</button>
+          </div>
+          <div id="vdo-analyst-insight" style="font-size:12px;color:var(--muted-foreground);white-space:pre-wrap;margin-bottom:10px">กด "↻ วิเคราะห์ใหม่" เพื่อให้ AI สรุปจากวิวจริง (ต้องมีคลิปขึ้น YouTube ≥3 คลิป)</div>
+          <div id="vdo-analyst-clips" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px"></div>
+        </div>
+
         <div class="surface" style="padding:16px;border:1px solid var(--border);border-radius:12px;margin-bottom:20px">
           <div style="font-weight:600;margin-bottom:14px" id="autopost-form-title">➕ ตั้งตารางโพสต์ใหม่</div>
           <input type="hidden" id="ap-id" value="">

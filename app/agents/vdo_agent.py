@@ -1014,6 +1014,72 @@ async def _trend_topic(profile: "ChannelProfile", recent: list[dict]) -> str:
     return _strip_quotes(out.splitlines()[0] if out else "")[:80]
 
 
+_YT_PERF_KEY = "vdo_yt_performance"      # list of uploaded-clip fingerprints + video_id
+_ANALYST_INSIGHT_KEY = "vdo_analyst_insight"  # the learned "what works on our channel" summary
+
+
+async def record_yt_clip(channel: str, video_id: str, title: str, hook_type: str,
+                         angle: str, topic: str) -> None:
+    """Remember an uploaded YouTube clip so the Analyst can later correlate its stats with
+    the hook/angle/topic that produced it."""
+    if not video_id:
+        return
+    try:
+        from app.core.database import get_config, set_config
+        raw = await get_config(_YT_PERF_KEY, "")
+        data = _json.loads(raw) if raw else []
+        if not isinstance(data, list):
+            data = []
+        if any(e.get("video_id") == video_id for e in data):
+            return
+        data.insert(0, {"video_id": video_id, "channel": channel, "title": title[:90],
+                        "hook_type": hook_type[:60], "angle": angle[:80], "topic": topic[:90],
+                        "at": int(time.time())})
+        await set_config(_YT_PERF_KEY, _json.dumps(data[:200], ensure_ascii=False))
+    except Exception:
+        pass
+
+
+async def analyze_performance() -> dict:
+    """📊 Analyst: pull live YouTube stats for our uploaded clips, rank what got the most views,
+    and have the Analyst model summarise 'what works on our channel'. Stores the insight so the
+    Scriptwriter + Trend Scout use it. Returns {clips:[...], insight:str}."""
+    from app.core.database import get_config, set_config
+    from app.agents import youtube_client
+    raw = await get_config(_YT_PERF_KEY, "")
+    perf = _json.loads(raw) if raw else []
+    if not isinstance(perf, list) or not perf:
+        return {"clips": [], "insight": ""}
+    stats = await youtube_client.video_stats([e["video_id"] for e in perf[:50]])
+    clips = []
+    for e in perf[:50]:
+        s = stats.get(e["video_id"]) or {}
+        clips.append({**e, "views": s.get("views", 0), "likes": s.get("likes", 0),
+                      "comments": s.get("comments", 0),
+                      "url": f"https://youtu.be/{e['video_id']}"})
+    clips.sort(key=lambda c: c["views"], reverse=True)
+    if len([c for c in clips if c["views"] > 0]) < 3:
+        return {"clips": clips, "insight": "ยังมีข้อมูลน้อย — โพสต์เพิ่มอีกหน่อยแล้วค่อยวิเคราะห์ (ต้องมี ≥3 คลิปที่มีวิว)"}
+    lines = [f"{c['views']} views · {c['likes']}❤ · hook={c['hook_type']} · angle={c['angle']} · {c['title']}"
+             for c in clips[:25]]
+    system = ("คุณคือนักวิเคราะห์คอนเทนต์ ดูสถิติคลิปจริงของช่องด้านล่าง "
+              "สรุปเป็น 'กฎสั้นๆ ที่นำไปใช้เขียนคลิปต่อไปได้' 3-5 ข้อ: hook แบบไหน/หัวข้อแนวไหน/มุมไหน "
+              "ที่ได้วิวสูง และแบบไหนที่ควรเลี่ยง. อิงจากข้อมูลจริงเท่านั้น ไม่เดา ตอบไทยสั้นๆ เป็น bullet")
+    insight = (await _or_chat(await _agent_model("analyst"), system, "สถิติ:\n" + "\n".join(lines), 800)).strip()
+    if insight:
+        await set_config(_ANALYST_INSIGHT_KEY, insight[:1200])
+    return {"clips": clips, "insight": insight}
+
+
+async def _analyst_insight() -> str:
+    """The stored 'what works on our channel' summary, injected into writer/trend prompts."""
+    try:
+        from app.core.database import get_config
+        return (await get_config(_ANALYST_INSIGHT_KEY, "")).strip()
+    except Exception:
+        return ""
+
+
 async def suggest_topics(profile: "ChannelProfile", n: int = 6) -> list[dict]:
     """🔥 Trend Radar: pull free trend signals (autocomplete + news + daily trending) and have
     the Trend Scout model turn them into N ranked, specific-question topics for this channel —
@@ -1035,6 +1101,9 @@ async def suggest_topics(profile: "ChannelProfile", n: int = 6) -> list[dict]:
         "กฎ: หัวข้อต้องเป็น 'คำถามเฉพาะเจาะจง' (ไม่ใช่คำกว้าง), โยงเข้าแนวช่องแบบไม่ฝืน/ไม่กุข้อมูล, "
         "เลี่ยงหัวข้อที่ทำไปแล้ว, มีข้อมูลจริงให้เล่าได้. ตอบ JSON เท่านั้น"
     )
+    _ins = await _analyst_insight()
+    if _ins:
+        system += " บทเรียนจากสถิติจริงของช่องนี้ (เลือกหัวข้อให้เข้าแนวที่เคยได้วิวสูง): " + _ins[:500]
     prompt = (
         "สัญญาณกระแสตอนนี้:\n"
         f"- คำค้น (autocomplete): {', '.join(sig.get('autocomplete', [])[:40])}\n"
@@ -1141,6 +1210,9 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
         "lines_say = บทเดียวกัน แต่สะกด 'ทุกคำรวมถึงคำอังกฤษ' เป็นไทยอ่านออกเสียงให้ TTS อ่านถูก "
         f"(เช่น USS Nimitz→ยูเอสเอส นิมิตซ์, NASA→นาซ่า, {profile.pronun_examples}) คำไทยปกติคงเดิม. ตอบ JSON เท่านั้น"
     )
+    _ins = await _analyst_insight()
+    if _ins:
+        system += (" บทเรียนจากสถิติจริงของช่องนี้ (ทำตามสูตรที่เคยได้วิวสูง เลี่ยงที่เคยแป้ก): " + _ins[:500])
     if title:
         body = f"เรื่อง: {title}\nรายละเอียด: {summary}\n\nเรียบเรียงเป็นบทคลิปที่น่าติดตาม"
     elif topic:
@@ -1281,7 +1353,7 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
     return {"title": out_title, "lines": lines, "lines_say": lines_say, "caption": caption,
             "image_prompts": image_prompts, "video_queries": video_queries,
             "ai_video_prompt": ai_video_prompt, "angle": angle, "hook_type": hook_type,
-            "shot_plan": shot_plan,
+            "subject": subject, "shot_plan": shot_plan,
             "youtube_title": yt_title, "youtube_description": yt_description, "youtube_tags": yt_tags}
 
 
@@ -1412,6 +1484,8 @@ async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: 
                   "youtube_title": script.get("youtube_title") or script["title"],
                   "youtube_description": script.get("youtube_description") or script["caption"],
                   "youtube_tags": script.get("youtube_tags") or [],
+                  "angle": script.get("angle", ""), "hook_type": script.get("hook_type", ""),
+                  "subject": script.get("subject", ""),
                   "bg_count": len(items),
                   "bg_kind": f"{kinds.count('video')}vid+{kinds.count('image')}img"})
     else:
