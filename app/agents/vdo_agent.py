@@ -589,29 +589,107 @@ async def _pexels_pick(query: str, key: str) -> dict | None:
     return random.choice(pool)[1]
 
 
-async def _fetch_stock_video(query: str, idx: int = 0) -> str | None:
-    """Find + download a real vertical Thai stock video for `query` from Pexels. Fail-open.
+async def _pexels_pick_url(query: str, key: str) -> str | None:
+    best = await _pexels_pick(query, key)
+    return best["link"] if best else None
 
-    Tries the (Thai-biased) query first; if nothing matches, retries once with the Thai
-    words stripped so we still get a real video rather than dropping to an AI image.
+
+async def _pixabay_pick(query: str, key: str) -> str | None:
+    """Pick a video mp4 URL from Pixabay (free, ~1.9M assets). Prefers portrait but accepts
+    landscape (the renderer crops to 9:16). Random among the top hits for variety."""
+    import httpx
+    import random
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.get("https://pixabay.com/api/videos/",
+                        params={"key": key, "q": query, "per_page": 20, "safesearch": "true"})
+    if r.status_code >= 300:
+        return None
+    portrait, other = [], []
+    for h in (r.json().get("hits") or []):
+        if (h.get("duration") or 0) < 2:
+            continue
+        vids = h.get("videos") or {}
+        pick = None
+        for size in ("large", "medium", "small", "tiny"):
+            f = vids.get(size) or {}
+            if f.get("url"):
+                pick = f
+                if (f.get("width") or 0) >= 720:
+                    break
+        if not pick or not pick.get("url"):
+            continue
+        (portrait if (pick.get("height") or 0) >= (pick.get("width") or 0) else other).append(pick["url"])
+    pool = portrait or other
+    return random.choice(pool[:8]) if pool else None
+
+
+async def _coverr_pick(query: str, key: str) -> str | None:
+    """Pick a video mp4 URL from Coverr (free). Best-effort / fail-open: if the API shape
+    differs we just return None and the caller falls back to another provider or an image."""
+    import httpx
+    import random
+    async with httpx.AsyncClient(timeout=30) as c:
+        r = await c.get("https://api.coverr.co/videos",
+                        params={"query": query, "page_size": 20, "urls": "true", "api_key": key},
+                        headers={"Authorization": f"Bearer {key}"})
+    if r.status_code >= 300:
+        return None
+    data = r.json()
+    hits = data.get("hits") or data.get("videos") or []
+    urls = []
+    for h in hits:
+        u = h.get("urls") or {}
+        link = u.get("mp4_download") or u.get("mp4") or u.get("mp4_preview")
+        if link:
+            urls.append(link)
+    return random.choice(urls[:8]) if urls else None
+
+
+async def _fetch_stock_video(query: str, idx: int = 0) -> str | None:
+    """Find + download a real vertical stock clip for `query`. Fail-open.
+
+    Tries every configured FREE provider (Pexels, Pixabay, Coverr) in random order — so
+    footage varies and a wider library is searched — with a Thai-stripped retry. Returns
+    a local mp4 path or None (caller then uses a fresh AI still instead).
     """
-    key = os.environ.get("PEXELS_API_KEY", "").strip()
+    import random
     query = (query or "").strip()
-    if not key or not query:
+    if not query:
+        return None
+    broadened = re.sub(r"\b(thai|thailand|bangkok)\b", "", query, flags=re.IGNORECASE).strip()
+    queries = [query] + ([broadened] if broadened and broadened.lower() != query.lower() else [])
+    pexkey = os.environ.get("PEXELS_API_KEY", "").strip()
+    pixkey = os.environ.get("PIXABAY_API_KEY", "").strip()
+    covkey = os.environ.get("COVERR_API_KEY", "").strip()
+    providers = []
+    if pexkey:
+        providers.append(("pexels", lambda q: _pexels_pick_url(q, pexkey)))
+    if pixkey:
+        providers.append(("pixabay", lambda q: _pixabay_pick(q, pixkey)))
+    if covkey:
+        providers.append(("coverr", lambda q: _coverr_pick(q, covkey)))
+    if not providers:
+        return None
+    random.shuffle(providers)
+    url = None
+    for q in queries:
+        for _name, pick in providers:
+            try:
+                url = await pick(q)
+            except Exception:
+                url = None
+            if url:
+                break
+        if url:
+            break
+    if not url:
         return None
     try:
-        best = await _pexels_pick(query, key)
-        if not best:
-            broadened = re.sub(r"\b(thai|thailand|bangkok)\b", "", query, flags=re.IGNORECASE).strip()
-            if broadened and broadened.lower() != query.lower():
-                best = await _pexels_pick(broadened, key)
-        if not best:
-            return None
         import httpx
         os.makedirs(VDO_DIR, exist_ok=True)
         path = os.path.join(VDO_DIR, f"sv_{int(time.time())}_{idx}.mp4")
         async with httpx.AsyncClient(timeout=120, follow_redirects=True) as c:
-            async with c.stream("GET", best["link"]) as resp:
+            async with c.stream("GET", url) as resp:
                 if resp.status_code >= 300:
                     return None
                 with open(path, "wb") as fh:
@@ -620,6 +698,40 @@ async def _fetch_stock_video(query: str, idx: int = 0) -> str | None:
         return path if os.path.exists(path) and os.path.getsize(path) > 10000 else None
     except Exception:
         return None
+
+
+async def _probe_pexels(queries: list[str]) -> dict[str, int]:
+    """Footage-aware scripting: check Pexels UP FRONT for how many usable portrait clips
+    each query has, so the builder uses real footage where it exists and auto-falls back
+    to a fresh AI still where it doesn't. Fail-open.
+
+    Returns {query: count}; count >0 = footage exists, 0 = confirmed none (→ use image),
+    -1 = unknown (API error → still worth a real try later).
+    """
+    key = os.environ.get("PEXELS_API_KEY", "").strip()
+    uniq: list[str] = []
+    for q in queries:
+        q = (q or "").strip()
+        if q and q.lower() not in {u.lower() for u in uniq}:
+            uniq.append(q)
+    if not key or not uniq:
+        return {}
+    import httpx
+
+    async def _one(q: str) -> tuple[str, int]:
+        try:
+            async with httpx.AsyncClient(timeout=15) as c:
+                r = await c.get("https://api.pexels.com/videos/search",
+                                headers={"Authorization": key},
+                                params={"query": q, "orientation": "portrait", "per_page": 5})
+            if r.status_code >= 300:
+                return q, -1
+            vids = r.json().get("videos") or []
+            return q, sum(1 for v in vids if (v.get("height") or 0) >= (v.get("width") or 0))
+        except Exception:
+            return q, -1
+
+    return {q: c for q, c in await asyncio.gather(*[_one(q) for q in uniq])}
 
 
 async def _fetch_stock_videos(queries: list[str]) -> list[str]:

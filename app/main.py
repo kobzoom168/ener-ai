@@ -7143,6 +7143,8 @@ VDO_KEYS = [
     {"k": "ELEVENLABS_API_KEY", "env": "ELEVENLABS_API_KEY", "label": "ElevenLabs — เสียงพากย์", "hint": "elevenlabs.io/app/settings/api-keys", "secret": True},
     {"k": "ELEVENLABS_VOICE_ID", "env": "ELEVENLABS_VOICE_ID", "label": "ElevenLabs Voice ID — เสียงที่โคลนไว้", "hint": "", "secret": False},
     {"k": "PEXELS_API_KEY", "env": "PEXELS_API_KEY", "label": "Pexels — ฟุตเทจวิดีโอจริง (ฟรี)", "hint": "pexels.com/api", "secret": True},
+    {"k": "PIXABAY_API_KEY", "env": "PIXABAY_API_KEY", "label": "Pixabay — ฟุตเทจวิดีโอจริง (ฟรี · คลังใหญ่สุด)", "hint": "pixabay.com/api/docs", "secret": True},
+    {"k": "COVERR_API_KEY", "env": "COVERR_API_KEY", "label": "Coverr — ฟุตเทจวิดีโอจริง (ฟรี)", "hint": "coverr.co/api", "secret": True},
     {"k": "FAL_KEY", "env": "FAL_KEY", "label": "fal.ai — AI สร้างวิดีโอ", "hint": "fal.ai/dashboard/keys", "secret": True},
     {"k": "XAI_API_KEY", "env": "XAI_API_KEY", "label": "xAI (Grok) — AI วิดีโอต่อตรง (ทางเลือก)", "hint": "console.x.ai", "secret": True},
     {"k": "DID_API_KEY", "env": "DID_API_KEY", "label": "D-ID — หน้าพูด (PIP)", "hint": "studio.d-id.com", "secret": True},
