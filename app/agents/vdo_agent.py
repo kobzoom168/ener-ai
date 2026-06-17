@@ -24,7 +24,7 @@ RESEARCH_MODEL = os.environ.get("VDO_RESEARCH_MODEL", "perplexity/sonar")
 _CLIP_HISTORY_KEY = "vdo_clip_history"
 # Color grade applied to every clip (ffmpeg eq). Brighter + more vivid than before
 # (was brightness=-0.19 = quite dark). Tune via env VDO_EQ if needed.
-VDO_EQ = os.environ.get("VDO_EQ", "brightness=-0.04:saturation=1.16:contrast=1.04")
+VDO_EQ = os.environ.get("VDO_EQ", "brightness=-0.02:saturation=1.22:contrast=1.05")
 
 # Default model per crew agent. Each is overridable live from the Auto Post UI
 # (stored as config key vdo_model_<agent>); _agent_model() reads the override with fallback.
@@ -483,7 +483,7 @@ async def _gen_bg_image(prompt: str, idx: int = 0) -> str | None:
 
 async def _gen_bg_images(prompts: list[str]) -> list[str]:
     """Generate several bg images in parallel; returns the paths that succeeded."""
-    prompts = [p for p in (prompts or []) if str(p).strip()][:6]
+    prompts = [p for p in (prompts or []) if str(p).strip()][:9]
     if not prompts:
         return []
     results = await asyncio.gather(*[_gen_bg_image(p, i) for i, p in enumerate(prompts)])
@@ -1051,7 +1051,10 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
         'ตอบ JSON เท่านั้น: {"title": "หัวข้อสั้น", "lines": ["ประโยคสั้นๆ (ซับสะกดถูก)", "..."], '
         '"lines_say": ["ประโยคเดียวกันแต่แปลงคำที่อ่านยากให้ TTS อ่านถูก จำนวนเท่า lines", "..."], '
         f'"caption": "แคปชั่นโพสต์ + #แฮชแท็ก เช่น {profile.caption_hint}", '
-        f'"image_prompts": ["ภาพพื้นหลัง 5 ฉากเป็นภาษาอังกฤษ ไล่ตามเนื้อหาทีละช่วง {profile.visual_style}", "...", "...", "...", "..."], '
+        f'"image_prompts": ["พรอมต์ภาพพื้นหลังภาษาอังกฤษ 1 พรอมต์ต่อ 1 บรรทัดของ lines (จำนวนเท่า lines เรียงตรงกัน 1:1) '
+        f'แต่ละพรอมต์ต้องบรรยาย \'สิ่งที่ควรเห็นให้ตรงกับเนื้อหาบรรทัดนั้นเป๊ะ\' '
+        f'(เช่น บรรทัดพูดถึงผลึก calcite ใต้กล้อง→\'calcite crystals macro under microscope\'; '
+        f'บรรทัดพูดถึงพระสมเด็จ→\'extreme close-up of an old Thai Somdej amulet\') {profile.visual_style}", "...", "..."], '
         f'"video_queries": ["คำค้นวิดีโอสต็อกจริงสั้นๆ ภาษาอังกฤษ 1-3 คำ {profile.video_query_hint}", "...", "..."], '
         f'"ai_video_prompt": "พรอมต์ภาษาอังกฤษ 1 ประโยค สำหรับ AI สร้างวิดีโอ {profile.ai_video_hint}", '
         f'"youtube_title": "พาดหัวคลิปสำหรับ YouTube — {profile.yt_title_hint}", '
@@ -1126,7 +1129,7 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
     # pair lines_say 1:1 with display lines (fall back to the display line itself)
     lines_say = [(say_raw[i] if i < len(say_raw) and say_raw[i] else lines[i]) for i in range(len(lines))]
     caption = str(data.get("caption") or out_title).strip()[:300]
-    image_prompts = [str(x).strip()[:300] for x in (data.get("image_prompts") or []) if str(x).strip()][:6]
+    image_prompts = [str(x).strip()[:300] for x in (data.get("image_prompts") or []) if str(x).strip()][:9]
     if not image_prompts:
         image_prompts = [out_title]
     video_queries = [str(x).strip()[:80] for x in (data.get("video_queries") or []) if str(x).strip()][:3]
@@ -1224,14 +1227,16 @@ async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: 
                     "video": "🎬 โหมดภาพ: เน้นฟุตเทจวิดีโอจริง"}.get(bg_mode, "🎨 โหมดภาพ: " + bg_mode))
 
     if bg_mode == "image":
-        # all AI images via OpenRouter (no new bill) — several scenes per clip
-        n = max(1, min(6, int(os.environ.get("VDO_BG_IMAGE_COUNT", "5") or 5)))
-        await log_line(f"🎨 สร้างภาพ AI {n} รูป (Nano Banana 2)…")
+        # one AI image PER LINE (prompts are 1:1 with lines & content-specific) → many scenes
+        # that match the narration. Cap 8 for cost/time.
+        n_lines = len(script.get("lines") or [])
+        n = max(3, min(8, n_lines or 5))
+        await log_line(f"🎨 สร้างภาพ AI {n} ฉาก (1 ฉาก/บรรทัด · Nano Banana)…")
         prompts = list(imps)
         while len(prompts) < n:
-            prompts.append(imps[len(prompts) % len(imps)])
+            prompts.append(imps[len(prompts) % len(imps)] if imps else script["title"])
         imgs = await _gen_bg_images(prompts[:n])
-        await log_line(f"✅ ได้ภาพ {len(imgs)}/{n} รูป")
+        await log_line(f"✅ ได้ภาพ {len(imgs)}/{n} ฉาก")
         items = [(p, "image") for p in imgs]
     else:
         from app.agents import aivideo
