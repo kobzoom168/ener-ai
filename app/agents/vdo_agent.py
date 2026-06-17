@@ -99,9 +99,9 @@ _ASS_HEADER = (
     "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, "
     "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, "
     "Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-    "Style: Default,Garuda,72,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,3,0,1,4,3,2,70,70,540,0\n"
+    "Style: Default,Garuda,74,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,2,0,1,5,3,2,70,70,330,0\n"
     "Style: Title,Garuda,62,&H00A5B4FC,&H00111111,&H64000000,-1,0,0,0,100,100,0,0,1,5,3,8,70,70,250,0\n"
-    "Style: Brand,Garuda,52,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,1,0,1,3,2,8,70,70,250,0\n\n"
+    "Style: Brand,Garuda,40,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,1,0,1,2,2,7,40,40,60,0\n\n"
     "[Events]\n"
     "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
 )
@@ -667,15 +667,13 @@ def _render(audio_path: str, ass_path: str, duration: float, out_path: str,
             cmd += ["-stream_loop", "-1", "-i", bgm]
             bgm_idx = n + 1
         chains = []
-        img_idx = 0
         for i, (p, k) in enumerate(items):
-            if k == "image":  # still image -> slow Ken Burns; alternate zoom-in / zoom-out per scene
-                z = (f"min(zoom+0.0012,1.35)" if img_idx % 2 == 0
-                     else f"max(1.0,1.35-0.0012*on)")  # even=zoom in, odd=zoom out
-                img_idx += 1
+            if k == "image":  # smooth slow Ken Burns zoom-IN only. Big 2x upscale + tiny step
+                # makes zoompan's per-frame rounding sub-pixel → no jitter/shake. (Zoom-OUT was
+                # the shaky one — removed.)
                 chains.append(
-                    f"[{i}:v]scale=1620:2880:force_original_aspect_ratio=increase,crop=1620:2880,"
-                    f"zoompan=z='{z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+                    f"[{i}:v]scale=2160:3840:force_original_aspect_ratio=increase,crop=2160:3840,"
+                    f"zoompan=z='min(zoom+0.0006,1.18)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
                     f"d={dframes}:s=1080x1920:fps={fps},setsar=1[v{i}]"
                 )
             else:  # real video -> fill 9:16
@@ -984,8 +982,9 @@ async def _trend_topic(profile: "ChannelProfile", recent: list[dict]) -> str:
     topic for this genre (web search) that doesn't repeat recent clips. Returns "" on failure
     so the caller falls back to the profile's own topic_pick."""
     avoid = ", ".join(c.get("title", "") for c in recent[:12] if c.get("title"))
-    system = ("คุณคือนักหาประเด็นคอนเทนต์ที่กำลังน่าสนใจ ค้นจากเว็บจริง "
-              "เลือกหัวข้อที่มีข้อมูล/หลักฐานจริง คนไทยสนใจ ไม่ซ้ำของเดิม")
+    system = ("คุณคือนักหาประเด็นคอนเทนต์ที่ 'กำลังเป็นกระแส/ทันเหตุการณ์ช่วงนี้' ค้นจากเว็บจริง "
+              "ดูว่าตอนนี้คนไทยกำลังพูดถึง/ค้นหาอะไรในแนวนี้ เลือกหัวข้อที่มีข้อมูล/หลักฐานจริง "
+              "อยู่ในกระแส คนอยากดู ไม่ซ้ำของเดิม")
     prompt = (f"ช่อง: {profile.name}\nแนวทางเลือกหัวข้อ: {profile.topic_pick}\n"
               + (f"ห้ามซ้ำกับที่เคยทำ: {avoid}\n" if avoid else "")
               + "เสนอหัวข้อเดียวที่ดีที่สุดตอนนี้ ตอบเป็นชื่อหัวข้อสั้นๆ บรรทัดเดียว ไม่ต้องอธิบาย")
@@ -1092,7 +1091,8 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
         f"{body}\n\n"
         "เขียนบทตามโครงบีทข้างบนให้ครบทุกช่วง (ฮุค → ปมค้าง → ปูเรื่อง+อ้างอิงเจาะจง → จุดพีค → สรุป+ชวนติดตาม)\n"
         "สำคัญ: อยู่กับหัวข้อเดียวตลอดทั้งคลิป ห้ามลากเรื่อง/ความเชื่ออื่นที่ไม่เกี่ยวมาปน "
-        "(เช่น หัวข้อ UFO ก็เล่า UFO อย่าเอาผีปอบ/ผีฟ้ามาปนถ้าไม่ได้เกี่ยวกันจริง) "
+        "(เช่น หัวข้อ UFO ก็เล่า UFO; หัวข้อ 'มิติที่ 4' แบบฟิสิกส์ ห้ามดัดเป็นเรื่องผีพราย) "
+        "ห้ามแต่งชื่องานวิจัย/สถาบัน/วารสาร/ปี ที่ไม่ได้มาจากข้อมูลอ้างอิงจริง — ถ้าไม่มีแหล่งจริงให้เล่าแบบไม่อ้างชื่อเฉพาะ "
         "จุดพีคต้องเฉลยปมที่ค้างไว้ด้วยคำตอบที่เป็นรูปธรรม ไม่ใช่ลอยๆ ว่า 'อาจจะ'\n"
         "ก่อนเขียน คิดฮุค 3 แบบในใจ เลือกอันที่หยุดนิ้วที่สุดมาเป็นประโยคแรก\n"
         "1 บรรทัด = 1 ประโยคสั้นพูดลื่น (รวมทั้งคลิป 6-9 บรรทัด) ประโยคสุดท้ายคือชวนคอมเมนต์/ติดตามเสมอ\n"
