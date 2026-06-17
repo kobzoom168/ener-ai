@@ -3601,6 +3601,7 @@ def build_admin_config_html(configs: list[dict]) -> HTMLResponse:
     <h3 style="margin:0 0 12px">🧪 Test Connections</h3>
     <button class="test-btn" onclick="testLine()">📱 ทดสอบ LINE</button>
     <a class="test-btn" style="text-decoration:none;display:inline-block;background:#dc2626" href="/admin/youtube">▶️ ตั้งค่า / เชื่อม YouTube</a>
+    <a class="test-btn" style="text-decoration:none;display:inline-block;background:#000" href="/admin/tiktok">🎵 ตั้งค่า / เชื่อม TikTok</a>
     <div id="test-result"></div>
   </div>
 
@@ -12178,6 +12179,175 @@ async def admin_youtube_test(request: Request):
     await _verify_admin_session(request)
     from app.agents import youtube_client
     ok, msg = await youtube_client.check()
+    return JSONResponse({"ok": ok, "message": msg})
+
+
+# ───────────────────────── TikTok (Content Posting API) ─────────────────────────
+def _tt_redirect_uri(request: Request, configured: str) -> str:
+    """The exact redirect URI registered in the TikTok app; else derive from the request
+    (forcing https, since TikTok rejects http and we sit behind a TLS proxy)."""
+    if configured.strip():
+        return configured.strip()
+    base = str(request.base_url).rstrip("/")
+    if base.startswith("http://") and "localhost" not in base and "127.0.0.1" not in base:
+        base = "https://" + base[len("http://"):]
+    return base + "/admin/tiktok/callback"
+
+
+@app.get("/admin/tiktok")
+async def admin_tiktok_page(request: Request):
+    await _verify_admin_session(request)
+    from app.agents import tiktok_client
+    ck, cs, redir, priv = await tiktok_client._cfg()
+    connected = tiktok_client.enabled()
+    chan_msg = ""
+    if connected:
+        ok, chan_msg = await tiktok_client.check()
+        connected = ok
+    effective_redirect = _tt_redirect_uri(request, redir)
+    status_html = (
+        f'<span style="color:#22c55e">✅ เชื่อมแล้ว — {escape(chan_msg)}</span>'
+        if connected else
+        ('<span style="color:#f59e0b">⚠️ ยังไม่เชื่อม</span>' if (ck and cs)
+         else '<span style="color:#ef4444">⛔ ยังไม่ได้ตั้ง Client Key / Secret</span>')
+    )
+    can_connect = bool(ck and cs)
+    connect_cls = "" if can_connect else " ghost"
+    connect_guard = "" if can_connect else (
+        "onclick=\"alert('ตั้ง Client Key/Secret แล้วกด บันทึก ก่อน');return false;\"")
+    priv_opts = "".join(
+        f'<option value="{p}"{" selected" if priv == p else ""}>{p}</option>'
+        for p in ("SELF_ONLY", "PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR"))
+    html = f"""<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8">
+<title>TikTok — Ener-AI Admin</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+ *{{box-sizing:border-box;margin:0;padding:0}}
+ body{{background:#0a0a0a;color:#e5e7eb;font-family:system-ui,sans-serif;min-height:100vh}}
+ .header{{background:#111;border-bottom:1px solid #222;padding:16px 24px;display:flex;gap:16px;align-items:center}}
+ .header h1{{font-size:1.2rem;font-weight:700;color:#f9fafb}}
+ .back-btn{{background:#1e293b;color:#94a3b8;border:1px solid #334;padding:6px 14px;border-radius:6px;text-decoration:none;font-size:.85rem}}
+ .container{{max-width:760px;margin:32px auto;padding:0 24px}}
+ .card{{background:#111;border:1px solid #1f2937;border-radius:12px;padding:24px;margin-bottom:20px}}
+ .card h2{{font-size:1rem;color:#f9fafb;margin-bottom:6px}}
+ .card p{{font-size:.82rem;color:#6b7280;margin-bottom:16px;line-height:1.6}}
+ label{{display:block;font-size:.8rem;color:#9ca3af;margin:12px 0 4px}}
+ input,select{{width:100%;background:#1f2937;color:#e5e7eb;border:1px solid #374151;padding:9px 11px;border-radius:7px;font-size:.85rem}}
+ input:focus,select:focus{{outline:none;border-color:#6366f1}}
+ .btn{{display:inline-block;background:#6366f1;color:#fff;border:none;padding:10px 18px;border-radius:7px;font-size:.85rem;cursor:pointer;text-decoration:none;margin-top:16px}}
+ .btn.ghost{{background:#1e293b;color:#e2e8f0;border:1px solid #334}}
+ .status{{font-size:.9rem;padding:10px 0}}
+ code{{background:#1f2937;color:#fbbf24;padding:2px 6px;border-radius:4px;font-size:.8rem;word-break:break-all}}
+ .warn{{background:#1f1505;border:1px solid #92400e;color:#fbbf24;padding:10px 12px;border-radius:7px;font-size:.78rem;line-height:1.6;margin-top:8px}}
+ .toast{{position:fixed;bottom:24px;right:24px;background:#1e293b;border:1px solid #334;color:#e2e8f0;padding:12px 20px;border-radius:8px;font-size:.9rem;display:none;z-index:99}}
+</style></head><body>
+<div class="header"><a class="back-btn" href="/admin/config">← Config</a><h1>🎵 เชื่อมต่อ TikTok</h1></div>
+<div class="container">
+  <div class="card">
+    <h2>สถานะ</h2>
+    <div class="status">{status_html}</div>
+    <button class="btn ghost" onclick="ttTest()">🧪 ทดสอบการเชื่อมต่อ</button>
+    <a class="btn{connect_cls}" href="/admin/tiktok/connect" {connect_guard}>🔗 Connect / เชื่อมใหม่</a>
+  </div>
+  <div class="card">
+    <h2>OAuth Credentials</h2>
+    <p>สร้างที่ <b>developers.tiktok.com</b> → Manage apps → เพิ่ม product <b>Content Posting API</b>
+       + scope <code>video.publish</code>.<br>
+       ใส่ <b>Redirect URI</b> ในแอป TikTok ให้ตรงกับช่องล่างนี้เป๊ะ — ตอนนี้ระบบจะใช้:<br>
+       <code>{escape(effective_redirect)}</code></p>
+    <div class="warn">⚠️ ก่อนแอปผ่าน audit: TikTok ให้โพสต์ได้แค่ <b>SELF_ONLY (ส่วนตัว)</b> เท่านั้น —
+       เปลี่ยนเป็น PUBLIC_TO_EVERYONE ได้หลังแอปได้รับอนุมัติ</div>
+    <label>Client Key</label>
+    <input id="ck" value="{escape(ck)}" placeholder="awxxxxxxxxxxxx">
+    <label>Client Secret</label>
+    <input id="cs" value="{escape(cs)}" placeholder="xxxxxxxxxxxxxxxx">
+    <label>Redirect URI (ต้องตรงกับที่ลงทะเบียนในแอป TikTok — เว้นว่างได้ถ้าใช้ค่าที่ระบบเดาให้)</label>
+    <input id="redir" value="{escape(redir)}" placeholder="https://my-ener.uk/admin/tiktok/callback">
+    <label>Privacy เริ่มต้นของคลิปที่โพสต์</label>
+    <select id="priv">{priv_opts}</select>
+    <button class="btn" onclick="ttSave()">💾 บันทึก</button>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+function toast(m){{var t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(function(){{t.style.display='none'}},3500);}}
+async function setCfg(k,v){{await fetch('/admin/config/update',{{method:'POST',headers:{{'Content-Type':'application/json'}},credentials:'same-origin',body:JSON.stringify({{key:k,value:v}})}});}}
+async function ttSave(){{
+  await setCfg('tiktok_client_key',document.getElementById('ck').value.trim());
+  await setCfg('tiktok_client_secret',document.getElementById('cs').value.trim());
+  await setCfg('tiktok_redirect_uri',document.getElementById('redir').value.trim());
+  await setCfg('tiktok_privacy',document.getElementById('priv').value);
+  toast('บันทึกแล้ว ✅ — ถ้ายังไม่เชื่อม กด Connect ได้เลย');
+  setTimeout(function(){{location.reload()}},1200);
+}}
+async function ttTest(){{
+  toast('กำลังทดสอบ…');
+  var r=await fetch('/admin/tiktok/test',{{method:'POST',credentials:'same-origin'}});
+  var d=await r.json();
+  toast((d.ok?'✅ ':'❌ ')+(d.message||''));
+}}
+</script></body></html>"""
+    return HTMLResponse(html)
+
+
+@app.get("/admin/tiktok/connect")
+async def admin_tiktok_connect(request: Request):
+    await _verify_admin_session(request)
+    from app.agents import tiktok_client
+    ck, cs, redir, _ = await tiktok_client._cfg()
+    if not ck or not cs:
+        return HTMLResponse(
+            "<h3 style='font-family:system-ui;padding:40px'>⛔ ยังไม่ได้ตั้ง Client Key / Secret — "
+            "<a href='/admin/tiktok'>กลับไปตั้งค่า</a></h3>")
+    redirect_uri = _tt_redirect_uri(request, redir)
+    import secrets as _secrets
+    state = _secrets.token_urlsafe(24)
+    try:
+        url = await tiktok_client.auth_url(redirect_uri, state=state)
+    except Exception as exc:
+        return HTMLResponse(
+            f"<h3 style='font-family:system-ui;padding:40px'>สร้างลิงก์เชื่อมไม่สำเร็จ: "
+            f"{escape(str(exc)[:300])}<br><a href='/admin/tiktok'>กลับ</a></h3>")
+    await set_config("tiktok_oauth_state", state)
+    return RedirectResponse(url, status_code=303)
+
+
+@app.get("/admin/tiktok/callback")
+async def admin_tiktok_callback(request: Request):
+    from app.agents import tiktok_client
+    err = request.query_params.get("error", "")
+    code = request.query_params.get("code", "")
+    state = request.query_params.get("state", "")
+    expected_state = await get_config("tiktok_oauth_state", "")
+    if not expected_state or state != expected_state:
+        return HTMLResponse(
+            "<h3 style='font-family:system-ui;padding:40px'>⛔ state ไม่ตรง (เริ่มเชื่อมใหม่จากปุ่ม Connect) "
+            "<br><a href='/admin/tiktok'>กลับ</a></h3>")
+    await set_config("tiktok_oauth_state", "")  # one-time use
+    if err or not code:
+        return HTMLResponse(
+            f"<h3 style='font-family:system-ui;padding:40px'>เชื่อม TikTok ไม่สำเร็จ: "
+            f"{escape(err or 'ไม่มี code')}<br><a href='/admin/tiktok'>กลับ</a></h3>")
+    _, _, redir, _ = await tiktok_client._cfg()
+    redirect_uri = _tt_redirect_uri(request, redir)
+    try:
+        await tiktok_client.exchange_code(code, redirect_uri)
+        ok, msg = await tiktok_client.check()
+    except Exception as exc:
+        return HTMLResponse(
+            f"<h3 style='font-family:system-ui;padding:40px'>แลกโทเคนไม่สำเร็จ: "
+            f"{escape(str(exc)[:400])}<br><a href='/admin/tiktok'>กลับ</a></h3>")
+    icon = "✅" if ok else "⚠️"
+    return HTMLResponse(
+        f"<h3 style='font-family:system-ui;padding:40px'>{icon} {escape(msg)}<br>"
+        f"<a href='/admin/tiktok'>กลับไปหน้า TikTok</a></h3>")
+
+
+@app.post("/admin/tiktok/test")
+async def admin_tiktok_test(request: Request):
+    await _verify_admin_session(request)
+    from app.agents import tiktok_client
+    ok, msg = await tiktok_client.check()
     return JSONResponse({"ok": ok, "message": msg})
 
 

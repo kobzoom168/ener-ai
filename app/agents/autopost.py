@@ -41,7 +41,12 @@ def platform_status() -> dict:
         yt = youtube_client.enabled()
     except Exception:
         yt = False
-    return {"facebook": fb, "youtube": yt, "tiktok": False}
+    try:
+        from app.agents import tiktok_client
+        tt = tiktok_client.enabled()
+    except Exception:
+        tt = False
+    return {"facebook": fb, "youtube": yt, "tiktok": tt}
 
 
 def _migrate(s: dict) -> dict:
@@ -126,7 +131,11 @@ async def _post_platform(name: str, mp4: str, caption: str, title: str = "",
             return await youtube_client.upload_video(mp4, yt_title, yt_desc, yt_tags)
         return False, "YouTube ยังไม่เชื่อม (เชื่อมที่ /admin/youtube)"
     if name == "tiktok":
-        return False, "TikTok ยังไม่เชื่อม"
+        from app.agents import tiktok_client
+        if tiktok_client.enabled():
+            tt_title = (caption or title or "").strip()[:140]
+            return await tiktok_client.upload_video(mp4, tt_title)
+        return False, "TikTok ยังไม่เชื่อม (เชื่อมที่ /admin/tiktok)"
     return False, f"ไม่รู้จักช่องทาง {name}"
 
 
