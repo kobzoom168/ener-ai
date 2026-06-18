@@ -1559,20 +1559,37 @@ async def _suggest_real_subjects(profile: "ChannelProfile", avoid: list[str], n:
     return [str(s).strip() for s in (data.get("subjects") or []) if str(s).strip()][:n]
 
 
-async def _pick_subject_with_image(profile: "ChannelProfile") -> tuple[str, dict | None]:
-    """Image-first selection: return the first fresh subject that actually HAS a real
-    Wikipedia/Commons image, with that image. (None, None) if none of the candidates do."""
-    from app.agents import wiki_images
+# Real Wikipedia categories that enumerate each mode's subjects (verified pages = data+image).
+_WIKI_CATS = {
+    "amulet": ["หมวดหมู่:พระเครื่อง", "หมวดหมู่:วัตถุมงคล", "หมวดหมู่:เกจิอาจารย์"],
+    "stone": ["หมวดหมู่:รัตนชาติ", "หมวดหมู่:แร่", "หมวดหมู่:อัญมณี"],
+    "sacred": ["หมวดหมู่:วัดในกรุงเทพมหานคร", "หมวดหมู่:โบราณสถานในประเทศไทย",
+               "หมวดหมู่:วัดในประเทศไทย"],
+}
+
+
+async def _pick_catalog_subject(profile: "ChannelProfile") -> str:
+    """Auto-pick a fresh subject from the mode's Wikipedia category catalog (deduped vs recent
+    clips). Falls back to LLM-suggested subjects if the categories are empty."""
+    import random
     recent = await _recent_clips(profile.id)
-    avoid = [c.get("title", "") for c in recent if c.get("title")]
-    for subj in await _suggest_real_subjects(profile, avoid):
+    avoid = {c.get("title", "").strip() for c in recent if c.get("title")}
+    avoid |= {c.get("subject", "").strip() for c in recent if c.get("subject")}
+    cats = _WIKI_CATS.get(profile.id, [])
+    pool = []
+    if cats:
         try:
-            img = await wiki_images.find_image(subj)
+            from app.agents import wiki_images
+            pool = await wiki_images.catalog(cats)
         except Exception:
-            img = None
-        if img and img.get("url"):
-            return subj, img
-    return "", None
+            pool = []
+    pool = [s for s in pool if s and s not in avoid]
+    if not pool:  # fallback: ask the model for real subjects
+        pool = [s for s in await _suggest_real_subjects(profile, list(avoid)) if s not in avoid]
+    if not pool:
+        return ""
+    random.shuffle(pool)
+    return pool[0]
 
 
 async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: str = "",
@@ -1588,6 +1605,16 @@ async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: 
     _sweep_intermediates()  # tidy any leftover render junk from a previous crashed run
     await clear_console()
     await log_line(f"🚀 เริ่มสร้างคลิป — {profile.name}")
+    # auto mode → pick a real subject from the Wikipedia catalog (พระเครื่อง/หิน/วัด) so we get
+    # verified data + a real image; manual topics skip this.
+    if not (topic or title):
+        try:
+            picked = await _pick_catalog_subject(profile)
+            if picked:
+                topic = picked
+                await log_line(f"📜 เลือกหัวข้อจากคลัง Wikipedia: {picked}")
+        except Exception:
+            pass
     await set_status("script")
     await log_line(f"✍️ ทีม AI เขียนบท (Scriptwriter: {await _agent_model('scriptwriter')})…")
     script = await generate_channel_script(profile, topic, title, summary, tone=tone)

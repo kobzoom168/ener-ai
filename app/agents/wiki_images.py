@@ -177,6 +177,44 @@ async def fetch_article(subject: str, lang: str = "th") -> dict | None:
     return None
 
 
+async def category_members(category: str, lang: str = "th", limit: int = 200) -> list[str]:
+    """List the article titles in a Wikipedia category (main namespace only). This gives a
+    real, verified catalog of subjects (e.g. หมวดหมู่:พระเครื่อง) — each guaranteed to have a
+    Wikipedia page → real data + usually an image."""
+    api = f"https://{lang}.wikipedia.org/w/api.php"
+    out: list[str] = []
+    cont = None
+    try:
+        async with httpx.AsyncClient(timeout=20, headers={"User-Agent": _UA}) as c:
+            for _ in range(4):
+                p = {"action": "query", "list": "categorymembers", "cmtitle": category,
+                     "cmlimit": 200, "cmnamespace": 0, "cmtype": "page", "format": "json", "origin": "*"}
+                if cont:
+                    p["cmcontinue"] = cont
+                r = await c.get(api, params=p)
+                if r.status_code >= 300:
+                    break
+                j = r.json()
+                out += [m.get("title", "") for m in (j.get("query") or {}).get("categorymembers", [])]
+                cont = (j.get("continue") or {}).get("cmcontinue")
+                if not cont or len(out) >= limit:
+                    break
+    except Exception:
+        return out
+    return [t for t in out if t][:limit]
+
+
+async def catalog(categories: list[str], lang: str = "th") -> list[str]:
+    """Merge several categories into one deduped subject list."""
+    seen, out = set(), []
+    for cat in categories:
+        for t in await category_members(cat, lang):
+            if t not in seen:
+                seen.add(t)
+                out.append(t)
+    return out
+
+
 async def download(url: str, out_path: str) -> str | None:
     """Download a found image to out_path. Fail-open → None."""
     if not url:
