@@ -1318,6 +1318,7 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
                 "และเปลี่ยนแบบฮุคไม่ให้เหมือนคลิปก่อน")
             await _vlog("🛡️ Originality Guard: เลี่ยงซ้ำกับ " + str(len(recent)) + " คลิปล่าสุด")
     research = ""
+    source_url = ""  # Wikipedia article URL for the data citation
     subject = (topic or title or "").strip()
     # 🔥 Trend Scout: no topic supplied → pick a fresh, real, non-repeating one
     if not subject and profile.research_mode != "none":
@@ -1327,13 +1328,24 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
             subject = topic = picked  # feed the chosen topic into the writer body below
             await _vlog("🔥 Trend Scout: เลือกหัวข้อ — " + subject)
     if subject and profile.research_mode != "none":
-        await _vlog(f"🔎 Researcher ({await _agent_model('researcher')}): ค้นเว็บ — {subject} … (รอ ~5-20 วิ)")
         _t = time.time()
-        research = await _research_topic(subject, profile)
-        if research:
-            await _vlog(f"📚 Researcher: ได้ข้อมูล + แหล่งอ้างอิง · {int(time.time() - _t)} วิ")
+        # 📚 Wikipedia FIRST — real, complete Thai data + a citable source URL.
+        try:
+            from app.agents import wiki_images
+            art = await wiki_images.fetch_article(subject, "th") or await wiki_images.fetch_article(subject, "en")
+        except Exception:
+            art = None
+        if art and art.get("text"):
+            research = art["text"]
+            source_url = art.get("source", "")
+            await _vlog(f"📚 ดึงข้อมูลจาก Wikipedia: {art.get('title', subject)} · {int(time.time() - _t)} วิ")
         else:
-            await _vlog(f"⚠️ Researcher: หาข้อมูลไม่ได้ ({int(time.time() - _t)} วิ) — เขียนจากความรู้โมเดลแทน")
+            await _vlog(f"🔎 Researcher ({await _agent_model('researcher')}): ค้นเว็บ — {subject} … (รอ ~5-20 วิ)")
+            research = await _research_topic(subject, profile)
+            if research:
+                await _vlog(f"📚 Researcher: ได้ข้อมูล · {int(time.time() - _t)} วิ")
+            else:
+                await _vlog(f"⚠️ Researcher: หาข้อมูลไม่ได้ — เขียนจากความรู้โมเดลแทน")
     system = (
         f"{profile.persona} {profile.audience} "
         f"{_tone_guide(tone)} "
@@ -1502,7 +1514,7 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
     return {"title": out_title, "lines": lines, "lines_say": lines_say, "caption": caption,
             "image_prompts": image_prompts, "video_queries": video_queries,
             "ai_video_prompt": ai_video_prompt, "angle": angle, "hook_type": hook_type,
-            "subject": subject, "shot_plan": shot_plan,
+            "subject": subject, "shot_plan": shot_plan, "source_url": source_url,
             "cover_text": cover_text, "cover_highlight": cover_highlight,
             "youtube_title": yt_title, "youtube_description": yt_description, "youtube_tags": yt_tags}
 
@@ -1695,15 +1707,22 @@ async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: 
                            cover_highlight=script.get("cover_highlight", ""))
     if r.get("ok"):
         kinds = [k for _, k in items]
-        # credit the real Wikipedia/Commons image used as the hero (legal attribution)
+        # cite the Wikipedia data + image used (legal attribution)
         caption = script["caption"]
         yt_desc = script.get("youtube_description") or script["caption"]
+        cites = []
+        if script.get("source_url"):
+            cites.append("📚 ข้อมูลอ้างอิง: Wikipedia — " + script["source_url"])
         if hero_path and hero:
-            cred = "📷 ภาพประกอบ: " + str(hero.get("credit", "") or "Wikipedia")
-            if hero.get("source"):
-                cred += " — " + hero["source"]
-            caption = (caption + "\n\n" + cred).strip()
-            yt_desc = (yt_desc + "\n\n" + cred).strip()
+            img_src = hero.get("source") or ""
+            if img_src and img_src != script.get("source_url"):
+                cites.append("📷 ภาพ: " + str(hero.get("credit", "Wikipedia")) + " — " + img_src)
+            elif not script.get("source_url"):
+                cites.append("📷 ภาพ: " + str(hero.get("credit", "Wikipedia")))
+        if cites:
+            block = "\n\n" + "\n".join(cites)
+            caption = (caption + block).strip()
+            yt_desc = (yt_desc + block).strip()
         await log_line(f"✅ คลิปเสร็จ {r.get('duration', '?')} วิ" + (" · มีหน้าพูด" if r.get("talking_head") else ""))
         r.update({"caption": caption, "lines": script["lines"], "title": script["title"],
                   "youtube_title": script.get("youtube_title") or script["title"],

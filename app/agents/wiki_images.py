@@ -140,6 +140,43 @@ async def find_image(subject: str) -> dict | None:
     return None
 
 
+def _pick_extract(resp_json: dict, lang: str, subject: str) -> dict | None:
+    for p in sorted(((resp_json.get("query") or {}).get("pages") or {}).values(),
+                    key=lambda x: x.get("index", 99)):
+        if "missing" in p:
+            continue
+        txt = (p.get("extract") or "").strip()
+        if len(txt) >= 80:
+            return {"text": txt[:3000], "source": p.get("fullurl", ""),
+                    "title": p.get("title", subject)}
+    return None
+
+
+async def fetch_article(subject: str, lang: str = "th") -> dict | None:
+    """Plain-text intro of the Wikipedia article for `subject` + its URL — used to GROUND the
+    script in real data and to cite the source. EXACT title first, then search. None if absent."""
+    subject = (subject or "").strip()
+    if not subject:
+        return None
+    api = f"https://{lang}.wikipedia.org/w/api.php"
+    base = {"action": "query", "prop": "extracts|info", "explaintext": 1, "exintro": 1,
+            "inprop": "url", "redirects": 1, "format": "json", "origin": "*"}
+    try:
+        async with httpx.AsyncClient(timeout=20, headers={"User-Agent": _UA}) as c:
+            r = await c.get(api, params={**base, "titles": subject})
+            if r.status_code < 300:
+                hit = _pick_extract(r.json(), lang, subject)
+                if hit:
+                    return hit
+            r = await c.get(api, params={**base, "generator": "search",
+                                         "gsrsearch": subject, "gsrlimit": 1})
+            if r.status_code < 300:
+                return _pick_extract(r.json(), lang, subject)
+    except Exception:
+        return None
+    return None
+
+
 async def download(url: str, out_path: str) -> str | None:
     """Download a found image to out_path. Fail-open → None."""
     if not url:
