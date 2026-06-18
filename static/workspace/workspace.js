@@ -2268,7 +2268,7 @@ document.addEventListener('DOMContentLoaded', function() {
   async function loadTrends(force) {
     const box = document.getElementById('vdo-trends');
     if (!box) return;
-    const ch = (document.getElementById('ap-channel') || {}).value || 'mystery';
+    const ch = (document.getElementById('ap-channel') || {}).value || 'amulet';
     if (force) box.innerHTML = '<div style="color:var(--muted-foreground);font-size:13px">🔎 กำลังดึงกระแส (autocomplete + ข่าว)… ~10-20 วิ</div>';
     try {
       const d = await api('/workspace/vdo/trends?channel=' + encodeURIComponent(ch) + (force ? '&refresh=1' : ''));

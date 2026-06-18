@@ -6990,9 +6990,9 @@ def _autopost_job_from_body(body: dict) -> dict:
     if tone not in ("evidence", "cheeky", "twist", "academic", "creepy"):
         tone = "evidence"
     from app.agents.channels import PROFILES
-    channel = str(body.get("channel") or "mystery")
+    channel = str(body.get("channel") or "amulet")
     if channel not in PROFILES:
-        channel = "mystery"
+        channel = "amulet"
     return {
         "id": str(body.get("id") or "").strip() or f"ap_{int(_t.time())}",
         "label": (str(body.get("label") or "").strip()[:80] or "คลิปออโต้"),
@@ -7216,7 +7216,7 @@ async def workspace_vdo_trends(request: Request):
     (survive restarts) — served on tab open; only the refresh button regenerates."""
     await _require_admin(request)
     import time as _t, json as _j
-    channel = str(request.query_params.get("channel", "mystery")).strip().lower()
+    channel = str(request.query_params.get("channel", "amulet")).strip().lower()
     force = request.query_params.get("refresh") == "1"
     raw = await get_config("vdo_trends_cache", "")
     try:

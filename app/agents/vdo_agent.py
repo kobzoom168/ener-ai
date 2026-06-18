@@ -1464,6 +1464,9 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
     # pair lines_say 1:1 with display lines (fall back to the display line itself)
     lines_say = [(say_raw[i] if i < len(say_raw) and say_raw[i] else lines[i]) for i in range(len(lines))]
     caption = str(data.get("caption") or out_title).strip()[:300]
+    promo = (getattr(profile, "promo", "") or "").strip()
+    if promo:  # fixed Ener Scan promo in the caption/description (never spoken)
+        caption = (caption + "\n\n" + promo).strip()
     image_prompts = [str(x).strip()[:300] for x in (data.get("image_prompts") or []) if str(x).strip()][:9]
     if not image_prompts:
         image_prompts = [out_title]
@@ -1474,7 +1477,8 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
     yt_title = _strip_quotes(str(data.get("youtube_title") or "")).strip()[:100] or out_title
     cover_text = _strip_quotes(str(data.get("cover_text") or "")).strip()[:60] or yt_title
     cover_highlight = _strip_quotes(str(data.get("cover_highlight") or "")).strip()[:30]
-    yt_description = str(data.get("youtube_description") or "").strip() or caption
+    yt_description = str(data.get("youtube_description") or "").strip()
+    yt_description = ((yt_description + "\n\n" + promo).strip() if (yt_description and promo) else (yt_description or caption))
     yt_tags = [str(t).strip()[:60] for t in (data.get("youtube_tags") or []) if str(t).strip()][:15]
     angle = _strip_quotes(str(data.get("angle") or "")).strip()[:80]
     hook_type = _strip_quotes(str(data.get("hook_type") or "")).strip()[:60]
