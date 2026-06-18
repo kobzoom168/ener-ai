@@ -281,6 +281,18 @@
           </div>
         </div>
 
+        <!-- 📿 Image-first library: catalog subjects (พระ/หิน/วัด) that have a real Wikipedia image -->
+        <div class="surface" style="padding:14px 16px;border:1px solid var(--border);border-radius:12px;margin-bottom:16px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:8px;flex-wrap:wrap">
+            <div style="font-weight:600;font-size:13px">📿 คลังหัวข้อที่มีรูปจริง (พระ/เครื่องราง/หิน/วัด)</div>
+            <button class="panel-action" onclick="loadLibrary(true)">↻ ดึงคลังใหม่</button>
+          </div>
+          <div style="font-size:11px;color:var(--muted-foreground);margin-bottom:8px">หารูปจริงจาก Wikipedia ก่อน → เลือกหัวข้อที่มีรูป แล้วค่อยสร้างคลิป (image-first)</div>
+          <div id="vdo-library" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px">
+            <div style="color:var(--muted-foreground);font-size:13px">กด "↻ ดึงคลังใหม่" เพื่อดูหัวข้อที่มีรูป… (ใช้เวลา ~30-60 วิ)</div>
+          </div>
+        </div>
+
         <!-- 📊 Analyst (phase ②): learn from real YouTube stats which topics/hooks win -->
         <div class="surface" style="padding:14px 16px;border:1px solid var(--border);border-radius:12px;margin-bottom:16px">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:8px;flex-wrap:wrap">

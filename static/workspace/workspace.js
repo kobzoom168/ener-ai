@@ -2262,6 +2262,7 @@ document.addEventListener('DOMContentLoaded', function() {
     loadVdoKeys();
     loadVdoCrew();
     loadTrends(false);
+    loadLibrary(false);
     startApStatusPoll();
   }
 
@@ -2294,6 +2295,28 @@ document.addEventListener('DOMContentLoaded', function() {
     const inp = document.getElementById('ap-topic');
     if (inp) { inp.value = topic; inp.scrollIntoView({ behavior: 'smooth', block: 'center' }); inp.focus(); }
     showToast('ตั้งหัวข้อแล้ว: ' + topic + ' — กดสร้างคลิปได้เลย');
+  }
+
+  async function loadLibrary(force) {
+    const box = document.getElementById('vdo-library');
+    if (!box) return;
+    const ch = (document.getElementById('ap-channel') || {}).value || 'amulet';
+    if (force) box.innerHTML = '<div style="color:var(--muted-foreground);font-size:13px">🔎 กำลังหารูปจริงจาก Wikipedia… ~30-60 วิ</div>';
+    try {
+      const d = await api('/workspace/vdo/library?channel=' + encodeURIComponent(ch) + (force ? '&refresh=1' : ''));
+      const items = d.items || [];
+      if (!items.length) { box.innerHTML = '<div style="color:var(--muted-foreground);font-size:13px">ยังไม่มี — กด "↻ ดึงคลังใหม่"</div>'; return; }
+      box.innerHTML = items.map(it =>
+        '<div style="background:#161b26;border:1px solid var(--border);border-radius:10px;overflow:hidden">' +
+          '<img src="' + escapeHtml(it.image) + '" loading="lazy" style="width:100%;height:120px;object-fit:cover;display:block;background:#0f172a">' +
+          '<div style="padding:8px 9px">' +
+            '<div style="font-size:12px;font-weight:600;line-height:1.35;min-height:32px">' + escapeHtml(it.subject) + '</div>' +
+            '<button class="panel-action" style="background:#7c3aed;color:#fff;font-size:11px;padding:4px 10px;margin-top:6px;width:100%" onclick="useTrendTopic(' + JSON.stringify(it.subject).replace(/"/g, '&quot;') + ')">ใช้หัวข้อนี้</button>' +
+          '</div></div>'
+      ).join('');
+    } catch (e) {
+      box.innerHTML = '<div style="color:#f87171;font-size:13px">ดึงคลังไม่สำเร็จ: ' + escapeHtml((e && e.message) || '') + '</div>';
+    }
   }
 
   async function loadAnalytics(force) {
@@ -2524,6 +2547,7 @@ document.addEventListener('DOMContentLoaded', function() {
   window.saveVideoCfg = saveVideoCfg;
   window.setVdoImgProvider = setVdoImgProvider;
   window.loadTrends = loadTrends;
+  window.loadLibrary = loadLibrary;
   window.useTrendTopic = useTrendTopic;
   window.loadAnalytics = loadAnalytics;
 

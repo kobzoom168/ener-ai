@@ -7240,6 +7240,36 @@ async def workspace_vdo_trends(request: Request):
     return JSONResponse({"topics": topics, "cached": False})
 
 
+@app.get("/workspace/vdo/library")
+async def workspace_vdo_library(request: Request):
+    """📿 Image-first library: catalog subjects (พระ/หิน/วัด) that have a real Wikipedia image.
+    Persisted per channel; the refresh button rebuilds (image-checking is slow)."""
+    await _require_admin(request)
+    import time as _t, json as _j
+    channel = str(request.query_params.get("channel", "amulet")).strip().lower()
+    force = request.query_params.get("refresh") == "1"
+    raw = await get_config("vdo_library_cache", "")
+    try:
+        store = _j.loads(raw) if raw else {}
+    except Exception:
+        store = {}
+    ent = store.get(channel)
+    if ent and not force:
+        return JSONResponse({"items": ent.get("items", []), "cached": True,
+                             "age_min": int((_t.time() - ent.get("at", 0)) // 60)})
+    if not force:
+        return JSONResponse({"items": [], "needs_refresh": True})
+    from app.agents.vdo_agent import library_with_images
+    from app.agents.channels import get_profile
+    try:
+        items = await library_with_images(get_profile(channel))
+    except Exception as exc:
+        return JSONResponse({"items": [], "error": str(exc)[:160]})
+    store[channel] = {"at": int(_t.time()), "items": items}
+    await set_config("vdo_library_cache", _j.dumps(store, ensure_ascii=False))
+    return JSONResponse({"items": items, "cached": False})
+
+
 @app.get("/workspace/vdo/analytics")
 async def workspace_vdo_analytics(request: Request):
     """📊 Analyst (phase ②): live YouTube stats + learned insight. Persisted in the DB so it

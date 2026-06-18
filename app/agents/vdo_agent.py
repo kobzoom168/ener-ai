@@ -103,7 +103,7 @@ _ASS_HEADER = (
     "Style: Title,Garuda,86,&H0000F0FF,&H00000000,&H64000000,-1,0,0,0,100,100,1,0,1,7,4,8,60,60,180,0\n"
     # Cover = big bold viral-style headline that stays on top the whole clip (white base,
     # keyword recolored yellow inline); thick black outline so it reads on any background.
-    "Style: Cover,Garuda,84,&H00FFFFFF,&H00000000,&H96000000,-1,0,0,0,100,108,1,0,1,8,4,8,46,46,150,0\n"
+    "Style: Cover,Garuda,104,&H00FFFFFF,&H00000000,&H96000000,-1,0,0,0,100,110,1,0,1,9,5,8,44,44,520,0\n"
     "Style: Brand,Garuda,40,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,1,0,1,2,2,7,40,40,60,0\n\n"
     "[Events]\n"
     "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
@@ -1613,6 +1613,28 @@ _WIKI_CATS = {
 }
 # skip Wikipedia list/index pages that aren't real subjects
 _WIKI_SKIP_PREFIX = ("รายชื่อ", "หมวดหมู่", "แม่แบบ", "สถานีย่อย")
+
+
+async def library_with_images(profile: "ChannelProfile", limit: int = 24) -> list[dict]:
+    """Build a browsable list of catalog subjects that ACTUALLY have a real Wikipedia image
+    (for the UI 'คลังหัวข้อที่มีรูป' panel). Returns [{subject, image, source}]."""
+    from app.agents import wiki_images
+    import random
+    cats = _WIKI_CATS.get(profile.id, [])
+    pool = (await wiki_images.catalog(cats)) if cats else []
+    pool = [s for s in pool if s and not s.startswith(_WIKI_SKIP_PREFIX)]
+    random.shuffle(pool)
+    out = []
+    for s in pool[:limit * 2]:
+        if len(out) >= limit:
+            break
+        try:
+            img = await wiki_images.find_image(s)
+        except Exception:
+            img = None
+        if img and img.get("url"):
+            out.append({"subject": s, "image": img["url"], "source": img.get("source", "")})
+    return out
 
 
 async def _pick_catalog_subject(profile: "ChannelProfile") -> str:
