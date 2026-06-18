@@ -103,7 +103,7 @@ _ASS_HEADER = (
     "Style: Title,Garuda,86,&H0000F0FF,&H00000000,&H64000000,-1,0,0,0,100,100,1,0,1,7,4,8,60,60,180,0\n"
     # Cover = big bold viral-style headline that stays on top the whole clip (white base,
     # keyword recolored yellow inline); thick black outline so it reads on any background.
-    "Style: Cover,Garuda,104,&H00FFFFFF,&H00000000,&H96000000,-1,0,0,0,100,110,1,0,1,9,5,8,44,44,520,0\n"
+    "Style: Cover,Garuda,134,&H00FFFFFF,&H00000000,&H96000000,-1,0,0,0,100,112,1,0,1,11,6,8,36,36,470,0\n"
     "Style: Brand,Garuda,40,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,1,0,1,2,2,7,40,40,60,0\n\n"
     "[Events]\n"
     "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
@@ -413,7 +413,7 @@ def _render_cover(bg_image: str, cover_text: str, cover_highlight: str, out_jpg:
     tc = _ass_escape((cover_text or "").strip())
     if not tc or not bg_image or not os.path.exists(bg_image):
         return ""
-    rows = _wrap_rows(tc, 11)[:3] or [tc]
+    rows = _wrap_rows(tc, 10)[:3] or [tc]
     joined = "\\N".join(rows)
     hl = _ass_escape((cover_highlight or "").strip())
     if hl and hl in joined:
@@ -426,7 +426,7 @@ def _render_cover(bg_image: str, cover_text: str, cover_highlight: str, out_jpg:
         "Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, "
         "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
         # huge, bold, dead-center, very thick black outline so it pops as a thumbnail
-        "Style: CoverBig,Garuda,118,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,108,2,0,1,11,5,5,60,60,40,0\n\n"
+        "Style: CoverBig,Garuda,140,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,110,2,0,1,13,6,5,50,50,40,0\n\n"
         "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
     try:
@@ -481,7 +481,7 @@ def _build_ass(title: str, segments: list[tuple[str, float]], ass_path: str,
     # keyword recolored yellow) — doubles as the thumbnail hook and keeps people watching.
     tc = _ass_escape(title_card or title)
     if tc:
-        tc_rows = _wrap_rows(tc, 15)[:2] or [tc]
+        tc_rows = _wrap_rows(tc, 12)[:2] or [tc]
         joined = "\\N".join(tc_rows)
         hl = _ass_escape((cover_highlight or "").strip())
         if hl and hl in joined:  # recolor the keyword yellow, rest stays white
