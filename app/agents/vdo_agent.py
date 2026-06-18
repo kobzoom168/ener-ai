@@ -1527,6 +1527,42 @@ async def make_mystery_short(topic: str = "", title: str = "", summary: str = ""
     return await make_channel_short(MYSTERY, topic, title, summary, tone=tone)
 
 
+async def _suggest_real_subjects(profile: "ChannelProfile", avoid: list[str], n: int = 12) -> list[str]:
+    """Ask the model for specific, real, well-known subjects for this channel — each likely to
+    have a Wikipedia/Commons page (so the image-first step can find a real photo). Dedup vs
+    `avoid` (already-done titles)."""
+    avoid_txt = "; ".join([a for a in avoid if a][:20]) or "-"
+    system = (f"คุณคือผู้ช่วยเลือกหัวข้อสำหรับช่อง '{profile.name}'. "
+              "เสนอเฉพาะ 'ชื่อจริงเจาะจง' ที่มีอยู่จริงและน่าจะมีหน้าใน Wikipedia ไทย "
+              "(พระเครื่อง/หิน/แร่/วัด/สถานที่ศักดิ์สิทธิ์/เครื่องราง ที่มีชื่อชัดเจน). ตอบ JSON เท่านั้น")
+    prompt = (f"แนวช่อง: {profile.topic_pick}\n"
+              f"ห้ามซ้ำกับที่ทำไปแล้ว: {avoid_txt}\n"
+              f'เสนอ {n} ชื่อเฉพาะเจาะจง (ภาษาไทย) ที่ "มีจริงและค้นเจอใน Wikipedia" '
+              '(เช่น พระสมเด็จวัดระฆัง, วัดอรุณราชวราราม, อเมทิสต์, หลวงปู่ทวด). '
+              'เรียงจากที่คนน่าสนใจที่สุด ตอบ JSON: {"subjects": ["...", "..."]}')
+    try:
+        data = _parse_json(await _or_chat(await _agent_model("trend_scout"), system, prompt, 1500))
+    except Exception:
+        data = {}
+    return [str(s).strip() for s in (data.get("subjects") or []) if str(s).strip()][:n]
+
+
+async def _pick_subject_with_image(profile: "ChannelProfile") -> tuple[str, dict | None]:
+    """Image-first selection: return the first fresh subject that actually HAS a real
+    Wikipedia/Commons image, with that image. (None, None) if none of the candidates do."""
+    from app.agents import wiki_images
+    recent = await _recent_clips(profile.id)
+    avoid = [c.get("title", "") for c in recent if c.get("title")]
+    for subj in await _suggest_real_subjects(profile, avoid):
+        try:
+            img = await wiki_images.find_image(subj)
+        except Exception:
+            img = None
+        if img and img.get("url"):
+            return subj, img
+    return "", None
+
+
 async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: str = "",
                              summary: str = "", tone: str = "") -> dict:
     """Render a short for any channel profile: AI picks/retells a topic -> Thai short MP4.
@@ -1541,8 +1577,30 @@ async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: 
     await clear_console()
     await log_line(f"🚀 เริ่มสร้างคลิป — {profile.name}")
     await set_status("script")
+    # 🖼️ IMAGE-FIRST (auto mode): find a real Wikipedia/Commons image BEFORE writing the
+    # script — only commit to a subject we actually have a real photo for.
+    hero = None
+    if not (topic or title):
+        await set_status("media")
+        await log_line("🖼️ หารูปจริงก่อน (Wikipedia/Commons) แล้วค่อยเขียนบท…")
+        subj, hero = await _pick_subject_with_image(profile)
+        if subj:
+            topic = subj
+            await log_line(f"✅ เจอรูปจริง: {subj} · {str(hero.get('credit', ''))[:60]}")
+        else:
+            await log_line("⚠️ รอบนี้ไม่เจอรูปจริง — ใช้ภาพ AI ล้วนแทน")
+    await set_status("script")
     await log_line(f"✍️ ทีม AI เขียนบท (Scriptwriter: {await _agent_model('scriptwriter')})…")
     script = await generate_channel_script(profile, topic, title, summary, tone=tone)
+    # download the real hero image (scene 1) if we found one
+    hero_path = None
+    if hero:
+        try:
+            from app.agents import wiki_images
+            hero_path = await wiki_images.download(
+                hero["url"], os.path.join(VDO_DIR, f"hero_wiki_{int(time.time())}.jpg"))
+        except Exception:
+            hero_path = None
     await log_line(f"📝 หัวข้อ: {script.get('title', '')}")
     for _ln in (script.get("lines") or []):
         await log_line("· " + str(_ln))
@@ -1573,13 +1631,20 @@ async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: 
         # that match the narration. Cap 8 for cost/time.
         n_lines = len(script.get("lines") or [])
         n = max(3, min(9, n_lines or 5))  # 1:1 with lines so each image syncs to its line
-        await log_line(f"🎨 สร้างภาพ AI {n} ฉาก (1 ฉาก/บรรทัด ตรงเสียง · Nano Banana)…")
         prompts = list(imps)
         while len(prompts) < n:
             prompts.append(imps[len(prompts) % len(imps)] if imps else script["title"])
-        imgs = await _gen_bg_images(prompts[:n])
-        await log_line(f"✅ ได้ภาพ {len(imgs)}/{n} ฉาก")
-        items = [(p, "image") for p in imgs]
+        if hero_path:
+            # real Wikipedia photo = scene 1 (hero); AI fills the remaining lines
+            await log_line(f"🖼️ รูปจริง 1 ฉาก (Wikipedia) + สร้างภาพ AI {n - 1} ฉาก…")
+            ai_imgs = await _gen_bg_images(prompts[:max(1, n - 1)])
+            items = [(hero_path, "image")] + [(p, "image") for p in ai_imgs]
+            await log_line(f"✅ ได้ภาพ {len(items)} ฉาก (รวมรูปจริง)")
+        else:
+            await log_line(f"🎨 สร้างภาพ AI {n} ฉาก (1 ฉาก/บรรทัด ตรงเสียง)…")
+            imgs = await _gen_bg_images(prompts[:n])
+            await log_line(f"✅ ได้ภาพ {len(imgs)}/{n} ฉาก")
+            items = [(p, "image") for p in imgs]
     else:
         from app.agents import aivideo
         items = []
@@ -1630,10 +1695,19 @@ async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: 
                            cover_highlight=script.get("cover_highlight", ""))
     if r.get("ok"):
         kinds = [k for _, k in items]
+        # credit the real Wikipedia/Commons image used as the hero (legal attribution)
+        caption = script["caption"]
+        yt_desc = script.get("youtube_description") or script["caption"]
+        if hero_path and hero:
+            cred = "📷 ภาพประกอบ: " + str(hero.get("credit", "") or "Wikipedia")
+            if hero.get("source"):
+                cred += " — " + hero["source"]
+            caption = (caption + "\n\n" + cred).strip()
+            yt_desc = (yt_desc + "\n\n" + cred).strip()
         await log_line(f"✅ คลิปเสร็จ {r.get('duration', '?')} วิ" + (" · มีหน้าพูด" if r.get("talking_head") else ""))
-        r.update({"caption": script["caption"], "lines": script["lines"], "title": script["title"],
+        r.update({"caption": caption, "lines": script["lines"], "title": script["title"],
                   "youtube_title": script.get("youtube_title") or script["title"],
-                  "youtube_description": script.get("youtube_description") or script["caption"],
+                  "youtube_description": yt_desc,
                   "youtube_tags": script.get("youtube_tags") or [],
                   "angle": script.get("angle", ""), "hook_type": script.get("hook_type", ""),
                   "subject": script.get("subject", ""),
