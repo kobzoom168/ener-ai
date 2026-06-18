@@ -101,6 +101,9 @@ _ASS_HEADER = (
     "Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
     "Style: Default,Garuda,74,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,2,0,1,5,3,2,70,70,330,0\n"
     "Style: Title,Garuda,86,&H0000F0FF,&H00000000,&H64000000,-1,0,0,0,100,100,1,0,1,7,4,8,60,60,180,0\n"
+    # Cover = big bold viral-style headline that stays on top the whole clip (white base,
+    # keyword recolored yellow inline); thick black outline so it reads on any background.
+    "Style: Cover,Garuda,84,&H00FFFFFF,&H00000000,&H96000000,-1,0,0,0,100,108,1,0,1,8,4,8,46,46,150,0\n"
     "Style: Brand,Garuda,40,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,1,0,1,2,2,7,40,40,60,0\n\n"
     "[Events]\n"
     "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
@@ -404,7 +407,8 @@ def _synth_lines(lines: list[str], base: str, out_mp3: str,
 
 
 def _build_ass(title: str, segments: list[tuple[str, float]], ass_path: str,
-               brand: tuple[str, str] | None = None, title_card: str = "") -> None:
+               brand: tuple[str, str] | None = None, title_card: str = "",
+               cover_highlight: str = "") -> None:
     """Caption track: one short row on screen at a time, voice-synced.
 
     Each spoken line is timed to its real audio duration, then split into single display
@@ -428,15 +432,17 @@ def _build_ass(title: str, segments: list[tuple[str, float]], ass_path: str,
         events.append(
             f"Dialogue: 0,{_ass_ts(0)},{_ass_ts(total)},Brand,,0,0,0,,{'  '.join(brand_parts)}"
         )
-    # big eye-catching TITLE card for the opening (grabs attention like a thumbnail headline)
+    # big viral-style COVER headline pinned to the top for the WHOLE clip (white base with one
+    # keyword recolored yellow) — doubles as the thumbnail hook and keeps people watching.
     tc = _ass_escape(title_card or title)
     if tc:
-        tc_rows = _wrap_rows(tc, 16)[:3] or [tc]
-        card_end = min(4.0, max(2.2, total * 0.4))
-        fade = "{\\fad(250,300)}"
+        tc_rows = _wrap_rows(tc, 15)[:2] or [tc]
         joined = "\\N".join(tc_rows)
+        hl = _ass_escape((cover_highlight or "").strip())
+        if hl and hl in joined:  # recolor the keyword yellow, rest stays white
+            joined = joined.replace(hl, "{\\c&H00F0FF&}" + hl + "{\\c&H00FFFFFF&}", 1)
         events.append(
-            f"Dialogue: 1,{_ass_ts(0)},{_ass_ts(card_end)},Title,,0,0,0,,{fade}{joined}"
+            f"Dialogue: 1,{_ass_ts(0)},{_ass_ts(total)},Cover,,0,0,0,,{{\\fad(250,0)}}{joined}"
         )
     t = 0.0
     for ln, d in segments:
@@ -917,7 +923,7 @@ async def _render_clip(title: str, lines: list[str], bg_images: list[str] | None
                        bg_items: list[tuple[str, str]] | None = None,
                        say_lines: list[str] | None = None,
                        brand: tuple[str, str] | None = None,
-                       title_card: str = "") -> dict:
+                       title_card: str = "", cover_highlight: str = "") -> dict:
     """Shared render: lines -> TTS -> ASS captions -> MP4 (stock-video or image slideshow).
 
     `lines` is shown on screen as the subtitle; `say_lines` (optional, 1:1 with lines) is the
@@ -945,7 +951,7 @@ async def _render_clip(title: str, lines: list[str], bg_images: list[str] | None
         return {"ok": False, "error": f"TTS ล้มเหลว: {str(exc)[:200]}"}
     if not segments or duration <= 0:
         return {"ok": False, "error": "อ่านความยาวเสียงไม่ได้"}
-    await asyncio.to_thread(_build_ass, title, segments, ass, brand, title_card)
+    await asyncio.to_thread(_build_ass, title, segments, ass, brand, title_card, cover_highlight)
 
     # talking-head PIP (optional): generate while the mp3 is still on disk + served publicly
     pip_video = None
@@ -1382,6 +1388,10 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
         f'บรรทัดพูดถึงพระสมเด็จ→\'extreme close-up of an old Thai Somdej amulet\') {profile.visual_style}", "...", "..."], '
         f'"video_queries": ["คำค้นวิดีโอสต็อกจริงสั้นๆ ภาษาอังกฤษ 1-3 คำ {profile.video_query_hint}", "...", "..."], '
         f'"ai_video_prompt": "พรอมต์ภาษาอังกฤษ 1 ประโยค สำหรับ AI สร้างวิดีโอ {profile.ai_video_hint}", '
+        '"cover_text": "พาดหัว COVER ตัวใหญ่บนคลิป — สั้นมาก 4-9 คำ 2 บรรทัดได้ ดึงให้คนหยุดดู '
+        '(เช่น \'พญาครุฑ ทำไมคนกลัว\', \'ของขลังที่ห้ามลองของ\') ห้ามยาวเกิน", '
+        '"cover_highlight": "คำ/วลีเด่นใน cover_text ที่จะระบายสีเหลือง (ต้องเป็นคำที่อยู่ใน cover_text เป๊ะ '
+        'เลือกคำที่สะดุดตา/เป็นจุดขาย เช่น \'ห้ามลองของ\')", '
         f'"youtube_title": "พาดหัวคลิปสำหรับ YouTube — {profile.yt_title_hint}", '
         '"youtube_description": "คำอธิบายคลิป YouTube 2-4 ประโยค เล่าว่าเรื่องเกี่ยวกับอะไรให้คนอยากดู '
         '(ดึงจากเนื้อบท ห้ามสปอยจุดพีค) แล้วขึ้นบรรทัดใหม่ใส่ #แฮชแท็ก 5-8 ตัว แล้วปิดท้ายชวนกดติดตาม", '
@@ -1462,6 +1472,8 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
     # YouTube metadata (catchy title + richer description + tags). Fall back to the topic
     # title / caption so a sparse model reply still uploads with something sensible.
     yt_title = _strip_quotes(str(data.get("youtube_title") or "")).strip()[:100] or out_title
+    cover_text = _strip_quotes(str(data.get("cover_text") or "")).strip()[:60] or yt_title
+    cover_highlight = _strip_quotes(str(data.get("cover_highlight") or "")).strip()[:30]
     yt_description = str(data.get("youtube_description") or "").strip() or caption
     yt_tags = [str(t).strip()[:60] for t in (data.get("youtube_tags") or []) if str(t).strip()][:15]
     angle = _strip_quotes(str(data.get("angle") or "")).strip()[:80]
@@ -1487,6 +1499,7 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
             "image_prompts": image_prompts, "video_queries": video_queries,
             "ai_video_prompt": ai_video_prompt, "angle": angle, "hook_type": hook_type,
             "subject": subject, "shot_plan": shot_plan,
+            "cover_text": cover_text, "cover_highlight": cover_highlight,
             "youtube_title": yt_title, "youtube_description": yt_description, "youtube_tags": yt_tags}
 
 
@@ -1609,7 +1622,8 @@ async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: 
     r = await _render_clip(script["title"], script["lines"], bg_items=items, face_pip=face_pip,
                            say_lines=script.get("lines_say"),
                            brand=(profile.brand_handle, profile.brand_web),
-                           title_card=(script.get("youtube_title") or script["title"]))
+                           title_card=(script.get("cover_text") or script.get("youtube_title") or script["title"]),
+                           cover_highlight=script.get("cover_highlight", ""))
     if r.get("ok"):
         kinds = [k for _, k in items]
         await log_line(f"✅ คลิปเสร็จ {r.get('duration', '?')} วิ" + (" · มีหน้าพูด" if r.get("talking_head") else ""))
