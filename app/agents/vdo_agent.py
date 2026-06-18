@@ -486,8 +486,10 @@ def _build_ass(title: str, segments: list[tuple[str, float]], ass_path: str,
         hl = _ass_escape((cover_highlight or "").strip())
         if hl and hl in joined:  # recolor the keyword yellow, rest stays white
             joined = joined.replace(hl, "{\\c&H00F0FF&}" + hl + "{\\c&H00FFFFFF&}", 1)
+        # show only at the START (~3s) then fade out, so the rest of the clip is clean
+        cover_end = min(3.2, max(2.0, total * 0.3))
         events.append(
-            f"Dialogue: 1,{_ass_ts(0)},{_ass_ts(total)},Cover,,0,0,0,,{{\\fad(250,0)}}{joined}"
+            f"Dialogue: 1,{_ass_ts(0)},{_ass_ts(cover_end)},Cover,,0,0,0,,{{\\fad(300,400)}}{joined}"
         )
     t = 0.0
     for ln, d in segments:
