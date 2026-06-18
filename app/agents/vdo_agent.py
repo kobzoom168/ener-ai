@@ -1589,30 +1589,25 @@ async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: 
     await clear_console()
     await log_line(f"🚀 เริ่มสร้างคลิป — {profile.name}")
     await set_status("script")
-    # 🖼️ IMAGE-FIRST (auto mode): find a real Wikipedia/Commons image BEFORE writing the
-    # script — only commit to a subject we actually have a real photo for.
-    hero = None
-    if not (topic or title):
-        await set_status("media")
-        await log_line("🖼️ หารูปจริงก่อน (Wikipedia/Commons) แล้วค่อยเขียนบท…")
-        subj, hero = await _pick_subject_with_image(profile)
-        if subj:
-            topic = subj
-            await log_line(f"✅ เจอรูปจริง: {subj} · {str(hero.get('credit', ''))[:60]}")
-        else:
-            await log_line("⚠️ รอบนี้ไม่เจอรูปจริง — ใช้ภาพ AI ล้วนแทน")
-    await set_status("script")
     await log_line(f"✍️ ทีม AI เขียนบท (Scriptwriter: {await _agent_model('scriptwriter')})…")
     script = await generate_channel_script(profile, topic, title, summary, tone=tone)
-    # download the real hero image (scene 1) if we found one
+    # 🖼️ Real Wikipedia/Commons photo for the FINAL subject → scene-1 hero (works for every
+    # path: auto-picked OR a manual topic). AI fills the remaining lines.
+    hero = None
     hero_path = None
-    if hero:
+    subj = (script.get("subject") or topic or title or script.get("title") or "").strip()
+    if subj:
         try:
             from app.agents import wiki_images
-            hero_path = await wiki_images.download(
-                hero["url"], os.path.join(VDO_DIR, f"hero_wiki_{int(time.time())}.jpg"))
+            hero = await wiki_images.find_image(subj)
+            if hero:
+                await log_line(f"🖼️ เจอรูปจริงจาก Wikipedia: {subj}")
+                hero_path = await wiki_images.download(
+                    hero["url"], os.path.join(VDO_DIR, f"hero_wiki_{int(time.time())}.jpg"))
+                if hero_path:
+                    await log_line("✅ โหลดรูปจริงสำเร็จ — ใช้เป็นฉากแรก")
         except Exception:
-            hero_path = None
+            hero = hero_path = None
     await log_line(f"📝 หัวข้อ: {script.get('title', '')}")
     for _ln in (script.get("lines") or []):
         await log_line("· " + str(_ln))
