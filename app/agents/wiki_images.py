@@ -177,6 +177,22 @@ async def fetch_article(subject: str, lang: str = "th") -> dict | None:
     return None
 
 
+async def image_ok(url: str) -> bool:
+    """Verify an image URL ACTUALLY returns valid image bytes (so we never list/use a dead
+    link). Small range probe = fast."""
+    if not url:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=15, headers={"User-Agent": _UA},
+                                     follow_redirects=True) as c:
+            r = await c.get(url, headers={"Range": "bytes=0-4096"})
+        if r.status_code not in (200, 206):
+            return False
+        return r.headers.get("content-type", "").startswith("image/") and len(r.content) > 500
+    except Exception:
+        return False
+
+
 async def category_members(category: str, lang: str = "th", limit: int = 200) -> list[str]:
     """List the article titles in a Wikipedia category (main namespace only). This gives a
     real, verified catalog of subjects (e.g. หมวดหมู่:พระเครื่อง) — each guaranteed to have a

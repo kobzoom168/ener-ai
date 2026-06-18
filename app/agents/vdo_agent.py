@@ -1632,7 +1632,8 @@ async def library_with_images(profile: "ChannelProfile", limit: int = 24) -> lis
             img = await wiki_images.find_image(s)
         except Exception:
             img = None
-        if img and img.get("url"):
+        # only keep subjects whose image ACTUALLY downloads (no dead links in the list)
+        if img and img.get("url") and await wiki_images.image_ok(img["url"]):
             out.append({"subject": s, "image": img["url"], "source": img.get("source", "")})
     return out
 

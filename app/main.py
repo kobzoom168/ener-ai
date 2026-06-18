@@ -7270,6 +7270,29 @@ async def workspace_vdo_library(request: Request):
     return JSONResponse({"items": items, "cached": False})
 
 
+@app.get("/workspace/vdo/img")
+async def workspace_vdo_img(request: Request):
+    """Proxy a Wikimedia image through our server (proper User-Agent, no browser hotlink/rate
+    issues) so the library thumbnails always render. Restricted to wikimedia/wikipedia."""
+    await _require_admin(request)
+    from fastapi import Response
+    import httpx
+    u = request.query_params.get("u", "")
+    if not (u.startswith("https://") and ("wikimedia.org" in u or "wikipedia.org" in u)):
+        return Response(status_code=400)
+    try:
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True,
+                                     headers={"User-Agent": "EnerScanBot/1.0 (https://my-ener.uk)"}) as c:
+            r = await c.get(u)
+        if r.status_code >= 300 or not r.content:
+            return Response(status_code=502)
+        return Response(content=r.content,
+                        media_type=r.headers.get("content-type", "image/jpeg"),
+                        headers={"Cache-Control": "public, max-age=86400"})
+    except Exception:
+        return Response(status_code=502)
+
+
 @app.get("/workspace/vdo/analytics")
 async def workspace_vdo_analytics(request: Request):
     """📊 Analyst (phase ②): live YouTube stats + learned insight. Persisted in the DB so it

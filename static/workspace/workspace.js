@@ -2308,7 +2308,7 @@ document.addEventListener('DOMContentLoaded', function() {
       if (!items.length) { box.innerHTML = '<div style="color:var(--muted-foreground);font-size:13px">ยังไม่มี — กด "↻ ดึงคลังใหม่"</div>'; return; }
       box.innerHTML = items.map(it =>
         '<div style="background:#161b26;border:1px solid var(--border);border-radius:10px;overflow:hidden">' +
-          '<img src="' + escapeHtml(it.image) + '" loading="lazy" style="width:100%;height:120px;object-fit:cover;display:block;background:#0f172a">' +
+          '<img src="/workspace/vdo/img?u=' + encodeURIComponent(it.image) + '" loading="lazy" onerror="this.style.opacity=0.15" style="width:100%;height:120px;object-fit:cover;display:block;background:#0f172a">' +
           '<div style="padding:8px 9px">' +
             '<div style="font-size:12px;font-weight:600;line-height:1.35;min-height:32px">' + escapeHtml(it.subject) + '</div>' +
             '<button class="panel-action" style="background:#7c3aed;color:#fff;font-size:11px;padding:4px 10px;margin-top:6px;width:100%" onclick="useTrendTopic(' + JSON.stringify(it.subject).replace(/"/g, '&quot;') + ')">ใช้หัวข้อนี้</button>' +
