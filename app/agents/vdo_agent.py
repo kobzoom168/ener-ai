@@ -406,6 +406,51 @@ def _synth_lines(lines: list[str], base: str, out_mp3: str,
     return segs, total
 
 
+def _render_cover(bg_image: str, cover_text: str, cover_highlight: str, out_jpg: str) -> str:
+    """Render a vertical YouTube COVER/thumbnail: bg image + BIG CENTERED title (white with a
+    yellow keyword, thick outline). One ffmpeg frame → jpg. Returns out_jpg or '' on failure."""
+    import subprocess
+    tc = _ass_escape((cover_text or "").strip())
+    if not tc or not bg_image or not os.path.exists(bg_image):
+        return ""
+    rows = _wrap_rows(tc, 11)[:3] or [tc]
+    joined = "\\N".join(rows)
+    hl = _ass_escape((cover_highlight or "").strip())
+    if hl and hl in joined:
+        joined = joined.replace(hl, "{\\c&H00F0FF&}" + hl + "{\\c&H00FFFFFF&}", 1)
+    ass = out_jpg + ".ass"
+    header = (
+        "[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\n"
+        "WrapStyle: 2\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, "
+        "Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, "
+        "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        # huge, bold, dead-center, very thick black outline so it pops as a thumbnail
+        "Style: CoverBig,Garuda,118,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,108,2,0,1,11,5,5,60,60,40,0\n\n"
+        "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+    )
+    try:
+        with open(ass, "w", encoding="utf-8") as f:
+            f.write(header + f"Dialogue: 0,0:00:00.00,0:00:05.00,CoverBig,,0,0,0,,{joined}\n")
+        cmd = ["ffmpeg", "-y", "-i", bg_image, "-vf",
+               ("scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+                "eq=brightness=-0.05:saturation=1.12,subtitles=" + ass.replace("\\", "/").replace(":", "\\:")
+                if os.name == "nt" else
+                "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+                "eq=brightness=-0.05:saturation=1.12,subtitles=" + ass),
+               "-frames:v", "1", "-q:v", "3", out_jpg]
+        r = subprocess.run(cmd, capture_output=True, timeout=60)
+        ok = r.returncode == 0 and os.path.exists(out_jpg) and os.path.getsize(out_jpg) > 2000
+    except Exception:
+        ok = False
+    finally:
+        try:
+            os.remove(ass)
+        except Exception:
+            pass
+    return out_jpg if ok else ""
+
+
 def _build_ass(title: str, segments: list[tuple[str, float]], ass_path: str,
                brand: tuple[str, str] | None = None, title_card: str = "",
                cover_highlight: str = "") -> None:
@@ -1722,6 +1767,22 @@ async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: 
         imgs = await _gen_bg_images([script["title"]])
         items = [(p, "image") for p in imgs]
 
+    # YouTube COVER/thumbnail: big centered title over the real hero (or first) image —
+    # made NOW because _render_clip deletes the bg images afterwards.
+    cover_bg = hero_path or (items[0][0] if items else "")
+    thumb_path = ""
+    if cover_bg and os.path.exists(cover_bg):
+        try:
+            thumb_path = await asyncio.to_thread(
+                _render_cover, cover_bg,
+                script.get("cover_text") or script.get("youtube_title") or script["title"],
+                script.get("cover_highlight", ""),
+                os.path.join(VDO_DIR, f"cover_{int(time.time())}.jpg"))
+            if thumb_path:
+                await log_line("🖼️ ทำรูปปก (cover) สำหรับ YouTube แล้ว")
+        except Exception:
+            thumb_path = ""
+
     await set_status("render", title=script.get("title", ""))
     await log_line("🎙️ พากย์ (เสียงคุณ V3)" + (" + 🗣️ หน้าพูด D-ID" if face_pip else "") + " + 🎬 ตัดต่อ…")
     r = await _render_clip(script["title"], script["lines"], bg_items=items, face_pip=face_pip,
@@ -1754,6 +1815,7 @@ async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: 
                   "youtube_tags": script.get("youtube_tags") or [],
                   "angle": script.get("angle", ""), "hook_type": script.get("hook_type", ""),
                   "subject": script.get("subject", ""),
+                  "thumbnail": thumb_path,
                   "bg_count": len(items),
                   "bg_kind": f"{kinds.count('video')}vid+{kinds.count('image')}img"})
     else:

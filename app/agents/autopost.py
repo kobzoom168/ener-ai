@@ -128,7 +128,8 @@ async def _post_platform(name: str, mp4: str, caption: str, title: str = "",
             yt_title = (m.get("title") or title or caption or "Short").strip()[:90]
             yt_desc = (m.get("description") or caption or "").strip()
             yt_tags = m.get("tags") or []
-            return await youtube_client.upload_video(mp4, yt_title, yt_desc, yt_tags)
+            return await youtube_client.upload_video(mp4, yt_title, yt_desc, yt_tags,
+                                                     thumbnail_path=m.get("thumbnail") or None)
         return False, "YouTube ยังไม่เชื่อม (เชื่อมที่ /admin/youtube)"
     if name == "tiktok":
         from app.agents import tiktok_client
@@ -185,6 +186,7 @@ async def _ensure_clip(job: dict, today: str) -> tuple[str, str, str]:
               yt_title=res.get("youtube_title") or res.get("title") or "",
               yt_desc=res.get("youtube_description") or res.get("caption") or "",
               yt_tags=res.get("youtube_tags") or [],
+              thumbnail=res.get("thumbnail") or "",
               yt_angle=res.get("angle", ""), yt_hook=res.get("hook_type", ""),
               yt_topic=res.get("subject") or res.get("title") or "")
     await _send_telegram(st["mp4"], f"{st['title']}\n\n{st['caption']}".strip())
@@ -219,7 +221,7 @@ async def run_job(job: dict, source: str = "manual", preview: bool = False) -> d
     plats = [p for p in (job.get("platforms") or []) if p.get("enabled")] or [{"name": "facebook"}]
     st = job.get("_state", {})
     yt_meta = {"title": st.get("yt_title", ""), "description": st.get("yt_desc", ""),
-               "tags": st.get("yt_tags", [])}
+               "tags": st.get("yt_tags", []), "thumbnail": st.get("thumbnail", "")}
     results = []
     for p in plats:
         await set_status("posting", f"{PLATFORM_LABEL.get(p['name'], p['name'])}", title)
@@ -271,7 +273,7 @@ async def run_due() -> None:
             changed = True
             continue
         yt_meta = {"title": st.get("yt_title", ""), "description": st.get("yt_desc", ""),
-                   "tags": st.get("yt_tags", [])}
+                   "tags": st.get("yt_tags", []), "thumbnail": st.get("thumbnail", "")}
         for p in due:
             await set_status("posting", PLATFORM_LABEL.get(p["name"], p["name"]), title)
             try:

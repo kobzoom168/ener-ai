@@ -174,8 +174,10 @@ async def video_stats(video_ids: list[str]) -> dict:
 
 
 async def upload_video(mp4_path: str, title: str, description: str = "",
-                       tags: list[str] | None = None, privacy: str | None = None) -> tuple[bool, str]:
-    """Resumable-upload an mp4 as a YouTube video (vertical + #Shorts → shows as a Short)."""
+                       tags: list[str] | None = None, privacy: str | None = None,
+                       thumbnail_path: str | None = None) -> tuple[bool, str]:
+    """Resumable-upload an mp4 as a YouTube video (vertical + #Shorts → shows as a Short).
+    If `thumbnail_path` is given, set it as the custom cover (needs a VERIFIED channel)."""
     if not enabled():
         return False, "YouTube ยังไม่เชื่อม"
     if not os.path.exists(mp4_path):
@@ -207,10 +209,24 @@ async def upload_video(mp4_path: str, title: str, description: str = "",
         resp = None
         while resp is None:
             _status, resp = req.next_chunk()
-        return str(resp.get("id", ""))
+        vid = str(resp.get("id", ""))
+        # custom cover/thumbnail (best-effort — needs a verified channel; ignore failure)
+        thumb_note = ""
+        if vid and thumbnail_path and os.path.exists(thumbnail_path):
+            try:
+                yt.thumbnails().set(
+                    videoId=vid, media_body=MediaFileUpload(thumbnail_path, mimetype="image/jpeg")
+                ).execute()
+                thumb_note = " +ปก"
+            except Exception as texc:
+                msg = str(texc)
+                thumb_note = (" (ตั้งปกไม่ได้ — ช่องยังไม่ verify)"
+                              if "forbidden" in msg.lower() or "unauthorized" in msg.lower()
+                              else " (ตั้งปกไม่สำเร็จ)")
+        return vid, thumb_note
 
     try:
-        vid = await asyncio.to_thread(_do)
-        return True, f"อัปขึ้น YouTube แล้ว (https://youtu.be/{vid})"
+        vid, thumb_note = await asyncio.to_thread(_do)
+        return True, f"อัปขึ้น YouTube แล้ว{thumb_note} (https://youtu.be/{vid})"
     except Exception as exc:
         return False, f"อัป YouTube ไม่สำเร็จ: {str(exc)[:220]}"
