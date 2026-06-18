@@ -1562,10 +1562,12 @@ async def _suggest_real_subjects(profile: "ChannelProfile", avoid: list[str], n:
 # Real Wikipedia categories that enumerate each mode's subjects (verified pages = data+image).
 _WIKI_CATS = {
     "amulet": ["หมวดหมู่:พระเครื่อง", "หมวดหมู่:วัตถุมงคล", "หมวดหมู่:เกจิอาจารย์"],
-    "stone": ["หมวดหมู่:รัตนชาติ", "หมวดหมู่:แร่", "หมวดหมู่:อัญมณี"],
-    "sacred": ["หมวดหมู่:วัดในกรุงเทพมหานคร", "หมวดหมู่:โบราณสถานในประเทศไทย",
-               "หมวดหมู่:วัดในประเทศไทย"],
+    "stone": ["หมวดหมู่:อัญมณี", "หมวดหมู่:รัตนชาติ", "หมวดหมู่:แร่"],
+    "sacred": ["หมวดหมู่:ไหว้พระ 9 วัด กรุงเทพมหานคร",
+               "หมวดหมู่:พระอารามหลวงชั้นเอก ชนิดราชวรมหาวิหาร"],
 }
+# skip Wikipedia list/index pages that aren't real subjects
+_WIKI_SKIP_PREFIX = ("รายชื่อ", "หมวดหมู่", "แม่แบบ", "สถานีย่อย")
 
 
 async def _pick_catalog_subject(profile: "ChannelProfile") -> str:
@@ -1583,7 +1585,7 @@ async def _pick_catalog_subject(profile: "ChannelProfile") -> str:
             pool = await wiki_images.catalog(cats)
         except Exception:
             pool = []
-    pool = [s for s in pool if s and s not in avoid]
+    pool = [s for s in pool if s and s not in avoid and not s.startswith(_WIKI_SKIP_PREFIX)]
     if not pool:  # fallback: ask the model for real subjects
         pool = [s for s in await _suggest_real_subjects(profile, list(avoid)) if s not in avoid]
     if not pool:
