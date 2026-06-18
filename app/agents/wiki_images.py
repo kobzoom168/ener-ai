@@ -29,21 +29,64 @@ def _pick_page_image(resp_json: dict, lang: str, subject: str) -> dict | None:
     return None
 
 
+_BAD_FILE = ("logo", "icon", "wheel", "commons", "wikidata", "ambox", "question",
+             "flag of", "map of", "edit", "disambig", "symbol", ".svg")
+
+
+def _good_file(name: str) -> bool:
+    n = name.lower()
+    if not n.split("?")[0].endswith(_IMG_EXT):
+        return False
+    return not any(b in n for b in _BAD_FILE)
+
+
+async def _page_images_list(c: httpx.AsyncClient, api: str, title: str, lang: str,
+                            subject: str) -> dict | None:
+    """When PageImages has no designated lead image, pick a real photo from the article's
+    file list (prefer a filename that contains the subject, e.g. 'พระสมเด็จ 14.1.jpg')."""
+    r = await c.get(api, params={"action": "query", "prop": "images", "titles": title,
+                                 "imlimit": 30, "redirects": 1, "format": "json", "origin": "*"})
+    if r.status_code >= 300:
+        return None
+    files = []
+    for p in ((r.json().get("query") or {}).get("pages") or {}).values():
+        if "missing" in p:
+            return None
+        files = [im.get("title", "") for im in (p.get("images") or []) if _good_file(im.get("title", ""))]
+    if not files:
+        return None
+    keys = [w for w in subject.replace("วัด", " ").split() if len(w) >= 3]
+    files.sort(key=lambda f: 0 if any(k in f for k in keys) else 1)  # subject-matching file first
+    info = await c.get(api, params={"action": "query", "titles": files[0], "prop": "imageinfo",
+                                    "iiprop": "url", "iiurlwidth": 1080, "format": "json", "origin": "*"})
+    if info.status_code >= 300:
+        return None
+    for p in ((info.json().get("query") or {}).get("pages") or {}).values():
+        ii = (p.get("imageinfo") or [{}])[0]
+        url = ii.get("thumburl") or ii.get("url")
+        if url:
+            return {"url": url, "source": f"https://{lang}.wikipedia.org/wiki/{title.replace(' ', '_')}",
+                    "credit": f"Wikipedia ({lang}): {title}"}
+    return None
+
+
 async def _wiki_page_image(subject: str, lang: str) -> dict | None:
-    """Lead image of the Wikipedia article. Tries the EXACT title first (accurate — e.g.
-    'พระสมเด็จวัดระฆัง' returns the amulet, not the temple), then falls back to search."""
+    """Image of the Wikipedia article. EXACT title first (accurate — 'พระสมเด็จวัดระฆัง'
+    returns the amulet, not the temple): try the designated lead image, then any real photo
+    in the article, then fall back to a relevance search."""
     api = f"https://{lang}.wikipedia.org/w/api.php"
     base = {"action": "query", "prop": "pageimages|info", "piprop": "original",
             "inprop": "url", "redirects": 1, "format": "json", "origin": "*"}
     async with httpx.AsyncClient(timeout=20, headers={"User-Agent": _UA}) as c:
-        # 1) exact-title match (most accurate)
-        r = await c.get(api, params={**base, "titles": subject})
+        r = await c.get(api, params={**base, "titles": subject})  # 1) exact lead image
         if r.status_code < 300:
             hit = _pick_page_image(r.json(), lang, subject)
             if hit:
                 return hit
-        # 2) fall back to a relevance search
-        r = await c.get(api, params={**base, "generator": "search",
+        hit = await _page_images_list(c, api, subject, lang, subject)  # 2) any photo in the article
+        if hit:
+            return hit
+        r = await c.get(api, params={**base, "generator": "search",  # 3) search fallback
                                      "gsrsearch": subject, "gsrlimit": 3})
         if r.status_code < 300:
             return _pick_page_image(r.json(), lang, subject)
