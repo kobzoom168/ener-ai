@@ -507,11 +507,17 @@ def _build_ass(title: str, segments: list[tuple[str, float]], ass_path: str,
         f.write(_ASS_HEADER + "\n".join(events) + "\n")
 
 
+# One consistent "Style Bible" appended to EVERY image so the whole clip looks like one set
+# (this is the cheap, high-impact cohesion lever the consult AIs all recommended).
+_STYLE_BIBLE = (
+    "cohesive cinematic editorial illustration, semi-realistic painterly look, consistent "
+    "rendering and color grading across the whole series, rich warm palette, soft dramatic "
+    "lighting, bright and clear (NOT dark, NOT underexposed), high detail, vertical 9:16. "
+    "ABSOLUTELY NO text, no words, no letters, no captions, no watermark.")
+
+
 def _img_style(prompt: str) -> str:
-    return (f"{prompt}. Vertical 9:16 cinematic atmospheric background, "
-            "well-lit with vivid saturated colors, bright and clear, light mysterious mood "
-            "(NOT dark, NOT underexposed), high quality. "
-            "ABSOLUTELY NO text, no words, no letters, no captions.")
+    return f"{prompt}. {_STYLE_BIBLE}"
 
 
 async def _gen_bg_image_gemini(prompt: str, idx: int = 0) -> str | None:
@@ -1318,21 +1324,22 @@ async def _art_prompts(lines: list[str], profile: "ChannelProfile") -> list[str]
     clip looks like one set. Returns [] on failure (caller keeps the script's own prompts)."""
     if not lines:
         return []
-    style = (profile.visual_style or "cinematic, atmospheric, vivid")
+    subj_hint = (profile.visual_style or "")
     system = (
-        "You are the ART DIRECTOR of a Thai vertical short. For EACH line of the narration you "
-        "write ONE vivid English image prompt that depicts EXACTLY and LITERALLY what that line "
-        "is about (the concrete subject/scene/action being mentioned), so the viewer sees what "
-        "they hear. Keep ONE consistent art style, palette and lighting across ALL lines so the "
-        "clip looks cohesive (like a single illustrated set). Absolutely NO text/words/letters in "
-        "the image. Reply JSON only."
+        "You are the ART DIRECTOR of a Thai vertical short. For EACH narration line, write ONE "
+        "concise English image description of what to SHOW — built as: 1 main subject + 1 action "
+        "+ 1 environment cue + a CAMERA shot. Rules: depict the line's MEANING (for an abstract "
+        "line like ความเครียด/โชคลาภ/ความเข้าใจผิด use a clear visual METAPHOR, not a literal "
+        "translation). Keep ONE main subject per image (avoid clutter). VARY the camera across "
+        "lines (close-up, medium, wide, macro, over-the-shoulder, top-down) and never repeat the "
+        "same shot twice in a row. Do NOT include art-style words (those are added later). Reply JSON only."
     )
     prompt = (
         "บทพากย์ (เรียงตามบรรทัด):\n" + _json.dumps(lines, ensure_ascii=False) + "\n\n"
-        f"สไตล์ภาพที่ใช้เหมือนกันทุกบรรทัด: {style}\n"
-        f'ตอบ JSON: {{"prompts": ["english image prompt for line 1", "...", ...]}} '
-        f'— ต้องมีพอดี {len(lines)} พรอมต์ เรียงตรงกับบรรทัด แต่ละพรอมต์บรรยาย \'สิ่งที่ควรเห็นให้ตรงกับ'
-        "เนื้อหาบรรทัดนั้นเป๊ะ\' เป็นรูปธรรม (คน/สิ่งของ/ฉาก/การกระทำที่พูดถึง) + คงสไตล์เดียวกัน"
+        + (f"แนวภาพของช่อง (อ้างอิง): {subj_hint}\n" if subj_hint else "")
+        + f'ตอบ JSON: {{"prompts": ["main subject + action + environment + camera shot (English)", ...]}} '
+        f'— พอดี {len(lines)} พรอมต์ เรียงตรงกับบรรทัด, สื่อ \'ใจความ\' ของบรรทัดนั้น (นามธรรม→ใช้ภาพเปรียบเทียบ), '
+        "1 ภาพ = 1 subject หลัก, สลับมุมกล้องไม่ให้ซ้ำติดกัน, ห้ามใส่คำบรรยายสไตล์/คุณภาพ"
     )
     try:
         data = _parse_json(await _or_chat(await _agent_model("director"), system, prompt, 3500))
