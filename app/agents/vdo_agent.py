@@ -510,10 +510,11 @@ def _build_ass(title: str, segments: list[tuple[str, float]], ass_path: str,
 # One consistent "Style Bible" appended to EVERY image so the whole clip looks like one set
 # (this is the cheap, high-impact cohesion lever the consult AIs all recommended).
 _STYLE_BIBLE = (
-    "cohesive cinematic editorial illustration, semi-realistic painterly look, consistent "
-    "rendering and color grading across the whole series, rich warm palette, soft dramatic "
-    "lighting, bright and clear (NOT dark, NOT underexposed), high detail, vertical 9:16. "
-    "ABSOLUTELY NO text, no words, no letters, no captions, no watermark.")
+    "ONE consistent visual style for the whole set: cinematic photorealistic film still, "
+    "dramatic moody volumetric lighting, unified teal-and-amber color grade, shallow depth of "
+    "field, 35mm look, fine detail and texture — EVERY frame must look like the same movie / same "
+    "art direction (same palette, same rendering, same mood). Bright and clear (NOT washed out), "
+    "vertical 9:16. ABSOLUTELY NO text, no words, no letters, no captions, no watermark.")
 
 
 def _img_style(prompt: str) -> str:
@@ -552,9 +553,10 @@ async def _gen_bg_image_gemini(prompt: str, idx: int = 0) -> str | None:
         return None
 
 
-async def _gen_bg_image(prompt: str, idx: int = 0) -> str | None:
+async def _gen_bg_image(prompt: str, idx: int = 0, seed: int | None = None) -> str | None:
     """Generate a topical 9:16 background image. Uses the free Gemini API when the image
-    provider is set to 'gemini' (falls back to OpenRouter on any failure/limit), else OpenRouter."""
+    provider is set to 'gemini' (falls back to OpenRouter on any failure/limit), else OpenRouter.
+    A shared `seed` across the clip keeps the visual look cohesive (same Set/tone)."""
     try:
         from app.core.database import get_config
         provider = (await get_config("vdo_image_provider", "")).strip()
@@ -564,7 +566,8 @@ async def _gen_bg_image(prompt: str, idx: int = 0) -> str | None:
         try:
             from app.agents import aivideo
             f = await aivideo.generate_image(_img_style(prompt),
-                                             os.path.join(VDO_DIR, f"bg_{int(time.time() * 1000)}_{idx}.png"))
+                                             os.path.join(VDO_DIR, f"bg_{int(time.time() * 1000)}_{idx}.png"),
+                                             seed=seed)
             if f:
                 return f  # else fall through to OpenRouter
         except Exception:
@@ -603,12 +606,13 @@ async def _gen_bg_image(prompt: str, idx: int = 0) -> str | None:
         return None
 
 
-async def _gen_bg_images(prompts: list[str]) -> list[str]:
-    """Generate several bg images in parallel; returns the paths that succeeded."""
+async def _gen_bg_images(prompts: list[str], seed: int | None = None) -> list[str]:
+    """Generate several bg images in parallel; returns the paths that succeeded. One shared
+    `seed` makes the whole set cohesive (same look/tone)."""
     prompts = [p for p in (prompts or []) if str(p).strip()][:9]
     if not prompts:
         return []
-    results = await asyncio.gather(*[_gen_bg_image(p, i) for i, p in enumerate(prompts)])
+    results = await asyncio.gather(*[_gen_bg_image(p, i, seed) for i, p in enumerate(prompts)])
     return [p for p in results if p]
 
 
@@ -1738,23 +1742,14 @@ async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: 
     await set_status("script")
     await log_line(f"✍️ ทีม AI เขียนบท (Scriptwriter: {await _agent_model('scriptwriter')})…")
     script = await generate_channel_script(profile, topic, title, summary, tone=tone)
-    # 🖼️ Real Wikipedia/Commons photo for the FINAL subject → scene-1 hero (works for every
-    # path: auto-picked OR a manual topic). AI fills the remaining lines.
+    # Per the creator: NO internet/Wikipedia photos inside the clip — generate EVERY frame with
+    # AI so the whole clip is ONE cohesive Set/tone. (Wikipedia is still used to ground the
+    # script's facts + the source citation, just not as a picture.)
     hero = None
     hero_path = None
-    subj = (script.get("subject") or topic or title or script.get("title") or "").strip()
-    if subj:
-        try:
-            from app.agents import wiki_images
-            hero = await wiki_images.find_image(subj)
-            if hero:
-                await log_line(f"🖼️ เจอรูปจริงจาก Wikipedia: {subj}")
-                hero_path = await wiki_images.download(
-                    hero["url"], os.path.join(VDO_DIR, f"hero_wiki_{int(time.time())}.jpg"))
-                if hero_path:
-                    await log_line("✅ โหลดรูปจริงสำเร็จ — ใช้เป็นฉากแรก")
-        except Exception:
-            hero = hero_path = None
+    # one shared seed across the clip → consistent look/tone (cohesion lever)
+    import zlib as _zlib
+    clip_seed = _zlib.crc32((script.get("title") or topic or "ener").encode("utf-8")) % 2147483647
     await log_line(f"📝 หัวข้อ: {script.get('title', '')}")
     for _ln in (script.get("lines") or []):
         await log_line("· " + str(_ln))
@@ -1784,19 +1779,11 @@ async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: 
         prompts = list(imps)
         while len(prompts) < n:
             prompts.append(imps[len(prompts) % len(imps)] if imps else script["title"])
-        if hero_path:
-            # real Wikipedia photo = scene 1 (line 1); AI images cover lines 2..n (so each
-            # picture stays aligned to its line — no off-by-one shift).
-            await log_line(f"🖼️ รูปจริง 1 ฉาก (Wikipedia) + สร้างภาพ AI {n - 1} ฉาก…")
-            rest = prompts[1:n] if len(prompts) >= n else prompts[:max(1, n - 1)]
-            ai_imgs = await _gen_bg_images(rest)
-            items = [(hero_path, "image")] + [(p, "image") for p in ai_imgs]
-            await log_line(f"✅ ได้ภาพ {len(items)} ฉาก (รวมรูปจริง)")
-        else:
-            await log_line(f"🎨 สร้างภาพ AI {n} ฉาก (1 ฉาก/บรรทัด ตรงเสียง)…")
-            imgs = await _gen_bg_images(prompts[:n])
-            await log_line(f"✅ ได้ภาพ {len(imgs)}/{n} ฉาก")
-            items = [(p, "image") for p in imgs]
+        # ALL frames AI-generated, ONE shared seed → cohesive same-Set look, each matches its line
+        await log_line(f"🎨 สร้างภาพ AI {n} ฉาก (สไตล์เดียวกันทั้งคลิป · seed คงที่)…")
+        imgs = await _gen_bg_images(prompts[:n], seed=clip_seed)
+        await log_line(f"✅ ได้ภาพ {len(imgs)}/{n} ฉาก")
+        items = [(p, "image") for p in imgs]
     else:
         from app.agents import aivideo
         items = []

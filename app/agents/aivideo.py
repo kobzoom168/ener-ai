@@ -38,9 +38,10 @@ def enabled() -> bool:
     return bool(_key())
 
 
-async def generate_image(prompt: str, out_path: str, model: str = "") -> str | None:
+async def generate_image(prompt: str, out_path: str, model: str = "", seed: int | None = None) -> str | None:
     """9:16 background image via fal. Default Flux DEV — far better prompt adherence than schnell
-    (so the picture matches the script) at ~$0.025/img. Override with FAL_IMAGE_MODEL. Fail-open."""
+    (so the picture matches the script) at ~$0.025/img. Override with FAL_IMAGE_MODEL. A shared
+    `seed` across a clip keeps the look cohesive. Fail-open."""
     key = _key()
     prompt = (prompt or "").strip()
     if not key or not prompt:
@@ -49,6 +50,8 @@ async def generate_image(prompt: str, out_path: str, model: str = "") -> str | N
     headers = {"Authorization": f"Key {key}", "Content-Type": "application/json"}
     body = {"prompt": prompt, "num_images": 1,
             "image_size": {"width": 768, "height": 1344}}  # ~9:16
+    if seed is not None:
+        body["seed"] = int(seed)
     if "schnell" not in mdl:  # dev/pro adhere better with a few more steps
         body["num_inference_steps"] = 30
     try:

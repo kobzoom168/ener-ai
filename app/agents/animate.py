@@ -55,19 +55,25 @@ async def animate_image(image_path: str, out_path: str, model: str = "") -> str 
             sub = await c.post(f"https://queue.fal.run/{mdl}", headers=headers, json=body)
             if sub.status_code >= 300:
                 return None
-            req = sub.json().get("request_id")
-            if not req:
+            sj = sub.json()
+            # IMPORTANT: use the URLs fal returns — sub-pathed models (kling .../pro/image-to-video)
+            # expose their queue under the APP id only, so building the URL by hand 404s.
+            status_url = sj.get("status_url")
+            response_url = sj.get("response_url")
+            if not status_url or not response_url:
                 return None
-            base = f"https://queue.fal.run/{mdl}/requests/{req}"
             result = None
             for _ in range(120):  # ~360s max (i2v can be slow)
                 await asyncio.sleep(3)
-                st = await c.get(base + "/status", headers=headers)
+                st = await c.get(status_url, headers=headers)
                 if st.status_code >= 300:
                     continue
-                status = st.json().get("status")
+                try:
+                    status = st.json().get("status")
+                except Exception:
+                    continue
                 if status == "COMPLETED":
-                    rr = await c.get(base, headers=headers)
+                    rr = await c.get(response_url, headers=headers)
                     if rr.status_code < 300:
                         result = rr.json()
                     break
