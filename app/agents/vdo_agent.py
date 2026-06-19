@@ -1324,22 +1324,25 @@ async def _art_prompts(lines: list[str], profile: "ChannelProfile") -> list[str]
     clip looks like one set. Returns [] on failure (caller keeps the script's own prompts)."""
     if not lines:
         return []
-    subj_hint = (profile.visual_style or "")
+    subj = (lines and lines[0]) or ""
     system = (
-        "You are the ART DIRECTOR of a Thai vertical short. For EACH narration line, write ONE "
-        "concise English image description of what to SHOW — built as: 1 main subject + 1 action "
-        "+ 1 environment cue + a CAMERA shot. Rules: depict the line's MEANING (for an abstract "
-        "line like ความเครียด/โชคลาภ/ความเข้าใจผิด use a clear visual METAPHOR, not a literal "
-        "translation). Keep ONE main subject per image (avoid clutter). VARY the camera across "
-        "lines (close-up, medium, wide, macro, over-the-shoulder, top-down) and never repeat the "
-        "same shot twice in a row. Do NOT include art-style words (those are added later). Reply JSON only."
+        "You are the ART DIRECTOR of a Thai amulet/spiritual short. For EACH narration line, write "
+        "ONE English image description that LITERALLY shows what that line is talking about — the "
+        "actual subject/person/place/object/event named (e.g. a Thai sacred amulet, a Thai monk, "
+        "King Rama IX portrait, a Thai temple ceremony, a river, a specific year carved, officials "
+        "making merit). Be SPECIFIC and concrete (Thai context). Do NOT use vague metaphors or "
+        "generic mood shots (random candles, abstract glows, unrelated gems/stones) — only fall "
+        "back to a simple symbol if the line truly has NO concrete subject. Keep ONE clear main "
+        "subject + a camera shot; vary the camera (close-up/medium/wide/macro/over-the-shoulder), "
+        "no repeat in a row. NO art-style words (added later). Reply JSON only."
     )
     prompt = (
-        "บทพากย์ (เรียงตามบรรทัด):\n" + _json.dumps(lines, ensure_ascii=False) + "\n\n"
-        + (f"แนวภาพของช่อง (อ้างอิง): {subj_hint}\n" if subj_hint else "")
-        + f'ตอบ JSON: {{"prompts": ["main subject + action + environment + camera shot (English)", ...]}} '
-        f'— พอดี {len(lines)} พรอมต์ เรียงตรงกับบรรทัด, สื่อ \'ใจความ\' ของบรรทัดนั้น (นามธรรม→ใช้ภาพเปรียบเทียบ), '
-        "1 ภาพ = 1 subject หลัก, สลับมุมกล้องไม่ให้ซ้ำติดกัน, ห้ามใส่คำบรรยายสไตล์/คุณภาพ"
+        f"เรื่องของคลิป: {subj}\nบทพากย์ (เรียงตามบรรทัด):\n" + _json.dumps(lines, ensure_ascii=False) + "\n\n"
+        f'ตอบ JSON: {{"prompts": ["literal English image of what line 1 shows + camera", ...]}} '
+        f'— พอดี {len(lines)} พรอมต์ เรียงตรงกับบรรทัด. กฎ: วาด \'สิ่งที่บรรทัดนั้นพูดถึงจริงๆ\' แบบตรงตัว '
+        "เป็นรูปธรรม เจาะจง บริบทไทย (เช่น พระเครื่องไทย/พระสงฆ์/ในหลวง ร.9/วัด/พิธี/แม่น้ำ/ปีที่สลัก) "
+        "ห้ามวาดลอยๆ ไม่เกี่ยว (เทียนมั่ว/แสงนามธรรม/หินอัญมณีไม่เกี่ยว). ถ้าบรรทัดพูดถึง 'พระ/พระเครื่อง' "
+        "ให้โชว์พระเครื่องไทยชัดๆ. สลับมุมกล้อง ห้ามใส่คำสไตล์/คุณภาพ"
     )
     try:
         data = _parse_json(await _or_chat(await _agent_model("director"), system, prompt, 3500))

@@ -39,15 +39,18 @@ def enabled() -> bool:
 
 
 async def generate_image(prompt: str, out_path: str, model: str = "") -> str | None:
-    """Cheap 9:16 background image via fal (default Flux schnell ~$0.003/img). Fail-open → None."""
+    """9:16 background image via fal. Default Flux DEV — far better prompt adherence than schnell
+    (so the picture matches the script) at ~$0.025/img. Override with FAL_IMAGE_MODEL. Fail-open."""
     key = _key()
     prompt = (prompt or "").strip()
     if not key or not prompt:
         return None
-    mdl = (model or os.environ.get("FAL_IMAGE_MODEL", "") or "fal-ai/flux/schnell").strip()
+    mdl = (model or os.environ.get("FAL_IMAGE_MODEL", "") or "fal-ai/flux/dev").strip()
     headers = {"Authorization": f"Key {key}", "Content-Type": "application/json"}
     body = {"prompt": prompt, "num_images": 1,
             "image_size": {"width": 768, "height": 1344}}  # ~9:16
+    if "schnell" not in mdl:  # dev/pro adhere better with a few more steps
+        body["num_inference_steps"] = 30
     try:
         async with httpx.AsyncClient(timeout=90) as c:
             r = await c.post(f"https://fal.run/{mdl}", headers=headers, json=body)
