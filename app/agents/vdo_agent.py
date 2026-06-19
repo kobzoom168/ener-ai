@@ -510,15 +510,16 @@ def _build_ass(title: str, segments: list[tuple[str, float]], ass_path: str,
 # One consistent "Style Bible" appended to EVERY image so the whole clip looks like one set
 # (this is the cheap, high-impact cohesion lever the consult AIs all recommended).
 _STYLE_BIBLE = (
-    "ONE consistent visual style for the whole set: cinematic photorealistic film still, "
-    "dramatic moody volumetric lighting, unified teal-and-amber color grade, shallow depth of "
-    "field, 35mm look, fine detail and texture — EVERY frame must look like the same movie / same "
-    "art direction (same palette, same rendering, same mood). Bright and clear (NOT washed out), "
-    "vertical 9:16. ABSOLUTELY NO text, no words, no letters, no captions, no watermark.")
+    "Cinematic photorealistic film still, hyper-detailed, shot on 35mm, shallow depth of field, "
+    "dramatic moody volumetric lighting, unified dark teal-and-amber color grade, rich contrast, "
+    "atmospheric haze — one consistent art direction across the whole set (same palette, same "
+    "lens, same mood, like frames from a single film). Vertical 9:16. NO text, no words, no "
+    "letters, no captions, no watermark, no border")
 
 
 def _img_style(prompt: str) -> str:
-    return f"{prompt}. {_STYLE_BIBLE}"
+    # STYLE FIRST (Flux weights earlier tokens more → the look dominates), then the scene.
+    return f"{_STYLE_BIBLE}. SCENE: {prompt}"
 
 
 async def _gen_bg_image_gemini(prompt: str, idx: int = 0) -> str | None:
@@ -1593,18 +1594,9 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
     yt_tags = [str(t).strip()[:60] for t in (data.get("youtube_tags") or []) if str(t).strip()][:15]
     angle = _strip_quotes(str(data.get("angle") or "")).strip()[:80]
     hook_type = _strip_quotes(str(data.get("hook_type") or "")).strip()[:60]
-    # 🎬 Director / Shot Planner: plan the medium per beat (logged now; render wiring = ④)
+    # (Shot Planner removed — visuals are 100% AI images now, so the medium-per-beat plan was
+    # unused dead weight that cost ~100s/clip. The Art Director above already wrote the prompts.)
     shot_plan = []
-    if lines:
-        await _vlog(f"🎬 Director ({await _agent_model('director')}): วางแผนช็อต… (รอ ~10-20 วิ)")
-        _t = time.time()
-        try:
-            shot_plan = await _shot_plan(lines, profile)
-        except Exception:
-            shot_plan = []
-        if shot_plan:
-            mix = {m: sum(1 for s in shot_plan if s["medium"] == m) for m in ("stock", "still", "aivideo")}
-            await _vlog(f"🎬 Director: {mix['stock']} ฟุตเทจจริง · {mix['still']} ภาพนิ่ง · {mix['aivideo']} AI video · {int(time.time() - _t)} วิ")
     # 🛡️ record this clip's fingerprint so next run's Originality Guard can avoid repeating it
     await _record_clip(profile.id, {"title": out_title, "angle": angle, "hook_type": hook_type,
                                     "topic": subject, "at": int(time.time())})

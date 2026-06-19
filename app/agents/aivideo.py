@@ -46,13 +46,13 @@ async def generate_image(prompt: str, out_path: str, model: str = "", seed: int 
     prompt = (prompt or "").strip()
     if not key or not prompt:
         return None
-    mdl = (model or os.environ.get("FAL_IMAGE_MODEL", "") or "fal-ai/flux/dev").strip()
+    mdl = (model or os.environ.get("FAL_IMAGE_MODEL", "") or "fal-ai/flux-pro/v1.1").strip()
     headers = {"Authorization": f"Key {key}", "Content-Type": "application/json"}
     body = {"prompt": prompt, "num_images": 1,
             "image_size": {"width": 768, "height": 1344}}  # ~9:16
     if seed is not None:
         body["seed"] = int(seed)
-    if "schnell" not in mdl:  # dev/pro adhere better with a few more steps
+    if "/dev" in mdl:  # flux dev benefits from a few more steps; pro tunes itself
         body["num_inference_steps"] = 30
     try:
         async with httpx.AsyncClient(timeout=90) as c:

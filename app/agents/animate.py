@@ -17,8 +17,10 @@ import httpx
 
 # Kling 2.5 turbo pro image-to-video — the "สวยสุด" tier the creator chose. Override via env.
 _DEFAULT_MODEL = "fal-ai/kling-video/v2.5-turbo/pro/image-to-video"
-_ANIM_PROMPT = ("subtle natural cinematic motion, gentle parallax and slow camera move, "
-                "living scene, keep the subject and composition unchanged")
+_ANIM_PROMPT = ("subtle natural cinematic motion: gentle parallax, slow cinematic camera push-in, "
+                "soft atmospheric movement (drifting light/smoke/particles), the subject stays "
+                "still and the composition unchanged, smooth and realistic")
+_ANIM_NEGATIVE = "blur, distortion, warping, morphing, deformed, flicker, jitter, low quality, extra limbs"
 
 
 def _key() -> str:
@@ -50,7 +52,8 @@ async def animate_image(image_path: str, out_path: str, model: str = "") -> str 
         with open(image_path, "rb") as f:
             data_uri = "data:image/jpeg;base64," + base64.b64encode(f.read()).decode()
         headers = {"Authorization": f"Key {key}", "Content-Type": "application/json"}
-        body = {"image_url": data_uri, "prompt": _ANIM_PROMPT, "duration": "5"}
+        body = {"image_url": data_uri, "prompt": _ANIM_PROMPT, "duration": "5",
+                "cfg_scale": 0.6, "negative_prompt": _ANIM_NEGATIVE}
         async with httpx.AsyncClient(timeout=240) as c:
             sub = await c.post(f"https://queue.fal.run/{mdl}", headers=headers, json=body)
             if sub.status_code >= 300:
