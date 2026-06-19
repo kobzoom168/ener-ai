@@ -1330,6 +1330,18 @@ async def _art_prompts(lines: list[str], profile: "ChannelProfile") -> list[str]
     if not lines:
         return []
     subj = (lines and lines[0]) or ""
+    # 🐱 optional "cat cast" style — same content, but every character is the same cute cat.
+    try:
+        from app.core.database import get_config
+        cat = (await get_config("vdo_cat_mode", "")).strip().lower() in ("on", "1", "true", "yes")
+    except Exception:
+        cat = False
+    cat_rule = (
+        " IMPORTANT CASTING RULE: depict EVERY human/person/monk/deity character as THE SAME ONE "
+        "cute chubby anthropomorphic orange-and-white tabby cat (identical recurring cat character "
+        "in every image), standing/acting like a person doing the scene's action, adorable and "
+        "expressive. Objects/places stay normal. Keep this exact cat consistent across all frames."
+        if cat else "")
     system = (
         "You are the ART DIRECTOR of a Thai amulet/spiritual short. For EACH narration line, write "
         "ONE English image description that LITERALLY shows what that line is talking about — the "
@@ -1339,7 +1351,9 @@ async def _art_prompts(lines: list[str], profile: "ChannelProfile") -> list[str]
         "generic mood shots (random candles, abstract glows, unrelated gems/stones) — only fall "
         "back to a simple symbol if the line truly has NO concrete subject. Keep ONE clear main "
         "subject + a camera shot; vary the camera (close-up/medium/wide/macro/over-the-shoulder), "
-        "no repeat in a row. NO art-style words (added later). Reply JSON only."
+        "no repeat in a row. NO art-style words (added later). Prefer scenes with NO written text; "
+        "if a sign/label is unavoidable keep it SHORT PLAIN ENGLISH only — never Thai script (the "
+        "image model garbles Thai letters)." + cat_rule + " Reply JSON only."
     )
     prompt = (
         f"เรื่องของคลิป: {subj}\nบทพากย์ (เรียงตามบรรทัด):\n" + _json.dumps(lines, ensure_ascii=False) + "\n\n"

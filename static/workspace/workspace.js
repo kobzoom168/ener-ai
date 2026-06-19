@@ -2419,6 +2419,7 @@ document.addEventListener('DOMContentLoaded', function() {
       const ip = document.getElementById('vdo-img-provider');
       if (ip && d.image_provider) ip.value = d.image_provider;
       { const an = document.getElementById('vdo-animate'); if (an) an.checked = !!d.animate_on; }
+      { const ct = document.getElementById('vdo-cat'); if (ct) ct.checked = !!d.cat_on; }
       const gst = document.getElementById('vdo-gemini-status');
       if (gst) gst.innerHTML = d.fal_ready
         ? '<span style="color:#22c55e">✅ Flux/fal พร้อม</span>'
@@ -2546,6 +2547,13 @@ document.addEventListener('DOMContentLoaded', function() {
     } catch (e) { showToast('❌ ' + ((e && e.message) || 'บันทึกไม่สำเร็จ')); }
   }
   window.setVdoAnimate = setVdoAnimate;
+  async function setVdoCat(on) {
+    try {
+      await api('/workspace/vdo/videocfg', { method: 'POST', body: JSON.stringify({ cat_mode: !!on }) });
+      showToast(on ? '🐱 เปิดเล่าเรื่องด้วยแมว — ทุกตัวละครเป็นแมว (มีผลคลิปถัดไป)' : '✅ ปิดโหมดแมว — ตัวละครปกติ');
+    } catch (e) { showToast('❌ ' + ((e && e.message) || 'บันทึกไม่สำเร็จ')); }
+  }
+  window.setVdoCat = setVdoCat;
   window.loadVdoCrew = loadVdoCrew;
   window.applyVdoRecommended = applyVdoRecommended;
   window.saveVdoCrew = saveVdoCrew;
