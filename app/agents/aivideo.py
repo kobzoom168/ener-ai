@@ -73,6 +73,49 @@ async def generate_image(prompt: str, out_path: str, model: str = "", seed: int 
         return None
 
 
+async def generate_image_redux(prompt: str, ref_path: str, out_path: str,
+                               strength: float = 0.0, seed: int | None = None) -> str | None:
+    """Reference-anchored 9:16 image via fal Flux 1.1 pro ultra Redux: generate the NEW scene from
+    `prompt` while carrying the STYLE/look of the anchor image at `ref_path` (so every frame is the
+    same 'Set'). `strength` = image_prompt_strength (how much the anchor pulls; 0 → read env). The
+    anchor goes in as a base64 data URI. Fail-open → None (caller falls back to plain text2img)."""
+    import base64
+    key = _key()
+    prompt = (prompt or "").strip()
+    if not key or not prompt or not ref_path or not os.path.exists(ref_path):
+        return None
+    if not strength:
+        try:
+            strength = float(os.environ.get("FAL_REDUX_STRENGTH", "0.22"))
+        except Exception:
+            strength = 0.22
+    mdl = (os.environ.get("FAL_REDUX_MODEL", "") or "fal-ai/flux-pro/v1.1-ultra/redux").strip()
+    headers = {"Authorization": f"Key {key}", "Content-Type": "application/json"}
+    try:
+        with open(ref_path, "rb") as f:
+            data_uri = "data:image/jpeg;base64," + base64.b64encode(f.read()).decode()
+        body = {"image_url": data_uri, "prompt": prompt, "num_images": 1,
+                "aspect_ratio": "9:16", "image_prompt_strength": max(0.0, min(1.0, strength))}
+        if seed is not None:
+            body["seed"] = int(seed)
+        async with httpx.AsyncClient(timeout=120) as c:
+            r = await c.post(f"https://fal.run/{mdl}", headers=headers, json=body)
+            if r.status_code >= 300:
+                return None
+            imgs = (r.json().get("images") or [])
+            url = (imgs[0].get("url") if imgs else "") or ""
+            if not url:
+                return None
+            dr = await c.get(url)
+            if dr.status_code >= 300 or not dr.content:
+                return None
+        with open(out_path, "wb") as fh:
+            fh.write(dr.content)
+        return out_path if os.path.exists(out_path) and os.path.getsize(out_path) > 2000 else None
+    except Exception:
+        return None
+
+
 async def generate_ai_video(prompt: str, out_path: str, model: str = "") -> str | None:
     """Generate a short hero clip from `prompt` via fal.ai's queue API. Fail-open.
     `model` overrides the configured fal model for this call."""

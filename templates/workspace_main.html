@@ -240,6 +240,11 @@
             <span style="font-size:13px;font-weight:600">🐱 เล่าเรื่องด้วยแมว (Cat Cast)</span>
             <span style="font-size:11px;color:#f0a6d0">เนื้อหาเดิม แต่ทุกตัวละครเป็นแมวน่ารักตัวเดียวกัน โทนเดียวกัน (ไวรัลง่าย)</span>
           </label>
+          <label style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;background:#06141a;border:1px solid #0e6b7c;border-radius:9px;padding:9px 12px;cursor:pointer">
+            <input type="checkbox" id="vdo-anchor" onchange="setVdoAnchor(this.checked)" style="width:16px;height:16px">
+            <span style="font-size:13px;font-weight:600">🎯 Reference Anchor (ล็อกสไตล์เป๊ะ)</span>
+            <span style="font-size:11px;color:#5fd0e0">สร้างภาพต้นแบบ 1 ภาพ → ทุกฉากอ้างอิงสไตล์/ตัวละครเดียวกันเป๊ะ (Flux Redux · +~฿7/คลิป)</span>
+          </label>
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;background:#161b26;border:1px solid var(--border);border-radius:9px;padding:9px 12px">
             <span style="font-size:13px;font-weight:600">🖼️ แหล่งภาพนิ่ง</span>
             <select id="vdo-img-provider" onchange="setVdoImgProvider(this.value)" style="background:#1f2430;border:1px solid var(--border);border-radius:7px;padding:6px 10px;color:var(--foreground);font-size:12px">
