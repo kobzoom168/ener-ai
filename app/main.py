@@ -7127,14 +7127,13 @@ async def workspace_vdo_list(request: Request):
 # `recommend` = the model we suggest for this agent (shown in the UI + the "use recommended" button).
 VDO_CREW = [
     {"key": "trend_scout",  "emoji": "🔥", "label": "Trend Scout",      "role": "หาหัวข้อที่กำลังน่าสนใจ (เมื่อไม่ระบุหัวข้อ)", "model_backed": True, "recommend": "perplexity/sonar",        "why": "ค้นเว็บ ราคาถูก พอสำหรับเลือกหัวข้อ"},
-    {"key": "researcher",   "emoji": "🔎", "label": "Researcher",       "role": "ค้นเว็บจริง + แหล่งอ้างอิง",        "model_backed": True, "recommend": "perplexity/sonar-pro",    "why": "ค้นลึก แหล่งเยอะ = ข้อมูลแน่น (จุดสำคัญ)"},
     {"key": "scriptwriter", "emoji": "✍️", "label": "Scriptwriter",     "role": "เขียนบทตามโครง retention + YT meta", "model_backed": True, "recommend": "google/gemini-3.5-flash", "why": "เขียนไทยดี+ถูก (เทพสุดใช้ claude sonnet)"},
     {"key": "fact_qc",      "emoji": "🧐", "label": "Fact-QC",          "role": "ตรวจข้อมูลตรงแหล่ง ตัดที่มั่ว",     "model_backed": True, "recommend": "google/gemini-3.5-flash", "why": "ตรวจแม่น ราคาถูก"},
     {"key": "retention_qc", "emoji": "🎯", "label": "Retention-QC",     "role": "ฮุค / ปมค้าง / จังหวะ",            "model_backed": True, "recommend": "google/gemini-3.5-flash", "why": "มีรสนิยมตัดสินฮุคดีกว่า minimax"},
     {"key": "compliance",   "emoji": "✅", "label": "Compliance",       "role": "กัน claim เสี่ยง (สายมู)",          "model_backed": True, "recommend": "minimax/minimax-m3",      "why": "แค่เช็คกฎ ตัวถูกพอ"},
     {"key": "originality",  "emoji": "🛡️", "label": "Originality Guard", "role": "เลี่ยงคลิปซ้ำ (logic ไม่ใช้โมเดล)", "model_backed": False, "recommend": "", "why": ""},
-    {"key": "director",     "emoji": "🎬", "label": "Director",         "role": "วางแผนช็อต ภาพนิ่ง/ฟุตเทจ/AI video", "model_backed": True, "recommend": "deepseek/deepseek-v4-flash", "why": "วางแผนเป็น logic ตัวกลางพอ"},
-    {"key": "analyst",      "emoji": "📊", "label": "Analyst",          "role": "เรียนจาก Analytics (เปิดใช้เฟส ②)", "model_backed": True, "recommend": "minimax/minimax-m3",      "why": "ยังไม่ทำงาน (รอเฟส ②)"},
+    {"key": "director",     "emoji": "🎨", "label": "Art Director",     "role": "วาดพรอมต์ภาพให้ตรงบท + คุมสไตล์เดียวกัน", "model_backed": True, "recommend": "deepseek/deepseek-v4-pro", "why": "เข้าใจฉาก วาดพรอมต์ภาพเก่ง"},
+    {"key": "analyst",      "emoji": "📊", "label": "Analyst",          "role": "เรียนจากวิวจริง ปรับสูตรให้ปังขึ้น", "model_backed": True, "recommend": "minimax/minimax-m3",      "why": "สรุปจากสถิติช่อง"},
 ]
 
 

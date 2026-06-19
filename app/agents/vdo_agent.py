@@ -1431,12 +1431,9 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
             source_url = art.get("source", "")
             await _vlog(f"📚 ดึงข้อมูลจาก Wikipedia: {art.get('title', subject)} · {int(time.time() - _t)} วิ")
         else:
-            await _vlog(f"🔎 Researcher ({await _agent_model('researcher')}): ค้นเว็บ — {subject} … (รอ ~5-20 วิ)")
-            research = await _research_topic(subject, profile)
-            if research:
-                await _vlog(f"📚 Researcher: ได้ข้อมูล · {int(time.time() - _t)} วิ")
-            else:
-                await _vlog(f"⚠️ Researcher: หาข้อมูลไม่ได้ — เขียนจากความรู้โมเดลแทน")
+            # No exact Wikipedia page → write from the model's own knowledge. (The web-search
+            # Researcher was removed: it was slow + flaky and drifted to off-topic sources.)
+            await _vlog("📝 ไม่มีหน้าวิกิตรงๆ — เขียนจากความรู้โมเดล (ไม่ลากข้อมูลผิด)")
     system = (
         f"{profile.persona} {profile.audience} "
         f"{_tone_guide(tone)} "
