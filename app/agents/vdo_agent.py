@@ -1312,6 +1312,35 @@ async def suggest_topics(profile: "ChannelProfile", n: int = 6) -> list[dict]:
     return out[:n]
 
 
+async def _art_prompts(lines: list[str], profile: "ChannelProfile") -> list[str]:
+    """🎨 Art Director: write ONE precise English image prompt PER FINAL line (after QC), in a
+    single cohesive style — so each picture literally depicts what that line says and the whole
+    clip looks like one set. Returns [] on failure (caller keeps the script's own prompts)."""
+    if not lines:
+        return []
+    style = (profile.visual_style or "cinematic, atmospheric, vivid")
+    system = (
+        "You are the ART DIRECTOR of a Thai vertical short. For EACH line of the narration you "
+        "write ONE vivid English image prompt that depicts EXACTLY and LITERALLY what that line "
+        "is about (the concrete subject/scene/action being mentioned), so the viewer sees what "
+        "they hear. Keep ONE consistent art style, palette and lighting across ALL lines so the "
+        "clip looks cohesive (like a single illustrated set). Absolutely NO text/words/letters in "
+        "the image. Reply JSON only."
+    )
+    prompt = (
+        "บทพากย์ (เรียงตามบรรทัด):\n" + _json.dumps(lines, ensure_ascii=False) + "\n\n"
+        f"สไตล์ภาพที่ใช้เหมือนกันทุกบรรทัด: {style}\n"
+        f'ตอบ JSON: {{"prompts": ["english image prompt for line 1", "...", ...]}} '
+        f'— ต้องมีพอดี {len(lines)} พรอมต์ เรียงตรงกับบรรทัด แต่ละพรอมต์บรรยาย \'สิ่งที่ควรเห็นให้ตรงกับ'
+        "เนื้อหาบรรทัดนั้นเป๊ะ\' เป็นรูปธรรม (คน/สิ่งของ/ฉาก/การกระทำที่พูดถึง) + คงสไตล์เดียวกัน"
+    )
+    try:
+        data = _parse_json(await _or_chat(await _agent_model("director"), system, prompt, 3500))
+    except Exception:
+        return []
+    return [str(p).strip()[:300] for p in (data.get("prompts") or []) if str(p).strip()][:len(lines)]
+
+
 async def _shot_plan(lines: list[str], profile: "ChannelProfile") -> list[dict]:
     """🎬 Director / Shot Planner: choose the best medium per beat — stock (real footage),
     still (AI image + Ken Burns), or aivideo (AI hero shot, used sparingly for hook/peak).
@@ -1526,7 +1555,16 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
     promo = (getattr(profile, "promo", "") or "").strip()
     if promo:  # fixed Ener Scan promo in the caption/description (never spoken)
         caption = (caption + "\n\n" + promo).strip()
+    # 🎨 Art Director: regenerate image prompts from the FINAL lines (after QC rewrote them),
+    # so each picture matches what's actually said + one cohesive style. Fall back to the
+    # script's own prompts if it fails.
     image_prompts = [str(x).strip()[:300] for x in (data.get("image_prompts") or []) if str(x).strip()][:9]
+    if lines:
+        await _vlog(f"🎨 Art Director ({await _agent_model('director')}): วาดพรอมต์ภาพให้ตรงบทสุดท้าย…")
+        art = await _art_prompts(lines, profile)
+        if len(art) >= max(1, (len(lines) + 1) // 2):
+            image_prompts = art
+            await _vlog(f"🎨 Art Director: ได้ภาพตรงเนื้อหา {len(art)} ฉาก")
     if not image_prompts:
         image_prompts = [out_title]
     video_queries = [str(x).strip()[:80] for x in (data.get("video_queries") or []) if str(x).strip()][:3]
@@ -1741,9 +1779,11 @@ async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: 
         while len(prompts) < n:
             prompts.append(imps[len(prompts) % len(imps)] if imps else script["title"])
         if hero_path:
-            # real Wikipedia photo = scene 1 (hero); AI fills the remaining lines
+            # real Wikipedia photo = scene 1 (line 1); AI images cover lines 2..n (so each
+            # picture stays aligned to its line — no off-by-one shift).
             await log_line(f"🖼️ รูปจริง 1 ฉาก (Wikipedia) + สร้างภาพ AI {n - 1} ฉาก…")
-            ai_imgs = await _gen_bg_images(prompts[:max(1, n - 1)])
+            rest = prompts[1:n] if len(prompts) >= n else prompts[:max(1, n - 1)]
+            ai_imgs = await _gen_bg_images(rest)
             items = [(hero_path, "image")] + [(p, "image") for p in ai_imgs]
             await log_line(f"✅ ได้ภาพ {len(items)} ฉาก (รวมรูปจริง)")
         else:
