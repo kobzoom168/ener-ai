@@ -2756,7 +2756,7 @@ document.addEventListener('DOMContentLoaded', function() {
       id: document.getElementById('ap-id').value || '',
       label: document.getElementById('ap-label').value || '',
       channel: (document.getElementById('ap-channel') || {}).value || 'mystery',
-      content_type: document.getElementById('ap-content').value || 'mystery',
+      content_type: (document.getElementById('ap-content') || {}).value || 'mystery',
       tone: document.getElementById('ap-tone').value || 'evidence',
       topic: document.getElementById('ap-topic').value || '',
       platforms: AP_PLATS.map(m => {
@@ -2773,7 +2773,7 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('ap-id').value = '';
     document.getElementById('ap-label').value = '';
     const chSel = document.getElementById('ap-channel'); if (chSel) chSel.value = 'mystery';
-    document.getElementById('ap-content').value = 'mystery';
+    { const _c = document.getElementById('ap-content'); if (_c) _c.value = 'mystery'; }
     document.getElementById('ap-tone').value = 'evidence';
     document.getElementById('ap-topic').value = '';
     document.getElementById('ap-enabled').checked = true;
@@ -2855,7 +2855,7 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('ap-id').value = j.id;
     document.getElementById('ap-label').value = j.label || '';
     const chSel2 = document.getElementById('ap-channel'); if (chSel2) chSel2.value = j.channel || 'mystery';
-    document.getElementById('ap-content').value = j.content_type || 'mystery';
+    { const _c = document.getElementById('ap-content'); if (_c) _c.value = j.content_type || 'mystery'; }
     document.getElementById('ap-tone').value = j.tone || 'evidence';
     document.getElementById('ap-topic').value = j.topic || '';
     document.getElementById('ap-enabled').checked = j.enabled !== false;
