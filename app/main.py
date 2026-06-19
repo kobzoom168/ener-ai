@@ -378,9 +378,11 @@ async def _validate_admin_basic_auth(request: Request) -> None:
     except Exception:
         raise _admin_unauthorized()
     current_password = await _get_admin_password()
+    # compare on BYTES — secrets.compare_digest raises TypeError on non-ASCII str input
+    # (a wrong password with a Thai/special char would 500 instead of just failing auth).
     if not (
-        secrets.compare_digest(username, "admin")
-        and secrets.compare_digest(password, current_password)
+        secrets.compare_digest(username.encode("utf-8"), b"admin")
+        and secrets.compare_digest(password.encode("utf-8"), current_password.encode("utf-8"))
     ):
         raise _admin_unauthorized()
 
