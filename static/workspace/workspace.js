@@ -2420,7 +2420,6 @@ document.addEventListener('DOMContentLoaded', function() {
       if (ip && d.image_provider) ip.value = d.image_provider;
       { const an = document.getElementById('vdo-animate'); if (an) an.checked = !!d.animate_on; }
       { const ct = document.getElementById('vdo-cat'); if (ct) ct.checked = !!d.cat_on; }
-      { const ax = document.getElementById('vdo-anchor'); if (ax) ax.checked = !!d.anchor_on; }
       const gst = document.getElementById('vdo-gemini-status');
       if (gst) gst.innerHTML = d.fal_ready
         ? '<span style="color:#22c55e">✅ Flux/fal พร้อม</span>'
@@ -2555,13 +2554,6 @@ document.addEventListener('DOMContentLoaded', function() {
     } catch (e) { showToast('❌ ' + ((e && e.message) || 'บันทึกไม่สำเร็จ')); }
   }
   window.setVdoCat = setVdoCat;
-  async function setVdoAnchor(on) {
-    try {
-      await api('/workspace/vdo/videocfg', { method: 'POST', body: JSON.stringify({ anchor: !!on }) });
-      showToast(on ? '🎯 เปิด Reference Anchor — ล็อกสไตล์ทุกฉากจากภาพต้นแบบ (มีผลคลิปถัดไป)' : '✅ ปิด Anchor — แต่ละฉากสร้างอิสระ');
-    } catch (e) { showToast('❌ ' + ((e && e.message) || 'บันทึกไม่สำเร็จ')); }
-  }
-  window.setVdoAnchor = setVdoAnchor;
   window.loadVdoCrew = loadVdoCrew;
   window.applyVdoRecommended = applyVdoRecommended;
   window.saveVdoCrew = saveVdoCrew;

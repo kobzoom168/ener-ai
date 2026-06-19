@@ -617,42 +617,6 @@ async def _gen_bg_images(prompts: list[str], seed: int | None = None) -> list[st
     return [p for p in results if p]
 
 
-async def _anchor_on() -> bool:
-    """🎯 Reference Anchor: build ONE anchor image, then style-lock every other scene to it via
-    fal Redux. Only meaningful with the fal provider + a key. Off by default → normal pipeline."""
-    try:
-        from app.core.database import get_config
-        if (await get_config("vdo_anchor", "")).strip().lower() not in ("1", "true", "on", "yes"):
-            return False
-        from app.agents import aivideo
-        if not aivideo._key():
-            return False
-        return (await get_config("vdo_image_provider", "")).strip() in ("", "fal_flux")
-    except Exception:
-        return False
-
-
-async def _gen_bg_images_anchored(prompts: list[str], seed: int | None = None) -> list[str]:
-    """Cohesive set via a style anchor: scene 1 is generated normally (the anchor), then every
-    other scene is generated with fal Redux referencing that anchor — so the whole clip shares one
-    look/character ('Set เดียวกัน'). Fail-open per image: any Redux miss falls back to text2img."""
-    prompts = [p for p in (prompts or []) if str(p).strip()][:9]
-    if not prompts:
-        return []
-    from app.agents import aivideo
-    anchor = await _gen_bg_image(prompts[0], 0, seed)
-    if not anchor:  # anchor failed → just do the normal independent batch
-        return await _gen_bg_images(prompts, seed)
-
-    async def _scene(i: int, p: str) -> str | None:
-        out = os.path.join(VDO_DIR, f"bg_{int(time.time() * 1000)}_{i}.png")
-        r = await aivideo.generate_image_redux(_img_style(p), anchor, out, seed=seed)
-        return r or await _gen_bg_image(p, i, seed)  # fall back to plain text2img
-
-    rest = await asyncio.gather(*[_scene(i, p) for i, p in enumerate(prompts[1:], start=1)])
-    return [x for x in ([anchor] + list(rest)) if x]
-
-
 async def _pexels_pick(query: str, key: str) -> dict | None:
     """Search Pexels for `query` and return a RANDOM good portrait mp4 (not always the same
     top result) so clips on similar topics don't reuse identical footage. Picks a random page
@@ -1819,13 +1783,8 @@ async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: 
         while len(prompts) < n:
             prompts.append(imps[len(prompts) % len(imps)] if imps else script["title"])
         # ALL frames AI-generated, ONE shared seed → cohesive same-Set look, each matches its line.
-        # 🎯 Anchor mode (opt-in): build scene-1 as a style anchor, style-lock the rest to it (Redux).
-        if await _anchor_on():
-            await log_line(f"🎯 สร้างภาพ AI {n} ฉาก — Reference Anchor (ล็อกสไตล์/ตัวละครจากภาพต้นแบบ)…")
-            imgs = await _gen_bg_images_anchored(prompts[:n], seed=clip_seed)
-        else:
-            await log_line(f"🎨 สร้างภาพ AI {n} ฉาก (สไตล์เดียวกันทั้งคลิป · seed คงที่)…")
-            imgs = await _gen_bg_images(prompts[:n], seed=clip_seed)
+        await log_line(f"🎨 สร้างภาพ AI {n} ฉาก (สไตล์เดียวกันทั้งคลิป · seed คงที่)…")
+        imgs = await _gen_bg_images(prompts[:n], seed=clip_seed)
         await log_line(f"✅ ได้ภาพ {len(imgs)}/{n} ฉาก")
         items = [(p, "image") for p in imgs]
     else:
