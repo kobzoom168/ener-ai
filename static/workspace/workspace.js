@@ -2400,9 +2400,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (!box) return;
     try {
       const d = await api('/workspace/vdo/agents');
-      const bgSel = document.getElementById('vdo-bgmode');
-      if (bgSel && d.bg_mode) bgSel.value = d.bg_mode;
-      applyBgModeUI((bgSel && bgSel.value) || d.bg_mode || 'image');
+      applyBgModeUI('image');  // visuals are AI-decided (always AI images) — no manual mode
       // AI-video (fal) controls
       const fstat = document.getElementById('vdo-fal-status');
       if (fstat) fstat.innerHTML = d.fal_enabled

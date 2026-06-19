@@ -1766,16 +1766,12 @@ async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: 
     await set_status("media", title=script.get("title", ""))
     imps = script.get("image_prompts") or [script["title"]]
     vqs = script.get("video_queries") or []
-    # image (free, all AI stills) | mixed (real stock video + AI hero + stills) | video (real footage first)
-    # UI config (vdo_bg_mode) wins over the deploy default env.
-    try:
-        from app.core.database import get_config
-        bg_mode = (await get_config("vdo_bg_mode", "")).strip()
-    except Exception:
-        bg_mode = ""
-    bg_mode = bg_mode or os.environ.get("VDO_BG_MODE", "image")
-    await log_line({"image": "🎨 โหมดภาพ: ภาพนิ่ง AI", "mixed": "🎬 โหมดภาพ: ผสมวิดีโอจริง+ภาพ",
-                    "video": "🎬 โหมดภาพ: เน้นฟุตเทจวิดีโอจริง"}.get(bg_mode, "🎨 โหมดภาพ: " + bg_mode))
+    # Visuals are AI-decided per topic. For these Thai-specific channels (พระ/หิน/วัด) foreign
+    # stock footage is almost always irrelevant (the infamous random-cat clip), so we always use
+    # accurate AI images (Art Director, 1 per line) + the real Wikipedia hero + Ken Burns motion.
+    # No manual mode selector — the system just makes the right thing.
+    bg_mode = "image"
+    await log_line("🎨 ภาพ: AI ตรงเนื้อหา (เลือกอัตโนมัติตามหัวข้อ)")
 
     if bg_mode == "image":
         # one AI image PER LINE (prompts are 1:1 with lines & content-specific) → many scenes
