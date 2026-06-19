@@ -7349,11 +7349,12 @@ async def workspace_vdo_agents(request: Request):
     image_provider = (await get_config("vdo_image_provider", "")).strip() or "fal_flux"
     gemini_ready = bool(_ov.environ.get("GEMINI_API_KEY", "").strip())
     fal_ready = bool(_ov.environ.get("FAL_KEY", "").strip())
+    animate_on = (await get_config("vdo_animate", "")).strip().lower() in ("1", "true", "on", "yes")
     return JSONResponse({"agents": agents, "models": opts, "bg_mode": bg_mode,
                          "fal_enabled": fal_enabled, "fal_models": fal_models,
                          "fal_model": fal_model, "ai_video_count": ai_video_count,
                          "image_provider": image_provider, "gemini_ready": gemini_ready,
-                         "fal_ready": fal_ready})
+                         "fal_ready": fal_ready, "animate_on": animate_on})
 
 
 @app.post("/workspace/vdo/videocfg")
@@ -7375,6 +7376,8 @@ async def workspace_vdo_videocfg(request: Request):
         p = str(body.get("image_provider", "")).strip().lower()
         if p in ("openrouter", "gemini", "fal_flux"):
             await set_config("vdo_image_provider", p)
+    if "animate" in body:  # AI moving images (Kling i2v) — separate add-on, off by default
+        await set_config("vdo_animate", "on" if bool(body.get("animate")) else "")
     return JSONResponse({"ok": True})
 
 

@@ -1854,6 +1854,19 @@ async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: 
         except Exception:
             thumb_path = ""
 
+    # 🎬 OPTIONAL add-on (separate module, gated by vdo_animate): turn the accurate stills into
+    # moving clips via Kling i2v. Off by default → still pipeline unchanged. Fail-open per item.
+    try:
+        from app.agents import animate
+        if await animate.is_on():
+            await set_status("media", title=script.get("title", ""))
+            await log_line(f"🎬 ทำภาพเคลื่อนไหว (Kling i2v) {len(items)} ฉาก… อาจรอ 1-3 นาที")
+            items = await animate.animate_items(items, VDO_DIR)
+            nv = sum(1 for _p, k in items if k == "video")
+            await log_line(f"✅ ภาพเคลื่อนไหว {nv}/{len(items)} ฉาก (ที่เหลือใช้ภาพนิ่ง)")
+    except Exception:
+        pass
+
     await set_status("render", title=script.get("title", ""))
     await log_line("🎙️ พากย์ (เสียงคุณ V3)" + (" + 🗣️ หน้าพูด D-ID" if face_pip else "") + " + 🎬 ตัดต่อ…")
     r = await _render_clip(script["title"], script["lines"], bg_items=items, face_pip=face_pip,

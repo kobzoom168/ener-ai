@@ -230,6 +230,11 @@
             <span style="font-size:13px;font-weight:600">🎨 ภาพ: AI เลือกอัตโนมัติตามหัวข้อ</span>
             <span style="font-size:11px;color:var(--muted-foreground)">ระบบใช้ภาพ AI ที่ตรงเนื้อหา + รูปจริงจาก Wikipedia + ซูมนุ่ม (ไม่ต้องเลือกเอง)</span>
           </div>
+          <label style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;background:#1a1206;border:1px solid #92400e;border-radius:9px;padding:9px 12px;cursor:pointer">
+            <input type="checkbox" id="vdo-animate" onchange="setVdoAnimate(this.checked)" style="width:16px;height:16px">
+            <span style="font-size:13px;font-weight:600">🎬 AI ภาพเคลื่อนไหว (Kling)</span>
+            <span style="font-size:11px;color:#fbbf24">เปลี่ยนภาพนิ่งให้ขยับ — สวยสุด แต่แพง <b>~฿40-60/คลิป</b> (ปิด=ภาพนิ่งปกติ)</span>
+          </label>
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;background:#161b26;border:1px solid var(--border);border-radius:9px;padding:9px 12px">
             <span style="font-size:13px;font-weight:600">🖼️ แหล่งภาพนิ่ง</span>
             <select id="vdo-img-provider" onchange="setVdoImgProvider(this.value)" style="background:#1f2430;border:1px solid var(--border);border-radius:7px;padding:6px 10px;color:var(--foreground);font-size:12px">

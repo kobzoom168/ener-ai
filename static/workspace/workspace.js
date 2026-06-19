@@ -2418,6 +2418,7 @@ document.addEventListener('DOMContentLoaded', function() {
       if (acount && d.ai_video_count) acount.value = d.ai_video_count;
       const ip = document.getElementById('vdo-img-provider');
       if (ip && d.image_provider) ip.value = d.image_provider;
+      { const an = document.getElementById('vdo-animate'); if (an) an.checked = !!d.animate_on; }
       const gst = document.getElementById('vdo-gemini-status');
       if (gst) gst.innerHTML = d.fal_ready
         ? '<span style="color:#22c55e">✅ Flux/fal พร้อม</span>'
@@ -2538,6 +2539,13 @@ document.addEventListener('DOMContentLoaded', function() {
       showToast(msg[p] || '✅ บันทึกแล้ว');
     } catch (e) { showToast('❌ ' + ((e && e.message) || 'บันทึกไม่สำเร็จ')); }
   }
+  async function setVdoAnimate(on) {
+    try {
+      await api('/workspace/vdo/videocfg', { method: 'POST', body: JSON.stringify({ animate: !!on }) });
+      showToast(on ? '🎬 เปิด AI ภาพเคลื่อนไหว (Kling ~฿40-60/คลิป) — มีผลคลิปถัดไป' : '✅ ปิดภาพเคลื่อนไหว — ใช้ภาพนิ่งปกติ');
+    } catch (e) { showToast('❌ ' + ((e && e.message) || 'บันทึกไม่สำเร็จ')); }
+  }
+  window.setVdoAnimate = setVdoAnimate;
   window.loadVdoCrew = loadVdoCrew;
   window.applyVdoRecommended = applyVdoRecommended;
   window.saveVdoCrew = saveVdoCrew;
