@@ -3013,11 +3013,13 @@ document.addEventListener('DOMContentLoaded', function() {
       const id = escapeHtml(j.id);
       const last = (j._state && j._state.gen_date) ? j._state.gen_date : '';
       return '<div class="surface" style="border:1px solid var(--border);border-radius:10px;padding:12px;display:flex;justify-content:space-between;align-items:center;gap:12px;' + (onoff ? '' : 'opacity:.5') + '">' +
-        '<div style="font-size:13px;line-height:1.6">' +
-          '<div style="font-weight:600">' + (onoff ? '🟢' : '⚪') + ' ' + escapeHtml(j.label || '(ไม่มีชื่อ)') + '</div>' +
-          '<div style="color:var(--muted-foreground)">' + chan + ' · ' + tone + ' · ' + topic + '</div>' +
-          '<div style="color:var(--muted-foreground)">📅 ' + days + ' · ' + plats + '</div>' +
-          (last ? '<div style="color:var(--muted-foreground);font-size:12px">สร้างล่าสุด: ' + escapeHtml(last) + '</div>' : '') +
+        '<div style="font-size:13px;line-height:1.7">' +
+          '<div style="font-weight:600;margin-bottom:2px">' + (onoff ? '🟢' : '⚪ (ปิดอยู่)') + ' ' + escapeHtml(j.label || '(ไม่มีชื่อ)') + '</div>' +
+          '<div style="color:var(--muted-foreground)"><b>ประเภท:</b> ' + chan + '　<b>โทน:</b> ' + tone + '</div>' +
+          '<div style="color:var(--muted-foreground)"><b>หัวข้อ:</b> ' + topic + '</div>' +
+          '<div style="color:var(--muted-foreground)"><b>วันโพสต์:</b> ' + days + '</div>' +
+          '<div style="color:var(--muted-foreground)"><b>เวลา/ช่อง:</b> ' + plats + '</div>' +
+          (last ? '<div style="color:var(--muted-foreground);font-size:12px">🕒 สร้างล่าสุด: ' + escapeHtml(last) + '</div>' : '') +
         '</div>' +
         '<div style="display:flex;gap:6px;flex-shrink:0">' +
           '<button class="panel-action" onclick="runAutopostId(\'' + id + '\')" title="สร้าง+โพสต์เดี๋ยวนี้">▶</button>' +
