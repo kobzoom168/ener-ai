@@ -73,6 +73,73 @@ async def generate_image(prompt: str, out_path: str, model: str = "", seed: int 
         return None
 
 
+async def generate_image_edit(prompt: str, ref_paths: list[str], out_path: str,
+                              seed: int | None = None) -> str | None:
+    """Character-consistent 9:16 image via fal Nano Banana 2 edit: generate a NEW scene from
+    `prompt` while keeping the SAME character/subject shown in the reference image(s). Unlike
+    Redux this is a SEMANTIC edit (it re-poses the character into a new scene instead of cloning
+    the whole frame). `ref_paths` = local anchor images sent as base64 data URIs. Queue API.
+    Fail-open → None (caller falls back to plain text2img)."""
+    import asyncio
+    import base64
+    key = _key()
+    prompt = (prompt or "").strip()
+    refs = [p for p in (ref_paths or []) if p and os.path.exists(p)]
+    if not key or not prompt or not refs:
+        return None
+    mdl = (os.environ.get("FAL_EDIT_MODEL", "") or "fal-ai/nano-banana-2/edit").strip()
+    headers = {"Authorization": f"Key {key}", "Content-Type": "application/json"}
+    try:
+        urls = []
+        for p in refs[:6]:
+            with open(p, "rb") as f:
+                urls.append("data:image/jpeg;base64," + base64.b64encode(f.read()).decode())
+        body = {"prompt": prompt, "image_urls": urls, "num_images": 1,
+                "aspect_ratio": "9:16", "resolution": "1K", "output_format": "jpeg"}
+        if seed is not None:
+            body["seed"] = int(seed)
+        async with httpx.AsyncClient(timeout=180) as c:
+            sub = await c.post(f"https://queue.fal.run/{mdl}", headers=headers, json=body)
+            if sub.status_code >= 300:
+                return None
+            sj = sub.json()
+            status_url = sj.get("status_url")
+            response_url = sj.get("response_url")
+            if not status_url or not response_url:
+                return None
+            result = None
+            for _ in range(60):  # ~180s max
+                await asyncio.sleep(3)
+                st = await c.get(status_url, headers=headers)
+                if st.status_code >= 300:
+                    continue
+                try:
+                    status = st.json().get("status")
+                except Exception:
+                    continue
+                if status == "COMPLETED":
+                    rr = await c.get(response_url, headers=headers)
+                    if rr.status_code < 300:
+                        result = rr.json()
+                    break
+                if status in ("FAILED", "ERROR"):
+                    return None
+            if not result:
+                return None
+            imgs = (result.get("images") or [])
+            url = (imgs[0].get("url") if imgs else "") or ""
+            if not url:
+                return None
+            dr = await c.get(url)
+            if dr.status_code >= 300 or not dr.content:
+                return None
+        with open(out_path, "wb") as fh:
+            fh.write(dr.content)
+        return out_path if os.path.exists(out_path) and os.path.getsize(out_path) > 2000 else None
+    except Exception:
+        return None
+
+
 async def generate_ai_video(prompt: str, out_path: str, model: str = "") -> str | None:
     """Generate a short hero clip from `prompt` via fal.ai's queue API. Fail-open.
     `model` overrides the configured fal model for this call."""

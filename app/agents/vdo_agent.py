@@ -617,6 +617,52 @@ async def _gen_bg_images(prompts: list[str], seed: int | None = None) -> list[st
     return [p for p in results if p]
 
 
+# The recurring Cat-Cast mascot — one canonical design so every clip stars the SAME cat.
+_CAT_MASCOT = ("a cute chubby anthropomorphic orange-and-white tabby cat character with big round "
+               "expressive eyes and a friendly face, standing upright like a person, full body, "
+               "plain soft neutral background")
+
+
+async def _gen_bg_images_catlock(prompts: list[str], seed: int | None = None) -> list[str]:
+    """🐱 Same-cat-every-scene: make ONE clean mascot anchor, then render each scene with fal Nano
+    Banana 2 edit (a SEMANTIC edit that keeps the cat's identity but builds a brand-new scene from
+    the prompt — unlike Redux which clones the whole frame). Fail-open per scene → plain text2img."""
+    prompts = [p for p in (prompts or []) if str(p).strip()][:9]
+    if not prompts:
+        return []
+    from app.agents import aivideo
+    anchor = await _gen_bg_image(_CAT_MASCOT, 0, seed)  # the canonical cat portrait
+    if not anchor:
+        return await _gen_bg_images(prompts, seed)
+
+    async def _scene(i: int, p: str) -> str | None:
+        out = os.path.join(VDO_DIR, f"bg_{int(time.time() * 1000)}_{i}.png")
+        edit_prompt = (
+            "Keep the EXACT same cat character from the reference image — identical face, fur "
+            "colors, markings, ears and body proportions. Put that same cat into a NEW scene: "
+            f"{p}. Cute cartoon, cinematic, vertical 9:16. Do NOT copy the reference background "
+            "or composition; build the new scene fresh. No text.")
+        r = await aivideo.generate_image_edit(edit_prompt, [anchor], out, seed=seed)
+        return r or await _gen_bg_image(p, i, seed)
+
+    res = await asyncio.gather(*[_scene(i, p) for i, p in enumerate(prompts)])
+    return [x for x in res if x]
+
+
+async def _catlock_on() -> bool:
+    """Cat-lock runs when Cat Cast is on AND fal is available (it needs Nano Banana edits)."""
+    try:
+        from app.core.database import get_config
+        if (await get_config("vdo_cat_mode", "")).strip().lower() not in ("1", "true", "on", "yes"):
+            return False
+        from app.agents import aivideo
+        if not aivideo._key():
+            return False
+        return (await get_config("vdo_image_provider", "")).strip() in ("", "fal_flux")
+    except Exception:
+        return False
+
+
 async def _pexels_pick(query: str, key: str) -> dict | None:
     """Search Pexels for `query` and return a RANDOM good portrait mp4 (not always the same
     top result) so clips on similar topics don't reuse identical footage. Picks a random page
@@ -1795,8 +1841,13 @@ async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: 
         while len(prompts) < n:
             prompts.append(imps[len(prompts) % len(imps)] if imps else script["title"])
         # ALL frames AI-generated, ONE shared seed → cohesive same-Set look, each matches its line.
-        await log_line(f"🎨 สร้างภาพ AI {n} ฉาก (สไตล์เดียวกันทั้งคลิป · seed คงที่)…")
-        imgs = await _gen_bg_images(prompts[:n], seed=clip_seed)
+        # 🐱 Cat-lock: when Cat Cast is on, anchor one mascot cat and keep it identical every scene.
+        if await _catlock_on():
+            await log_line(f"🐱 สร้างภาพ AI {n} ฉาก — ล็อกแมวตัวเดิมทุกฉาก (Nano Banana)…")
+            imgs = await _gen_bg_images_catlock(prompts[:n], seed=clip_seed)
+        else:
+            await log_line(f"🎨 สร้างภาพ AI {n} ฉาก (สไตล์เดียวกันทั้งคลิป · seed คงที่)…")
+            imgs = await _gen_bg_images(prompts[:n], seed=clip_seed)
         await log_line(f"✅ ได้ภาพ {len(imgs)}/{n} ฉาก")
         items = [(p, "image") for p in imgs]
     else:
