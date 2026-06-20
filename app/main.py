@@ -7004,6 +7004,9 @@ def _autopost_job_from_body(body: dict) -> dict:
         "topic": str(body.get("topic") or "").strip()[:200],
         "days": [int(d) for d in (body.get("days") or [])
                  if str(d).isdigit() and 0 <= int(d) <= 6] or [0, 1, 2, 3, 4, 5, 6],
+        # 🔮 optional lottery-day lock — when set (e.g. [1,16]) it overrides the weekday filter
+        "month_days": [int(d) for d in (body.get("month_days") or [])
+                       if str(d).isdigit() and 1 <= int(d) <= 31],
         "enabled": bool(body.get("enabled", True)),
         "platforms": platforms,
     }

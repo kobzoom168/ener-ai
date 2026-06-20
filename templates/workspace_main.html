@@ -358,6 +358,12 @@
             <div id="ap-days" style="display:flex;gap:6px;flex-wrap:wrap"></div>
           </div>
 
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-top:14px;background:#1a0f1a;border:1px solid #6d2f7c;border-radius:9px;padding:9px 12px;cursor:pointer">
+            <input id="ap-lotto" type="checkbox" onchange="document.getElementById('ap-days').style.opacity=this.checked?0.4:1">
+            <span style="font-weight:600">🔮 ล็อกวันหวย (1 & 16 ของเดือน)</span>
+            <span style="font-size:11px;color:#d6a6e0">โพสต์เฉพาะวันที่ 1 และ 16 (เหมาะกับโหมดไพ่เลขมงคล — ทับการเลือกวันด้านบน)</span>
+          </label>
+
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-top:14px">
             <input id="ap-enabled" type="checkbox" checked> เปิดใช้งานตารางนี้
           </label>

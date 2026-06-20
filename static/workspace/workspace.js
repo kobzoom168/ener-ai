@@ -2789,6 +2789,7 @@ document.addEventListener('DOMContentLoaded', function() {
         return { name: m.name, enabled: cb ? cb.checked : false, time: tm ? tm.value : m.def };
       }),
       days: Array.from(document.querySelectorAll('.ap-day:checked')).map(x => parseInt(x.value, 10)),
+      month_days: (document.getElementById('ap-lotto') && document.getElementById('ap-lotto').checked) ? [1, 16] : [],
       enabled: document.getElementById('ap-enabled').checked,
     };
   }
@@ -2798,8 +2799,9 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('ap-label').value = '';
     const chSel = document.getElementById('ap-channel'); if (chSel) chSel.value = 'mystery';
     { const _c = document.getElementById('ap-content'); if (_c) _c.value = 'mystery'; }
-    document.getElementById('ap-tone').value = 'evidence';
+    document.getElementById('ap-tone').value = 'lucky';
     document.getElementById('ap-topic').value = '';
+    { const lt = document.getElementById('ap-lotto'); if (lt) { lt.checked = false; } document.getElementById('ap-days').style.opacity = 1; }
     document.getElementById('ap-enabled').checked = true;
     document.getElementById('autopost-form-title').textContent = '➕ ตั้งตารางโพสต์ใหม่';
     renderApPlatforms();
@@ -2880,8 +2882,10 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('ap-label').value = j.label || '';
     const chSel2 = document.getElementById('ap-channel'); if (chSel2) chSel2.value = j.channel || 'mystery';
     { const _c = document.getElementById('ap-content'); if (_c) _c.value = j.content_type || 'mystery'; }
-    document.getElementById('ap-tone').value = j.tone || 'evidence';
+    document.getElementById('ap-tone').value = j.tone || 'lucky';
     document.getElementById('ap-topic').value = j.topic || '';
+    { const lt = document.getElementById('ap-lotto'); const on = Array.isArray(j.month_days) && j.month_days.length > 0;
+      if (lt) lt.checked = on; document.getElementById('ap-days').style.opacity = on ? 0.4 : 1; }
     document.getElementById('ap-enabled').checked = j.enabled !== false;
     document.getElementById('autopost-form-title').textContent = '✏️ แก้ไข: ' + (j.label || '');
     renderApPlatforms(j.platforms || []);

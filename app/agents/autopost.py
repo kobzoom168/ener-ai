@@ -252,9 +252,16 @@ async def run_due() -> None:
     for job in schedules:
         if not job.get("enabled"):
             continue
-        days = job.get("days")
-        if isinstance(days, list) and days and weekday not in days:
-            continue
+        # 🔮 Lottery-day lock: if month_days is set (e.g. [1, 16]) the job only fires on those
+        # days of the month — takes priority over the weekday filter (for the Tarot lucky-numbers).
+        month_days = job.get("month_days")
+        if isinstance(month_days, list) and month_days:
+            if now.day not in month_days:
+                continue
+        else:
+            days = job.get("days")
+            if isinstance(days, list) and days and weekday not in days:
+                continue
         st = job.setdefault("_state", {})
         last_run = st.setdefault("last_run", {})
         due = [p for p in (job.get("platforms") or [])
