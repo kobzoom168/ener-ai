@@ -6988,12 +6988,12 @@ def _autopost_job_from_body(body: dict) -> dict:
         platforms.append({"name": name, "time": t, "enabled": bool(pin.get("enabled"))})
     if not any(p["enabled"] for p in platforms):  # default FB on
         platforms[0]["enabled"] = True
-    tone = str(body.get("tone") or "evidence")
-    if tone not in ("evidence", "cheeky", "twist", "academic", "creepy"):
-        tone = "evidence"
+    tone = str(body.get("tone") or "duan")
+    if tone not in ("random", "duan", "chill", "serious", "raw"):
+        tone = "duan"
     from app.agents.channels import PROFILES
     channel = str(body.get("channel") or "amulet")
-    if channel not in PROFILES:
+    if channel != "random" and channel not in PROFILES:
         channel = "amulet"
     return {
         "id": str(body.get("id") or "").strip() or f"ap_{int(_t.time())}",

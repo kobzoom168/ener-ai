@@ -97,10 +97,17 @@ async def _append_log(entry: dict) -> None:
 async def _render_for(job: dict) -> dict:
     topic = (job.get("topic") or "").strip()
     ctype = job.get("content_type") or "mystery"
-    tone = job.get("tone") or "evidence"
-    channel = job.get("channel") or "mystery"  # which Channel Profile to use
+    tone = job.get("tone") or "duan"
+    channel = job.get("channel") or "amulet"  # which Channel Profile to use
     from app.agents.vdo_agent import make_channel_short, make_news_short
-    from app.agents.channels import get_profile
+    from app.agents.channels import get_profile, PROFILES
+    # 🔮 Lottery days (1st/16th) are LOCKED to the Tarot lucky-numbers channel — auto, no config.
+    if datetime.now(_BANGKOK).day in (1, 16):
+        channel = "tarot"
+        topic = ""  # let the Tarot channel pick a fresh card-reading angle
+    elif channel == "random":  # 🎲 random สายมู channel (not Tarot — that's lottery-day only)
+        import random as _r
+        channel = _r.choice([c for c in ("amulet", "stone", "sacred") if c in PROFILES])
     if ctype == "news":
         if topic:
             return await make_news_short(topic, "")

@@ -317,25 +317,37 @@
           <div style="font-weight:600;margin-bottom:14px" id="autopost-form-title">➕ ตั้งตารางโพสต์ใหม่</div>
           <input type="hidden" id="ap-id" value="">
 
-          <div style="font-size:12px;color:var(--muted-foreground);margin-bottom:4px">① ประเภทเนื้อหา</div>
-          <label style="display:flex;flex-direction:column;gap:4px;font-size:13px;margin-bottom:12px">📺 ช่อง (แนวคอนเทนต์)
-            <select id="ap-channel" style="background:#1f2430;border:1px solid var(--border);border-radius:8px;padding:8px;color:var(--foreground)"></select>
-          </label>
-          <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">ชื่อเรียก
-            <input id="ap-label" type="text" placeholder="เช่น คลิปพระเครื่องรายวัน" style="background:#1f2430;border:1px solid var(--border);border-radius:8px;padding:8px;color:var(--foreground)">
-          </label>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
-            <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">🎭 โทนการเล่า
-              <select id="ap-tone" style="background:#1f2430;border:1px solid var(--border);border-radius:8px;padding:8px;color:var(--foreground)">
-                <option value="lucky">🍀 โชคลาภ เปิดทรัพย์</option>
-                <option value="blessing">🙏 ขอพรสมหวัง</option>
-                <option value="lifeup">✨ ชีวิตพลิก เสริมดวง</option>
-                <option value="love">💗 เมตตา เสน่ห์</option>
-                <option value="creepy">👻 มูสยอง ขนลุก</option>
-              </select>
+          <style>
+            .ap-chip{padding:8px 14px;border:1px solid var(--border);border-radius:20px;background:#1f2430;color:var(--foreground);font-size:13px;cursor:pointer;transition:all .12s}
+            .ap-chip:hover{border-color:#7c3aed}
+          </style>
+
+          <div style="font-size:12px;color:var(--muted-foreground);margin-bottom:6px">① ประเภทเนื้อหา</div>
+          <input type="hidden" id="ap-channel" value="random">
+          <div class="ap-chips" data-group="channel" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+            <button type="button" class="ap-chip" data-val="random" onclick="apChip('channel','random',this)">🎲 สุ่ม</button>
+            <button type="button" class="ap-chip" data-val="amulet" onclick="apChip('channel','amulet',this)">🪬 พระเครื่อง</button>
+            <button type="button" class="ap-chip" data-val="stone" onclick="apChip('channel','stone',this)">💎 หินมงคล</button>
+            <button type="button" class="ap-chip" data-val="sacred" onclick="apChip('channel','sacred',this)">🛕 สถานที่มู</button>
+          </div>
+          <div style="font-size:11px;color:#d6a6e0;margin-bottom:14px">🔮 วันที่ 1 &amp; 16 ของเดือน ระบบโพสต์ "ไพ่ยิปซีเลขมงคล" ให้อัตโนมัติ (ล็อกไว้)</div>
+
+          <div style="font-size:12px;color:var(--muted-foreground);margin-bottom:6px">🎭 โทนการเล่า (สไตล์การพูด)</div>
+          <input type="hidden" id="ap-tone" value="duan">
+          <div class="ap-chips" data-group="tone" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+            <button type="button" class="ap-chip" data-val="random" onclick="apChip('tone','random',this)">🎲 สุ่ม</button>
+            <button type="button" class="ap-chip" data-val="duan" onclick="apChip('tone','duan',this)">🔥 ดุดัน</button>
+            <button type="button" class="ap-chip" data-val="chill" onclick="apChip('tone','chill',this)">😎 สบาย</button>
+            <button type="button" class="ap-chip" data-val="serious" onclick="apChip('tone','serious',this)">🎯 จริงจัง</button>
+            <button type="button" class="ap-chip" data-val="raw" onclick="apChip('tone','raw',this)">💢 คำแรง</button>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">ชื่อเรียก
+              <input id="ap-label" type="text" placeholder="เช่น คลิปสายมูรายวัน" style="background:#1f2430;border:1px solid var(--border);border-radius:8px;padding:8px;color:var(--foreground)">
             </label>
             <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">หัวข้อ (เว้นว่าง=สุ่ม)
-              <input id="ap-topic" type="text" placeholder="เช่น บั้งไฟพญานาค ..." style="background:#1f2430;border:1px solid var(--border);border-radius:8px;padding:8px;color:var(--foreground)">
+              <input id="ap-topic" type="text" placeholder="เว้นว่างให้ AI คิดเอง" style="background:#1f2430;border:1px solid var(--border);border-radius:8px;padding:8px;color:var(--foreground)">
             </label>
           </div>
 

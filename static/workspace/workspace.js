@@ -2573,15 +2573,28 @@ document.addEventListener('DOMContentLoaded', function() {
   window.useTrendTopic = useTrendTopic;
   window.loadAnalytics = loadAnalytics;
 
-  function renderApChannels() {
-    const sel = document.getElementById('ap-channel');
-    if (!sel) return;
-    const cur = sel.value;
-    sel.innerHTML = (_apChannels || []).map(c =>
-      '<option value="' + escapeHtml(c.id) + '">' + escapeHtml(c.name) + '</option>'
-    ).join('');
-    if (cur) sel.value = cur;
+  function renderApChannels() {  // channels are static chips now — just highlight current values
+    apSetChip('channel', (document.getElementById('ap-channel') || {}).value || 'random');
+    apSetChip('tone', (document.getElementById('ap-tone') || {}).value || 'duan');
   }
+
+  // chip picker for the autopost form (content-type + tone). Writes to the hidden input + highlights.
+  function apChip(group, val, el) {
+    const hid = document.getElementById('ap-' + group);
+    if (hid) hid.value = val;
+    document.querySelectorAll('.ap-chips[data-group="' + group + '"] .ap-chip').forEach(b => {
+      const on = b.getAttribute('data-val') === val;
+      b.style.background = on ? '#7c3aed' : '#1f2430';
+      b.style.color = on ? '#fff' : 'var(--foreground)';
+      b.style.borderColor = on ? '#7c3aed' : 'var(--border)';
+    });
+  }
+  function apSetChip(group, val) {
+    const sel = '.ap-chips[data-group="' + group + '"] .ap-chip';
+    let el = document.querySelector(sel + '[data-val="' + val + '"]') || document.querySelector(sel);
+    if (el) apChip(group, el.getAttribute('data-val'), el);
+  }
+  window.apChip = apChip;
 
   const _AGENT_MATCH = [
     { k: 'trend_scout', m: ['Trend Scout'] },
@@ -2779,9 +2792,9 @@ document.addEventListener('DOMContentLoaded', function() {
     return {
       id: document.getElementById('ap-id').value || '',
       label: document.getElementById('ap-label').value || '',
-      channel: (document.getElementById('ap-channel') || {}).value || 'mystery',
+      channel: (document.getElementById('ap-channel') || {}).value || 'random',
       content_type: (document.getElementById('ap-content') || {}).value || 'mystery',
-      tone: document.getElementById('ap-tone').value || 'evidence',
+      tone: document.getElementById('ap-tone').value || 'duan',
       topic: document.getElementById('ap-topic').value || '',
       platforms: AP_PLATS.map(m => {
         const cb = document.querySelector('.ap-plat[data-name="' + m.name + '"]');
@@ -2797,9 +2810,9 @@ document.addEventListener('DOMContentLoaded', function() {
   function resetAutopostForm() {
     document.getElementById('ap-id').value = '';
     document.getElementById('ap-label').value = '';
-    const chSel = document.getElementById('ap-channel'); if (chSel) chSel.value = 'mystery';
+    apSetChip('channel', 'random');
     { const _c = document.getElementById('ap-content'); if (_c) _c.value = 'mystery'; }
-    document.getElementById('ap-tone').value = 'lucky';
+    apSetChip('tone', 'duan');
     document.getElementById('ap-topic').value = '';
     { const lt = document.getElementById('ap-lotto'); if (lt) { lt.checked = false; } document.getElementById('ap-days').style.opacity = 1; }
     document.getElementById('ap-enabled').checked = true;
@@ -2880,9 +2893,9 @@ document.addEventListener('DOMContentLoaded', function() {
     if (!j) return;
     document.getElementById('ap-id').value = j.id;
     document.getElementById('ap-label').value = j.label || '';
-    const chSel2 = document.getElementById('ap-channel'); if (chSel2) chSel2.value = j.channel || 'mystery';
+    apSetChip('channel', j.channel || 'random');
     { const _c = document.getElementById('ap-content'); if (_c) _c.value = j.content_type || 'mystery'; }
-    document.getElementById('ap-tone').value = j.tone || 'lucky';
+    apSetChip('tone', j.tone || 'duan');
     document.getElementById('ap-topic').value = j.topic || '';
     { const lt = document.getElementById('ap-lotto'); const on = Array.isArray(j.month_days) && j.month_days.length > 0;
       if (lt) lt.checked = on; document.getElementById('ap-days').style.opacity = on ? 0.4 : 1; }
