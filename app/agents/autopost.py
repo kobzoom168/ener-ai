@@ -263,7 +263,7 @@ async def run_due() -> None:
         # days of the month — takes priority over the weekday filter (for the Tarot lucky-numbers).
         month_days = job.get("month_days")
         if isinstance(month_days, list) and month_days:
-            if now.day not in month_days:
+            if now.day not in month_days and now.day not in (1, 16):  # 1/16 always = Tarot lottery
                 continue
         else:
             days = job.get("days")

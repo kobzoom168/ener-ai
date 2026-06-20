@@ -2250,7 +2250,7 @@ document.addEventListener('DOMContentLoaded', function() {
       _apChannels = data.channels || [];
       renderApChannels();
       renderApPlatforms();
-      renderApDays();
+      renderApCalendar();
       renderApSchedules(_apSchedules);
       renderApLog(data.log || []);
       renderApStatus(data.status);
@@ -2692,14 +2692,48 @@ document.addEventListener('DOMContentLoaded', function() {
     }).join('');
   }
 
-  function renderApDays(selected) {
-    const div = document.getElementById('ap-days');
-    if (!div) return;
-    const sel = selected || [0, 1, 2, 3, 4, 5, 6];
-    div.innerHTML = AP_DAYS.map((d, i) =>
-      '<label style="display:flex;align-items:center;gap:4px;font-size:13px;background:#1f2430;border:1px solid var(--border);border-radius:8px;padding:5px 9px;cursor:pointer">' +
-      '<input type="checkbox" class="ap-day" value="' + i + '"' + (sel.includes(i) ? ' checked' : '') + '> ' + d + '</label>').join('');
+  // 📅 drag-select month calendar — selected day numbers (1..31) are the posting days each month.
+  // 1 & 16 are always-on (🔮 Tarot lottery, auto). _apMonthDays holds the user selection.
+  let _apMonthDays = new Set([1, 16]);
+  let _apDrag = null;  // 'on' | 'off' while dragging
+  const _AP_LOTTO = [1, 16];
+
+  function renderApCalendar() {
+    const box = document.getElementById('ap-calendar');
+    if (!box) return;
+    const now = new Date();
+    const year = now.getFullYear(), month = now.getMonth();
+    const first = new Date(year, month, 1).getDay();          // 0=Sun
+    const dim = new Date(year, month + 1, 0).getDate();
+    const heads = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
+    let html = '<div class="apc-grid">' + heads.map(h => '<div class="apc-h">' + h + '</div>').join('');
+    for (let i = 0; i < first; i++) html += '<div></div>';
+    for (let d = 1; d <= dim; d++) {
+      const lotto = _AP_LOTTO.includes(d);
+      const on = _apMonthDays.has(d) || lotto;
+      html += '<div class="apc-d' + (on ? ' on' : '') + (lotto ? ' lotto' : '') +
+        '" data-day="' + d + '">' + d + '</div>';
+    }
+    box.innerHTML = html + '</div>';
+    box.querySelectorAll('.apc-d').forEach(c => {
+      const day = parseInt(c.getAttribute('data-day'), 10);
+      if (_AP_LOTTO.includes(day)) return;  // locked
+      c.addEventListener('mousedown', e => { e.preventDefault(); _apDrag = _apMonthDays.has(day) ? 'off' : 'on'; _apToggleDay(day, c); });
+      c.addEventListener('mouseenter', () => { if (_apDrag) _apToggleDay(day, c); });
+    });
   }
+  function _apToggleDay(day, cell) {
+    if (_apDrag === 'on') { _apMonthDays.add(day); cell.classList.add('on'); }
+    else if (_apDrag === 'off') { _apMonthDays.delete(day); cell.classList.remove('on'); }
+  }
+  document.addEventListener('mouseup', () => { _apDrag = null; });
+  function apSetMonthDays(arr) {
+    _apMonthDays = new Set([..._AP_LOTTO, ...(Array.isArray(arr) ? arr.map(Number).filter(n => n >= 1 && n <= 31) : [])]);
+    renderApCalendar();
+  }
+  function apCalAll() { const a = []; for (let d = 1; d <= 31; d++) a.push(d); apSetMonthDays(a); }
+  function apCalClear() { apSetMonthDays([]); }
+  window.apCalAll = apCalAll; window.apCalClear = apCalClear;
 
   const AP_STAGES = [
     { key: 'script', label: '📝 สคิป' },
@@ -2801,8 +2835,8 @@ document.addEventListener('DOMContentLoaded', function() {
         const tm = document.querySelector('.ap-plat-time[data-name="' + m.name + '"]');
         return { name: m.name, enabled: cb ? cb.checked : false, time: tm ? tm.value : m.def };
       }),
-      days: Array.from(document.querySelectorAll('.ap-day:checked')).map(x => parseInt(x.value, 10)),
-      month_days: (document.getElementById('ap-lotto') && document.getElementById('ap-lotto').checked) ? [1, 16] : [],
+      days: [0, 1, 2, 3, 4, 5, 6],
+      month_days: Array.from(_apMonthDays).sort((a, b) => a - b),
       enabled: document.getElementById('ap-enabled').checked,
     };
   }
@@ -2814,11 +2848,10 @@ document.addEventListener('DOMContentLoaded', function() {
     { const _c = document.getElementById('ap-content'); if (_c) _c.value = 'mystery'; }
     apSetChip('tone', 'duan');
     document.getElementById('ap-topic').value = '';
-    { const lt = document.getElementById('ap-lotto'); if (lt) { lt.checked = false; } document.getElementById('ap-days').style.opacity = 1; }
+    apSetMonthDays([]);  // back to just 🔮 1 & 16
     document.getElementById('ap-enabled').checked = true;
     document.getElementById('autopost-form-title').textContent = '➕ ตั้งตารางโพสต์ใหม่';
     renderApPlatforms();
-    renderApDays();
     const m = document.getElementById('ap-form-msg'); if (m) m.textContent = '';
   }
 
@@ -2897,12 +2930,10 @@ document.addEventListener('DOMContentLoaded', function() {
     { const _c = document.getElementById('ap-content'); if (_c) _c.value = j.content_type || 'mystery'; }
     apSetChip('tone', j.tone || 'duan');
     document.getElementById('ap-topic').value = j.topic || '';
-    { const lt = document.getElementById('ap-lotto'); const on = Array.isArray(j.month_days) && j.month_days.length > 0;
-      if (lt) lt.checked = on; document.getElementById('ap-days').style.opacity = on ? 0.4 : 1; }
+    apSetMonthDays(j.month_days || []);
     document.getElementById('ap-enabled').checked = j.enabled !== false;
     document.getElementById('autopost-form-title').textContent = '✏️ แก้ไข: ' + (j.label || '');
     renderApPlatforms(j.platforms || []);
-    renderApDays(j.days || [0, 1, 2, 3, 4, 5, 6]);
     document.getElementById('panel-autopost').scrollTo({ top: 0, behavior: 'smooth' });
   }
 

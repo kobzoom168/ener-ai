@@ -313,8 +313,8 @@
           <div id="vdo-analyst-clips" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px"></div>
         </div>
 
-        <div class="surface" style="padding:16px;border:1px solid var(--border);border-radius:12px;margin-bottom:20px">
-          <div style="font-weight:600;margin-bottom:14px" id="autopost-form-title">➕ ตั้งตารางโพสต์ใหม่</div>
+        <div class="surface" style="padding:12px;border:1px solid var(--border);border-radius:12px;margin-bottom:14px">
+          <div style="font-weight:600;margin-bottom:10px" id="autopost-form-title">➕ ตั้งตารางโพสต์ใหม่</div>
           <input type="hidden" id="ap-id" value="">
 
           <style>
@@ -351,8 +351,8 @@
             </label>
           </div>
 
-          <div style="text-align:center;margin:14px 0 10px">
-            <div style="color:var(--muted-foreground);margin-bottom:6px">↓ ② AI สร้างคลิป ↓</div>
+          <div style="text-align:center;margin:10px 0 8px">
+            <div style="font-size:12px;color:var(--muted-foreground);margin-bottom:6px">↓ ② AI สร้างคลิป ↓</div>
             <button class="primary-btn" onclick="runAutopostPreview()" style="background:linear-gradient(135deg,#7c3aed,#db2777)">▶ สร้างคลิปทดสอบ (ส่งดูใน Telegram)</button>
             <div style="margin-top:10px;font-size:12px;color:var(--muted-foreground)">หรือสร้าง + โพสต์ไปแพลตฟอร์มเดียวเลย:</div>
             <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:8px">
@@ -365,18 +365,28 @@
           <div style="font-size:12px;color:var(--muted-foreground);margin-bottom:6px">③ โพสต์อัตโนมัติขึ้น (แยกเวลาแต่ละช่อง)</div>
           <div id="ap-platforms" style="display:flex;flex-direction:column;gap:8px"></div>
 
-          <div style="margin-top:16px">
-            <div style="font-size:13px;margin-bottom:6px">📅 วันที่โพสต์</div>
-            <div id="ap-days" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+          <style>
+            #ap-calendar{user-select:none}
+            .apc-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+            .apc-h{font-size:10px;color:var(--muted-foreground);text-align:center;padding:2px 0}
+            .apc-d{aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:12px;border-radius:7px;background:#1f2430;border:1px solid var(--border);cursor:pointer;position:relative}
+            .apc-d.on{background:#7c3aed;border-color:#7c3aed;color:#fff}
+            .apc-d.lotto{background:#4a1d52;border-color:#7c3a6e;cursor:not-allowed}
+            .apc-d.lotto::after{content:"🔮";position:absolute;top:-2px;right:-2px;font-size:9px}
+          </style>
+          <div style="margin-top:12px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <div style="font-size:13px;font-weight:600">📅 เลือกวันโพสต์ <span style="font-size:11px;color:var(--muted-foreground);font-weight:400">(คลิก/ลากเลือก · ทุกเดือน)</span></div>
+              <div style="display:flex;gap:5px">
+                <button type="button" class="ap-chip" style="padding:3px 10px;font-size:11px" onclick="apCalAll()">ทุกวัน</button>
+                <button type="button" class="ap-chip" style="padding:3px 10px;font-size:11px" onclick="apCalClear()">ล้าง</button>
+              </div>
+            </div>
+            <div id="ap-calendar"></div>
+            <div style="font-size:11px;color:#d6a6e0;margin-top:5px">🔮 วันที่ 1 &amp; 16 ล็อกเป็น "ไพ่ยิปซีเลขมงคล" อัตโนมัติ</div>
           </div>
 
-          <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-top:14px;background:#1a0f1a;border:1px solid #6d2f7c;border-radius:9px;padding:9px 12px;cursor:pointer">
-            <input id="ap-lotto" type="checkbox" onchange="document.getElementById('ap-days').style.opacity=this.checked?0.4:1">
-            <span style="font-weight:600">🔮 ล็อกวันหวย (1 & 16 ของเดือน)</span>
-            <span style="font-size:11px;color:#d6a6e0">โพสต์เฉพาะวันที่ 1 และ 16 (เหมาะกับโหมดไพ่เลขมงคล — ทับการเลือกวันด้านบน)</span>
-          </label>
-
-          <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-top:14px">
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-top:12px">
             <input id="ap-enabled" type="checkbox" checked> เปิดใช้งานตารางนี้
           </label>
 
