@@ -127,9 +127,7 @@ async def curate_memories() -> str:
             f"memories ทั้งหมด:\n{mem_text}",
             system=CURATOR_SYSTEM,
             agent="memorycurator",
-            preferred_model="haiku",
-            strict_model=True,
-        )
+        )  # configured model + provider fallback (haiku pin failed without an Anthropic key)
     except Exception as exc:
         message = f"Curation ล้มเหลว: {exc}"
         await _log_curator_event("task_failed", "memory curation fail", "failure", learned=str(exc)[:200])

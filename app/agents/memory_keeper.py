@@ -277,9 +277,7 @@ async def extract_from_recent_messages(chat_id: str, limit: int = 50) -> int:
             conv_text,
             system=EXTRACT_SYSTEM,
             agent="memorykeeper",
-            preferred_model="groq",
-            strict_model=True,
-        )
+        )  # use the configured model + provider fallback (groq pin failed when groq isn't set up)
     except Exception as exc:
         await _log_memory_keeper_event(
             "task_failed",
@@ -367,9 +365,7 @@ async def dedup_memories() -> int:
             f"memories:\n{mem_list}",
             system=DEDUP_SYSTEM,
             agent="memorykeeper",
-            preferred_model="groq",
-            strict_model=True,
-        )
+        )  # use the configured model + provider fallback (groq pin failed when groq isn't set up)
     except Exception as exc:
         await _log_memory_keeper_event(
             "task_failed",
