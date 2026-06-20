@@ -2990,7 +2990,8 @@ document.addEventListener('DOMContentLoaded', function() {
     } catch (e) { showToast('รันไม่สำเร็จ: ' + e.message); }
   }
 
-  const AP_TONE_LABEL = { evidence: '📜 จริงจัง', cheeky: '😏 กวนๆ', twist: '🔄 หักมุม', academic: '🎓 วิชาการ', creepy: '👻 ขนลุก' };
+  const AP_TONE_LABEL = { random: '🎲 สุ่มโทน', duan: '🔥 ดุดัน', chill: '😎 สบาย', serious: '🎯 จริงจัง', raw: '💢 คำแรง' };
+  const AP_CHAN_LABEL = { random: '🎲 สุ่มแนว', amulet: '🪬 พระเครื่อง', stone: '💎 หินมงคล', sacred: '🛕 สถานที่มู', tarot: '🔮 ไพ่เลขมงคล' };
   function apPlatIcon(n) { return n === 'facebook' ? '📘' : n === 'youtube' ? '▶️' : '🎵'; }
 
   function renderApSchedules(list) {
@@ -3003,17 +3004,18 @@ document.addEventListener('DOMContentLoaded', function() {
     div.innerHTML = list.map(j => {
       const plats = (j.platforms || []).filter(p => p.enabled)
         .map(p => apPlatIcon(p.name) + ' ' + escapeHtml(p.time || '')).join('  ') || '—';
-      const days = (j.days && j.days.length === 7) ? 'ทุกวัน' : (j.days || []).map(d => AP_DAYS[d]).join(',');
-      const ctype = j.content_type === 'news' ? '📰 ข่าว' : '🔮 สายมู';
-      const tone = AP_TONE_LABEL[j.tone || 'evidence'] || '';
-      const topic = j.topic ? escapeHtml(j.topic) : '(AI สุ่มเอง)';
+      const md = (j.month_days || []).slice().sort((a, b) => a - b);
+      const days = (!md.length || md.length >= 28) ? 'ทุกวัน' : 'วันที่ ' + md.join(',');
+      const chan = AP_CHAN_LABEL[j.channel || 'random'] || '🎲 สุ่มแนว';
+      const tone = AP_TONE_LABEL[j.tone || 'duan'] || '';
+      const topic = j.topic ? escapeHtml(j.topic) : '(AI คิดเอง)';
       const onoff = j.enabled !== false;
       const id = escapeHtml(j.id);
       const last = (j._state && j._state.gen_date) ? j._state.gen_date : '';
       return '<div class="surface" style="border:1px solid var(--border);border-radius:10px;padding:12px;display:flex;justify-content:space-between;align-items:center;gap:12px;' + (onoff ? '' : 'opacity:.5') + '">' +
         '<div style="font-size:13px;line-height:1.6">' +
           '<div style="font-weight:600">' + (onoff ? '🟢' : '⚪') + ' ' + escapeHtml(j.label || '(ไม่มีชื่อ)') + '</div>' +
-          '<div style="color:var(--muted-foreground)">' + ctype + ' · ' + tone + ' · ' + topic + '</div>' +
+          '<div style="color:var(--muted-foreground)">' + chan + ' · ' + tone + ' · ' + topic + '</div>' +
           '<div style="color:var(--muted-foreground)">📅 ' + days + ' · ' + plats + '</div>' +
           (last ? '<div style="color:var(--muted-foreground);font-size:12px">สร้างล่าสุด: ' + escapeHtml(last) + '</div>' : '') +
         '</div>' +
