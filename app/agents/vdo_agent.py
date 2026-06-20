@@ -70,6 +70,46 @@ def _tone_guide(tone: str) -> str:
     return TONE_GUIDE.get(tone, TONE_GUIDE[_DEFAULT_TONE])
 
 
+# 🚫 words that get clips demonetized/age-gated/reach-limited on TikTok/FB/YouTube
+# (gambling-lottery / get-rich / medical-cure). Swapped for safe มู-vernacular — applied ONLY to
+# metadata (caption/hashtags/title/cover), never to the spoken lines or image prompts.
+_BANNED_MAP = [
+    (r"เลขเด็ด", "เลขมงคล"), (r"เลขล็อค?", "เลขมงคล"), (r"เลขดัง", "เลขนำโชค"),
+    (r"หวยเด็ด", "เลขมงคล"), (r"แทงหวย", "เสริมดวงโชคลาภ"), (r"ซื้อหวย", "เสริมดวงโชคลาภ"),
+    (r"ถูกหวย", "ดวงโชคลาภพุ่ง"), (r"เว็บหวย", "ดูดวง"), (r"หวย", "เลขมงคล"),
+    (r"บาคาร่า", ""), (r"คาสิโน", ""), (r"สล็อต", ""), (r"พนัน", ""),
+    (r"การันตีรวย", "เปิดทรัพย์"), (r"รวยแน่ ?ๆ?", "ดวงการเงินพุ่ง"), (r"รวย ?100 ?%", "เปิดทรัพย์"),
+    (r"รักษา(?:มะเร็ง|โรค)[^ ]*หาย", "เสริมพลังกายใจ"), (r"หยุดยา", "ดูแลใจ"), (r"หายขาด", "สบายใจขึ้น"),
+]
+_BANNED_TAG = ("หวย", "เลขเด็ด", "แทงหวย", "บาคาร่า", "คาสิโน", "สล็อต", "พนัน",
+               "lottery", "casino", "gambling", "bet", "slot")
+
+
+def _scrub_banned(text: str) -> str:
+    t = str(text or "")
+    for pat, rep in _BANNED_MAP:
+        t = re.sub(pat, rep, t)
+    return t
+
+
+def _scrub_meta_text(text: str) -> str:
+    """Swap banned words AND drop any #hashtag that contains a banned term (caption/description)."""
+    t = _scrub_banned(text)
+    return re.sub(r"#(\S+)",
+                  lambda m: "" if any(b in m.group(1).lower() for b in _BANNED_TAG) else m.group(0), t)
+
+
+def _scrub_tags(tags: list) -> list:
+    out = []
+    for t in (tags or []):
+        if any(b in str(t).lower() for b in _BANNED_TAG):
+            continue
+        s = _scrub_banned(str(t)).strip()
+        if s:
+            out.append(s)
+    return out
+
+
 # --- Retention script engine -------------------------------------------------
 # Proven stop-scroll hook patterns. The writer brainstorms 3 in its head and commits
 # the strongest as the very first line (the 2-second make-or-break).
@@ -108,7 +148,7 @@ _ASS_HEADER = (
     "Style: Title,Garuda,86,&H0000F0FF,&H00000000,&H64000000,-1,0,0,0,100,100,1,0,1,7,4,8,60,60,180,0\n"
     # Cover = big bold viral-style headline that stays on top the whole clip (white base,
     # keyword recolored yellow inline); thick black outline so it reads on any background.
-    "Style: Cover,Garuda,134,&H00FFFFFF,&H00000000,&H96000000,-1,0,0,0,100,112,1,0,1,11,6,8,36,36,470,0\n"
+    "Style: Cover,Garuda,116,&H000000FF,&H00FFFFFF,&H00FFFFFF,-1,0,0,0,100,108,1,0,3,8,0,8,55,55,430,0\n"
     "Style: Brand,Garuda,40,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,1,0,1,2,2,7,40,40,60,0\n"
     # BigMark = big faded anti-theft watermark pinned the whole clip (alpha-A0 = ~63% transparent
     # white). Alignment 8 = top-center, MarginV 120 → sits near the top per the user's request.
@@ -424,8 +464,8 @@ def _render_cover(bg_image: str, cover_text: str, cover_highlight: str, out_jpg:
     rows = _wrap_rows(tc, 10)[:3] or [tc]
     joined = "\\N".join(rows)
     hl = _ass_escape((cover_highlight or "").strip())
-    if hl and hl in joined:
-        joined = joined.replace(hl, "{\\c&H00F0FF&}" + hl + "{\\c&H00FFFFFF&}", 1)
+    if hl and hl in joined:  # keyword in YELLOW, the rest stays RED
+        joined = joined.replace(hl, "{\\c&H0000FFFF&}" + hl + "{\\c&H000000FF&}", 1)
     ass = out_jpg + ".ass"
     header = (
         "[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\n"
@@ -433,8 +473,8 @@ def _render_cover(bg_image: str, cover_text: str, cover_highlight: str, out_jpg:
         "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, "
         "Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, "
         "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        # huge, bold, dead-center, very thick black outline so it pops as a thumbnail
-        "Style: CoverBig,Garuda,140,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,110,2,0,1,13,6,5,50,50,40,0\n\n"
+        # viral style: WHITE opaque box (BorderStyle 3) + RED text (yellow keyword inline) — pops on the grid
+        "Style: CoverBig,Garuda,124,&H000000FF,&H00FFFFFF,&H00FFFFFF,-1,0,0,0,100,108,1,0,3,9,0,5,80,80,40,0\n\n"
         "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
     try:
@@ -465,6 +505,41 @@ def _render_cover(bg_image: str, cover_text: str, cover_highlight: str, out_jpg:
         except Exception:
             pass
     return out_jpg if ok else ""
+
+
+def _prepend_cover_card(clip_mp4: str, cover_jpg: str, seconds: float = 1.5) -> str:
+    """Prepend a short SILENT card of the cover image to the clip. YouTube Shorts builds the grid
+    thumbnail from a video frame (it ignores the uploaded thumbnail) — holding the title card at the
+    very start makes it grab a frame WITH the title. Fail-open: returns the clip untouched on error."""
+    import subprocess
+    if not clip_mp4 or not os.path.exists(clip_mp4) or not cover_jpg or not os.path.exists(cover_jpg):
+        return clip_mp4
+    out = clip_mp4 + ".cv.mp4"
+    try:
+        fc = ("[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,"
+              "fps=30,format=yuv420p[c];"
+              "[2:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,"
+              "fps=30,format=yuv420p[m];"
+              "[1:a]aresample=44100[a0];[2:a]aresample=44100[a1];"
+              "[c][a0][m][a1]concat=n=2:v=1:a=1[v][a]")
+        cmd = ["ffmpeg", "-y",
+               "-loop", "1", "-t", f"{seconds:.2f}", "-i", cover_jpg,
+               "-f", "lavfi", "-t", f"{seconds:.2f}", "-i",
+               "anullsrc=channel_layout=stereo:sample_rate=44100",
+               "-i", clip_mp4, "-filter_complex", fc, "-map", "[v]", "-map", "[a]",
+               "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+               "-c:a", "aac", "-b:a", "128k", out]
+        r = subprocess.run(cmd, capture_output=True, timeout=180)
+        if r.returncode == 0 and os.path.exists(out) and os.path.getsize(out) > 10000:
+            os.replace(out, clip_mp4)
+    except Exception:
+        pass
+    try:
+        if os.path.exists(out):
+            os.remove(out)
+    except Exception:
+        pass
+    return clip_mp4
 
 
 def _build_ass(title: str, segments: list[tuple[str, float]], ass_path: str,
@@ -506,8 +581,8 @@ def _build_ass(title: str, segments: list[tuple[str, float]], ass_path: str,
         tc_rows = _wrap_rows(tc, 12)[:2] or [tc]
         joined = "\\N".join(tc_rows)
         hl = _ass_escape((cover_highlight or "").strip())
-        if hl and hl in joined:  # recolor the keyword yellow, rest stays white
-            joined = joined.replace(hl, "{\\c&H00F0FF&}" + hl + "{\\c&H00FFFFFF&}", 1)
+        if hl and hl in joined:  # keyword YELLOW, rest stays RED (matches the white-box cover)
+            joined = joined.replace(hl, "{\\c&H0000FFFF&}" + hl + "{\\c&H000000FF&}", 1)
         # show only at the START (~3s) then fade out, so the rest of the clip is clean
         cover_end = min(3.2, max(2.0, total * 0.3))
         events.append(
@@ -1243,8 +1318,9 @@ async def _compliance_pass(lines: list[str], profile: "ChannelProfile") -> tuple
         "เฮงรับทรัพย์/ดวงเศรษฐีมาเยือน/เงินทองไหลมา'\n"
         "• 'รักษาโรค...หาย/หยุดยา/แทนการรักษา' → 'ปัดเป่าสิ่งไม่ดี/เสริมพลังกายใจ/ใจสงบสบายขึ้น' "
         "(ห้ามแนะให้เลิกหาหมอ/หยุดยา)\n"
-        "• 'เลขเด็ด/เลขถูกแน่งวดนี้/การันตีถูก' → คงตัวเลขไว้ได้ แต่เรียกเป็น 'เลขมงคล/เลขนำโชค/"
-        "เลขเสริมดวง' (กรอบความบันเทิง-ความเชื่อ ไม่ใช่การการันตีถูกรางวัล)\n"
+        "• 'หวย/เลขเด็ด/เลขถูกแน่งวดนี้/แทงหวย/การันตีถูก' → คงตัวเลขไว้ได้ แต่เรียกเป็น 'เลขมงคล/"
+        "เลขนำโชค/เลขเสริมดวง' (กรอบความบันเทิง-ความเชื่อ ไม่ใช่การการันตีถูกรางวัล)\n"
+        "• 'บาคาร่า/คาสิโน/สล็อต/พนัน' → ตัดออก หรือเปลี่ยนเป็น 'เสริมดวงโชคลาภ'\n"
         "อย่างอื่น (โชคลาภ/เมตตา/ขอพรสมหวัง/แคล้วคลาด/ปังเรื่องงาน/ดวงพุ่ง/ชีวิตพลิก) = ปล่อยเต็มที่ ไม่ต้องแก้. "
         "คงจำนวนบรรทัดเดิมเป๊ะ ถ้าไม่มีคำเสี่ยงเลยตอบ ok:true ตอบ JSON เท่านั้น"
     )
@@ -1660,7 +1736,7 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
             await _vlog(f"✅ Retention-QC ผ่าน — ฮุคแรง ปมค้างครบ · {int(time.time() - _t)} วิ")
     # pair lines_say 1:1 with display lines (fall back to the display line itself)
     lines_say = [(say_raw[i] if i < len(say_raw) and say_raw[i] else lines[i]) for i in range(len(lines))]
-    caption = str(data.get("caption") or out_title).strip()[:300]
+    caption = _scrub_meta_text(str(data.get("caption") or out_title)).strip()[:300]
     promo = (getattr(profile, "promo", "") or "").strip()
     if promo:  # fixed Ener Scan promo in the caption/description (never spoken)
         caption = (caption + "\n\n" + promo).strip()
@@ -1680,12 +1756,12 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
     ai_video_prompt = str(data.get("ai_video_prompt") or "").strip()[:300]
     # YouTube metadata (catchy title + richer description + tags). Fall back to the topic
     # title / caption so a sparse model reply still uploads with something sensible.
-    yt_title = _strip_quotes(str(data.get("youtube_title") or "")).strip()[:100] or out_title
-    cover_text = _strip_quotes(str(data.get("cover_text") or "")).strip()[:60] or yt_title
-    cover_highlight = _strip_quotes(str(data.get("cover_highlight") or "")).strip()[:30]
-    yt_description = str(data.get("youtube_description") or "").strip()
+    yt_title = _scrub_banned(_strip_quotes(str(data.get("youtube_title") or ""))).strip()[:100] or out_title
+    cover_text = _scrub_banned(_strip_quotes(str(data.get("cover_text") or ""))).strip()[:60] or yt_title
+    cover_highlight = _scrub_banned(_strip_quotes(str(data.get("cover_highlight") or ""))).strip()[:30]
+    yt_description = _scrub_meta_text(str(data.get("youtube_description") or "")).strip()
     yt_description = ((yt_description + "\n\n" + promo).strip() if (yt_description and promo) else (yt_description or caption))
-    yt_tags = [str(t).strip()[:60] for t in (data.get("youtube_tags") or []) if str(t).strip()][:15]
+    yt_tags = _scrub_tags([str(t).strip()[:60] for t in (data.get("youtube_tags") or []) if str(t).strip()])[:15]
     angle = _strip_quotes(str(data.get("angle") or "")).strip()[:80]
     hook_type = _strip_quotes(str(data.get("hook_type") or "")).strip()[:60]
     # (Shot Planner removed — visuals are 100% AI images now, so the medium-per-beat plan was
@@ -1964,6 +2040,12 @@ async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: 
                            title_card=(script.get("cover_text") or script.get("youtube_title") or script["title"]),
                            cover_highlight=script.get("cover_highlight", ""))
     if r.get("ok"):
+        # 🖼️ hold the cover card 1.5s at the start so the Shorts grid frame carries the title
+        if thumb_path and r.get("mp4"):
+            try:
+                await asyncio.to_thread(_prepend_cover_card, r["mp4"], thumb_path)
+            except Exception:
+                pass
         kinds = [k for _, k in items]
         # cite the Wikipedia data + image used (legal attribution)
         caption = script["caption"]
