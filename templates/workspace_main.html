@@ -313,60 +313,16 @@
           <div id="vdo-analyst-clips" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px"></div>
         </div>
 
-        <div class="surface" style="padding:14px;border:1px solid var(--border);border-radius:12px;margin-bottom:14px;max-width:680px">
-          <div style="font-weight:600;margin-bottom:10px" id="autopost-form-title">➕ ตั้งตารางโพสต์ใหม่</div>
+        <div class="surface" style="padding:14px;border:1px solid var(--border);border-radius:12px;margin-bottom:14px;max-width:920px">
+          <div style="font-weight:600;margin-bottom:12px" id="autopost-form-title">➕ ตั้งตารางโพสต์ใหม่</div>
           <input type="hidden" id="ap-id" value="">
+          <input type="hidden" id="ap-channel" value="random">
+          <input type="hidden" id="ap-tone" value="duan">
 
           <style>
             .ap-chip{padding:8px 14px;border:1px solid var(--border);border-radius:20px;background:#1f2430;color:var(--foreground);font-size:13px;cursor:pointer;transition:all .12s}
             .ap-chip:hover{border-color:#7c3aed}
-          </style>
-
-          <div style="font-size:12px;color:var(--muted-foreground);margin-bottom:6px">① ประเภทเนื้อหา</div>
-          <input type="hidden" id="ap-channel" value="random">
-          <div class="ap-chips" data-group="channel" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
-            <button type="button" class="ap-chip" data-val="random" onclick="apChip('channel','random',this)">🎲 สุ่ม</button>
-            <button type="button" class="ap-chip" data-val="amulet" onclick="apChip('channel','amulet',this)">🪬 พระเครื่อง</button>
-            <button type="button" class="ap-chip" data-val="stone" onclick="apChip('channel','stone',this)">💎 หินมงคล</button>
-            <button type="button" class="ap-chip" data-val="sacred" onclick="apChip('channel','sacred',this)">🛕 สถานที่มู</button>
-          </div>
-          <div style="font-size:11px;color:#d6a6e0;margin-bottom:14px">🔮 วันที่ 1 &amp; 16 ของเดือน ระบบโพสต์ "ไพ่ยิปซีเลขมงคล" ให้อัตโนมัติ (ล็อกไว้)</div>
-
-          <div style="font-size:12px;color:var(--muted-foreground);margin-bottom:6px">🎭 โทนการเล่า (สไตล์การพูด)</div>
-          <input type="hidden" id="ap-tone" value="duan">
-          <div class="ap-chips" data-group="tone" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
-            <button type="button" class="ap-chip" data-val="random" onclick="apChip('tone','random',this)">🎲 สุ่ม</button>
-            <button type="button" class="ap-chip" data-val="duan" onclick="apChip('tone','duan',this)">🔥 ดุดัน</button>
-            <button type="button" class="ap-chip" data-val="chill" onclick="apChip('tone','chill',this)">😎 สบาย</button>
-            <button type="button" class="ap-chip" data-val="serious" onclick="apChip('tone','serious',this)">🎯 จริงจัง</button>
-            <button type="button" class="ap-chip" data-val="raw" onclick="apChip('tone','raw',this)">💢 คำแรง</button>
-          </div>
-
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-            <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">ชื่อเรียก
-              <input id="ap-label" type="text" placeholder="เช่น คลิปสายมูรายวัน" style="background:#1f2430;border:1px solid var(--border);border-radius:8px;padding:8px;color:var(--foreground)">
-            </label>
-            <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">หัวข้อ (เว้นว่าง=สุ่ม)
-              <input id="ap-topic" type="text" placeholder="เว้นว่างให้ AI คิดเอง" style="background:#1f2430;border:1px solid var(--border);border-radius:8px;padding:8px;color:var(--foreground)">
-            </label>
-          </div>
-
-          <div style="text-align:center;margin:10px 0 8px">
-            <div style="font-size:12px;color:var(--muted-foreground);margin-bottom:6px">↓ ② AI สร้างคลิป ↓</div>
-            <button class="primary-btn" onclick="runAutopostPreview()" style="background:linear-gradient(135deg,#7c3aed,#db2777)">▶ สร้างคลิปทดสอบ (ส่งดูใน Telegram)</button>
-            <div style="margin-top:10px;font-size:12px;color:var(--muted-foreground)">หรือสร้าง + โพสต์ไปแพลตฟอร์มเดียวเลย:</div>
-            <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:8px">
-              <button class="panel-action" style="background:#dc2626;color:#fff" onclick="runAutopostToPlatform('youtube',this)">▶️ YouTube</button>
-              <button class="panel-action" style="background:#111;color:#fff;border:1px solid #444" onclick="runAutopostToPlatform('tiktok',this)">🎵 TikTok</button>
-              <button class="panel-action" style="background:#1877f2;color:#fff" onclick="runAutopostToPlatform('facebook',this)">📘 Facebook</button>
-            </div>
-          </div>
-
-          <div style="font-size:12px;color:var(--muted-foreground);margin-bottom:6px">③ โพสต์อัตโนมัติขึ้น (แยกเวลาแต่ละช่อง)</div>
-          <div id="ap-platforms" style="display:flex;flex-direction:column;gap:8px"></div>
-
-          <style>
-            #ap-calendar{user-select:none;max-width:308px}
+            #ap-calendar{user-select:none}
             .apc-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}
             .apc-h{font-size:10px;color:var(--muted-foreground);text-align:center;padding:1px 0}
             .apc-d{height:32px;display:flex;align-items:center;justify-content:center;font-size:12px;border-radius:6px;background:#1f2430;border:1px solid var(--border);cursor:pointer;position:relative}
@@ -374,27 +330,78 @@
             .apc-d.on{background:#7c3aed;border-color:#7c3aed;color:#fff}
             .apc-d.lotto{background:#4a1d52;border-color:#7c3a6e;cursor:not-allowed}
             .apc-d.lotto::after{content:"🔮";position:absolute;top:-3px;right:-2px;font-size:9px}
+            .ap-sechead{font-size:12px;color:var(--muted-foreground);margin-bottom:6px}
           </style>
-          <div style="margin-top:12px">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-              <div style="font-size:13px;font-weight:600">📅 เลือกวันโพสต์ <span style="font-size:11px;color:var(--muted-foreground);font-weight:400">(คลิก/ลากเลือก · ทุกเดือน)</span></div>
-              <div style="display:flex;gap:5px">
-                <button type="button" class="ap-chip" style="padding:3px 10px;font-size:11px" onclick="apCalAll()">ทุกวัน</button>
-                <button type="button" class="ap-chip" style="padding:3px 10px;font-size:11px" onclick="apCalClear()">ล้าง</button>
+
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:20px;align-items:start">
+
+            <!-- ◀ ซ้าย: เนื้อหา + สร้างคลิป -->
+            <div>
+              <div class="ap-sechead">① ประเภทเนื้อหา</div>
+              <div class="ap-chips" data-group="channel" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+                <button type="button" class="ap-chip" data-val="random" onclick="apChip('channel','random',this)">🎲 สุ่ม</button>
+                <button type="button" class="ap-chip" data-val="amulet" onclick="apChip('channel','amulet',this)">🪬 พระเครื่อง</button>
+                <button type="button" class="ap-chip" data-val="stone" onclick="apChip('channel','stone',this)">💎 หินมงคล</button>
+                <button type="button" class="ap-chip" data-val="sacred" onclick="apChip('channel','sacred',this)">🛕 สถานที่มู</button>
+              </div>
+              <div style="font-size:11px;color:#d6a6e0;margin-bottom:14px">🔮 วันที่ 1 &amp; 16 ระบบโพสต์ "ไพ่ยิปซีเลขมงคล" ให้อัตโนมัติ</div>
+
+              <div class="ap-sechead">🎭 โทนการเล่า (สไตล์การพูด)</div>
+              <div class="ap-chips" data-group="tone" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+                <button type="button" class="ap-chip" data-val="random" onclick="apChip('tone','random',this)">🎲 สุ่ม</button>
+                <button type="button" class="ap-chip" data-val="duan" onclick="apChip('tone','duan',this)">🔥 ดุดัน</button>
+                <button type="button" class="ap-chip" data-val="chill" onclick="apChip('tone','chill',this)">😎 สบาย</button>
+                <button type="button" class="ap-chip" data-val="serious" onclick="apChip('tone','serious',this)">🎯 จริงจัง</button>
+                <button type="button" class="ap-chip" data-val="raw" onclick="apChip('tone','raw',this)">💢 คำแรง</button>
+              </div>
+
+              <label style="display:flex;flex-direction:column;gap:4px;font-size:13px;margin-bottom:10px">ชื่อเรียก
+                <input id="ap-label" type="text" placeholder="เช่น คลิปสายมูรายวัน" style="background:#1f2430;border:1px solid var(--border);border-radius:8px;padding:8px;color:var(--foreground)">
+              </label>
+              <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">หัวข้อ (เว้นว่าง=สุ่ม)
+                <input id="ap-topic" type="text" placeholder="เว้นว่างให้ AI คิดเอง" style="background:#1f2430;border:1px solid var(--border);border-radius:8px;padding:8px;color:var(--foreground)">
+              </label>
+
+              <div style="text-align:center;margin-top:16px">
+                <div style="font-size:12px;color:var(--muted-foreground);margin-bottom:6px">↓ ② AI สร้างคลิป ↓</div>
+                <button class="primary-btn" onclick="runAutopostPreview()" style="background:linear-gradient(135deg,#7c3aed,#db2777)">▶ สร้างคลิปทดสอบ (ส่งดู Telegram)</button>
+                <div style="margin-top:10px;font-size:11px;color:var(--muted-foreground)">หรือสร้าง + โพสต์ทันที:</div>
+                <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:8px">
+                  <button class="panel-action" style="background:#dc2626;color:#fff" onclick="runAutopostToPlatform('youtube',this)">▶️ YouTube</button>
+                  <button class="panel-action" style="background:#111;color:#fff;border:1px solid #444" onclick="runAutopostToPlatform('tiktok',this)">🎵 TikTok</button>
+                  <button class="panel-action" style="background:#1877f2;color:#fff" onclick="runAutopostToPlatform('facebook',this)">📘 Facebook</button>
+                </div>
               </div>
             </div>
-            <div id="ap-calendar"></div>
-            <div style="font-size:11px;color:#d6a6e0;margin-top:5px">🔮 วันที่ 1 &amp; 16 ล็อกเป็น "ไพ่ยิปซีเลขมงคล" อัตโนมัติ</div>
-          </div>
 
-          <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-top:12px">
-            <input id="ap-enabled" type="checkbox" checked> เปิดใช้งานตารางนี้
-          </label>
+            <!-- ▶ ขวา: ตารางเวลา + ปฏิทิน -->
+            <div>
+              <div class="ap-sechead">③ เวลาโพสต์อัตโนมัติ (แยกแต่ละช่อง)</div>
+              <div id="ap-platforms" style="display:flex;flex-direction:column;gap:8px"></div>
 
-          <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap">
-            <button class="primary-btn" onclick="saveAutopost()">💾 บันทึกตาราง</button>
-            <button class="panel-action" onclick="runAutopostNow()" style="background:linear-gradient(135deg,#7c3aed,#db2777)">▶ ทดสอบโพสต์เลย</button>
-            <button class="panel-action" onclick="resetAutopostForm()">ล้างฟอร์ม</button>
+              <div style="margin-top:16px">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                  <div style="font-size:13px;font-weight:600">📅 เลือกวันโพสต์ <span style="font-size:11px;color:var(--muted-foreground);font-weight:400">(คลิก/ลาก)</span></div>
+                  <div style="display:flex;gap:5px">
+                    <button type="button" class="ap-chip" style="padding:3px 10px;font-size:11px" onclick="apCalAll()">ทุกวัน</button>
+                    <button type="button" class="ap-chip" style="padding:3px 10px;font-size:11px" onclick="apCalClear()">ล้าง</button>
+                  </div>
+                </div>
+                <div id="ap-calendar"></div>
+                <div style="font-size:11px;color:#d6a6e0;margin-top:5px">🔮 วันที่ 1 &amp; 16 ล็อกเป็น "ไพ่ยิปซีเลขมงคล" อัตโนมัติ</div>
+              </div>
+
+              <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-top:14px">
+                <input id="ap-enabled" type="checkbox" checked> เปิดใช้งานตารางนี้
+              </label>
+
+              <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
+                <button class="primary-btn" onclick="saveAutopost()">💾 บันทึกตาราง</button>
+                <button class="panel-action" onclick="runAutopostNow()" style="background:linear-gradient(135deg,#7c3aed,#db2777)">▶ ทดสอบโพสต์เลย</button>
+                <button class="panel-action" onclick="resetAutopostForm()">ล้างฟอร์ม</button>
+              </div>
+            </div>
+
           </div>
           <div id="ap-form-msg" style="margin-top:10px;font-size:13px;color:var(--muted-foreground)"></div>
         </div>
