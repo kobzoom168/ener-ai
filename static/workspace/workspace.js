@@ -2231,10 +2231,17 @@ document.addEventListener('DOMContentLoaded', function() {
   // ===== Auto Post (pipeline) =====
   const AP_DAYS = ['จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส', 'อา']; // 0=Mon..6=Sun
   const AP_PLATS = [
-    { name: 'facebook', label: '📘 Facebook', def: '18:00' },
-    { name: 'youtube', label: '▶️ YouTube', def: '19:00' },
-    { name: 'tiktok', label: '🎵 TikTok', def: '20:00' },
+    { name: 'facebook', label: 'Facebook', def: '18:00' },
+    { name: 'youtube', label: 'YouTube', def: '19:00' },
+    { name: 'tiktok', label: 'TikTok', def: '20:00' },
   ];
+  // real brand logos (inline SVG)
+  function platLogo(name, s) {
+    s = s || 16;
+    if (name === 'facebook') return '<svg width="' + s + '" height="' + s + '" viewBox="0 0 24 24" style="vertical-align:-2px"><path fill="#1877F2" d="M24 12.07C24 5.4 18.63 0 12 0S0 5.4 0 12.07C0 18.1 4.39 23.1 10.13 24v-8.44H7.08v-3.49h3.05V9.4c0-3.01 1.8-4.68 4.54-4.68 1.31 0 2.68.24 2.68.24v2.96H16.84c-1.5 0-1.96.93-1.96 1.89v2.26h3.33l-.53 3.49h-2.8V24C19.61 23.1 24 18.1 24 12.07"/></svg>';
+    if (name === 'youtube') return '<svg width="' + (s + 2) + '" height="' + (s + 2) + '" viewBox="0 0 24 24" style="vertical-align:-3px"><path fill="#FF0000" d="M23.5 6.2a3 3 0 0 0-2.12-2.12C19.5 3.55 12 3.55 12 3.55s-7.5 0-9.38.53A3 3 0 0 0 .5 6.2 31.3 31.3 0 0 0 0 12a31.3 31.3 0 0 0 .5 5.8 3 3 0 0 0 2.12 2.12c1.88.53 9.38.53 9.38.53s7.5 0 9.38-.53A3 3 0 0 0 23.5 17.8 31.3 31.3 0 0 0 24 12a31.3 31.3 0 0 0-.5-5.8M9.55 15.57V8.43L15.82 12z"/></svg>';
+    return '<svg width="' + s + '" height="' + s + '" viewBox="0 0 24 24" style="vertical-align:-2px"><path fill="#fff" d="M16.6 5.82A4.28 4.28 0 0 1 15.54 3h-3.39v13.67a2.59 2.59 0 0 1-2.59 2.5 2.59 2.59 0 0 1-2.59-2.59 2.59 2.59 0 0 1 3.3-2.49v-3.45a6 6 0 0 0-5.99 6 6 6 0 0 0 11.99 0V8.99a7.62 7.62 0 0 0 4.44 1.42V7.02a4.27 4.27 0 0 1-2.11-1.2"/></svg>';
+  }
   let _apSchedules = [];
   let _apPlatStatus = {};
   let _apChannels = [];
@@ -2719,7 +2726,7 @@ document.addEventListener('DOMContentLoaded', function() {
         : '<span style="color:var(--muted-foreground);white-space:nowrap">⚪ ยังไม่เชื่อม</span>';
       return '<div style="display:flex;align-items:center;gap:10px;background:#1f2430;border:1px solid var(--border);border-radius:10px;padding:8px 12px;font-size:13px;flex-wrap:wrap' + (connected ? '' : ';opacity:.65') + '">' +
         '<label style="display:flex;align-items:center;gap:6px;flex:1;min-width:120px;cursor:pointer">' +
-          '<input type="checkbox" class="ap-plat" data-name="' + m.name + '"' + (enabled ? ' checked' : '') + (connected ? '' : ' disabled') + '> ' + m.label +
+          '<input type="checkbox" class="ap-plat" data-name="' + m.name + '"' + (enabled ? ' checked' : '') + (connected ? '' : ' disabled') + '> ' + platLogo(m.name) + ' ' + m.label +
         '</label>' +
         '<span style="color:var(--muted-foreground)">⏰</span>' +
         '<input type="time" class="ap-plat-time" data-name="' + m.name + '" value="' + time + '" style="background:#141821;border:1px solid var(--border);border-radius:6px;padding:4px 6px;color:var(--foreground)">' +
@@ -2992,7 +2999,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   const AP_TONE_LABEL = { random: '🎲 สุ่มโทน', duan: '🔥 ดุดัน', chill: '😎 สบาย', serious: '🎯 จริงจัง', raw: '💢 คำแรง' };
   const AP_CHAN_LABEL = { random: '🎲 สุ่มแนว', amulet: '🪬 พระเครื่อง', stone: '💎 หินมงคล', sacred: '🛕 สถานที่มู', tarot: '🔮 ไพ่เลขมงคล' };
-  function apPlatIcon(n) { return n === 'facebook' ? '📘' : n === 'youtube' ? '▶️' : '🎵'; }
+  function apPlatIcon(n) { return platLogo(n, 13); }
 
   function renderApSchedules(list) {
     const div = document.getElementById('autopost-schedules');
