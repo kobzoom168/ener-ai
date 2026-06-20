@@ -449,6 +449,14 @@ def _render_cover(bg_image: str, cover_text: str, cover_highlight: str, out_jpg:
                "-frames:v", "1", "-q:v", "3", out_jpg]
         r = subprocess.run(cmd, capture_output=True, timeout=60)
         ok = r.returncode == 0 and os.path.exists(out_jpg) and os.path.getsize(out_jpg) > 2000
+        # YouTube rejects thumbnails > 2MB → re-encode smaller until it fits (keeps the cover usable)
+        for q in ("5", "7", "10"):
+            if not ok or os.path.getsize(out_jpg) <= 1_950_000:
+                break
+            subprocess.run(["ffmpeg", "-y", "-i", out_jpg, "-q:v", q, out_jpg + ".s.jpg"],
+                           capture_output=True, timeout=30)
+            if os.path.exists(out_jpg + ".s.jpg") and os.path.getsize(out_jpg + ".s.jpg") > 2000:
+                os.replace(out_jpg + ".s.jpg", out_jpg)
     except Exception:
         ok = False
     finally:
