@@ -79,30 +79,48 @@ async def analyze_agent_health() -> str:
         for row in failures
     ) or "- ไม่มี failure"
 
-    prompt = f"""
-Agent Stats (24h):
-{stats_text}
+    # ── REAL analysis straight from the DB (always works — no LLM needed) ──
+    fail_by_agent: dict[str, int] = {}
+    total_runs = total_fail = 0
+    for row in stats:
+        c = int(row["count"] or 0)
+        total_runs += c
+        if str(row["result"]).strip().lower() == "failure":
+            fail_by_agent[row["agent_name"]] = fail_by_agent.get(row["agent_name"], 0) + c
+            total_fail += c
+    worst = max(fail_by_agent.values()) if fail_by_agent else 0
+    health = "critical" if (worst >= 5 or total_fail > 15) else ("warning" if total_fail else "healthy")
+    rate = round(100 * (total_runs - total_fail) / total_runs) if total_runs else 100
+    issues = [f"{a} ล้มเหลว {n} ครั้ง/24ชม." for a, n in
+              sorted(fail_by_agent.items(), key=lambda x: -x[1])]
+    if failures:  # newest failure detail (most actionable line)
+        issues.append(f"ล่าสุด: {failures[0]['agent_name']} — {str(failures[0]['summary'] or '')[:90]}")
+    insights = [f"24ชม.: รัน {total_runs} ครั้ง สำเร็จ {rate}%"
+                + ("" if total_fail else " — ไม่มี agent ล้ม ระบบแข็งแรง")]
+    recommendations = []
+    if worst >= 3:
+        top = max(fail_by_agent, key=fail_by_agent.get)
+        recommendations.append(f"เช็ค {top} (ล้มซ้ำ {fail_by_agent[top]} ครั้ง) — ดู logs/timeout/คีย์ API")
 
-Recent Failures:
-{failures_text}
-
-วิเคราะห์สุขภาพระบบ
-"""
-
+    # ── AI bonus: deeper insight if the model answers cleanly; harmless if it fails ──
+    prompt = f"Agent Stats (24h):\n{stats_text}\n\nRecent Failures:\n{failures_text}\n\nวิเคราะห์สุขภาพระบบเชิงลึก"
     try:
-        result = await chat_json(prompt, system=LOG_KEEPER_SYSTEM, agent="logkeeper")
+        ai = await chat_json(prompt, system=LOG_KEEPER_SYSTEM, agent="logkeeper")
+        for x in _clean_list(ai.get("insights", [])):
+            if x not in insights:
+                insights.append(x)
+        for x in _clean_list(ai.get("recommendations", [])):
+            if x not in recommendations:
+                recommendations.append(x)
+        ah = str(ai.get("health", "")).strip().lower()
+        if ah == "critical" or (ah == "warning" and health == "healthy"):
+            health = ah  # let the AI ESCALATE severity, never downgrade the real data
     except Exception:
-        result = {
-            "health": "warning" if failures else "healthy",
-            "issues": ["ยังวิเคราะห์เชิงลึกไม่ได้"] if failures else [],
-            "insights": ["ระบบยังเดินต่อได้"],
-            "recommendations": ["ตรวจสอบ logs เพิ่มเติมถ้ามี failure ซ้ำ"],
-        }
+        pass  # deterministic analysis above already stands — no "วิเคราะห์ไม่ได้" placeholder
 
-    health = str(result.get("health", "healthy")).strip().lower() or "healthy"
-    issues = _clean_list(result.get("issues", []))
-    insights = _clean_list(result.get("insights", []))
-    recommendations = _clean_list(result.get("recommendations", []))
+    issues = _clean_list(issues)
+    insights = _clean_list(insights)
+    recommendations = _clean_list(recommendations)
 
     health_emoji = {"healthy": "✅", "warning": "⚠️", "critical": "🔴"}.get(health, "✅")
     lines = [f"🔍 Agent Health: {health_emoji} {health}"]
