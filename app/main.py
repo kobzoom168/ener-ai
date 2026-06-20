@@ -7350,11 +7350,13 @@ async def workspace_vdo_agents(request: Request):
     fal_ready = bool(_ov.environ.get("FAL_KEY", "").strip())
     animate_on = (await get_config("vdo_animate", "")).strip().lower() in ("1", "true", "on", "yes")
     cat_on = (await get_config("vdo_cat_mode", "")).strip().lower() in ("1", "true", "on", "yes")
+    eco_on = (await get_config("vdo_eco", "")).strip().lower() in ("1", "true", "on", "yes")
     return JSONResponse({"agents": agents, "models": opts, "bg_mode": bg_mode,
                          "fal_enabled": fal_enabled, "fal_models": fal_models,
                          "fal_model": fal_model, "ai_video_count": ai_video_count,
                          "image_provider": image_provider, "gemini_ready": gemini_ready,
-                         "fal_ready": fal_ready, "animate_on": animate_on, "cat_on": cat_on})
+                         "fal_ready": fal_ready, "animate_on": animate_on, "cat_on": cat_on,
+                         "eco_on": eco_on})
 
 
 @app.post("/workspace/vdo/videocfg")
@@ -7380,6 +7382,8 @@ async def workspace_vdo_videocfg(request: Request):
         await set_config("vdo_animate", "on" if bool(body.get("animate")) else "")
     if "cat_mode" in body:  # 🐱 cat-cast: same content, every character is the same cute cat
         await set_config("vdo_cat_mode", "on" if bool(body.get("cat_mode")) else "")
+    if "eco" in body:  # 💰 eco: cheaper Flux dev stills instead of Flux pro
+        await set_config("vdo_eco", "on" if bool(body.get("eco")) else "")
     return JSONResponse({"ok": True})
 
 

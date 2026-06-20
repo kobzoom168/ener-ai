@@ -2420,6 +2420,7 @@ document.addEventListener('DOMContentLoaded', function() {
       if (ip && d.image_provider) ip.value = d.image_provider;
       { const an = document.getElementById('vdo-animate'); if (an) an.checked = !!d.animate_on; }
       { const ct = document.getElementById('vdo-cat'); if (ct) ct.checked = !!d.cat_on; }
+      { const ec = document.getElementById('vdo-eco'); if (ec) ec.checked = !!d.eco_on; }
       const gst = document.getElementById('vdo-gemini-status');
       if (gst) gst.innerHTML = d.fal_ready
         ? '<span style="color:#22c55e">✅ Flux/fal พร้อม</span>'
@@ -2554,6 +2555,13 @@ document.addEventListener('DOMContentLoaded', function() {
     } catch (e) { showToast('❌ ' + ((e && e.message) || 'บันทึกไม่สำเร็จ')); }
   }
   window.setVdoCat = setVdoCat;
+  async function setVdoEco(on) {
+    try {
+      await api('/workspace/vdo/videocfg', { method: 'POST', body: JSON.stringify({ eco: !!on }) });
+      showToast(on ? '💰 เปิดโหมดประหยัด — Flux dev ~฿7/คลิป (มีผลคลิปถัดไป)' : '💎 ปิดประหยัด — Flux pro ~฿11/คลิป (คมสุด)');
+    } catch (e) { showToast('❌ ' + ((e && e.message) || 'บันทึกไม่สำเร็จ')); }
+  }
+  window.setVdoEco = setVdoEco;
   window.loadVdoCrew = loadVdoCrew;
   window.applyVdoRecommended = applyVdoRecommended;
   window.saveVdoCrew = saveVdoCrew;

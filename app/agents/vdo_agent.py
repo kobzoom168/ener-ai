@@ -575,9 +575,14 @@ async def _gen_bg_image(prompt: str, idx: int = 0, seed: int | None = None) -> s
     if provider == "fal_flux":
         try:
             from app.agents import aivideo
+            # 💰 Eco mode → Flux dev (~฿7/clip) instead of Flux pro (~฿11); both keep the same
+            # style-first + shared-seed cohesion and strong script adherence.
+            from app.core.database import get_config as _gc
+            eco = (await _gc("vdo_eco", "")).strip().lower() in ("1", "true", "on", "yes")
+            mdl = "fal-ai/flux/dev" if eco else ""
             f = await aivideo.generate_image(_img_style(prompt),
                                              os.path.join(VDO_DIR, f"bg_{int(time.time() * 1000)}_{idx}.png"),
-                                             seed=seed)
+                                             model=mdl, seed=seed)
             if f:
                 return f  # else fall through to OpenRouter
         except Exception:
