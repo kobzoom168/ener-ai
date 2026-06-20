@@ -105,9 +105,9 @@ _ASS_HEADER = (
     # keyword recolored yellow inline); thick black outline so it reads on any background.
     "Style: Cover,Garuda,134,&H00FFFFFF,&H00000000,&H96000000,-1,0,0,0,100,112,1,0,1,11,6,8,36,36,470,0\n"
     "Style: Brand,Garuda,40,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,1,0,1,2,2,7,40,40,60,0\n"
-    # BigMark = big faded centered anti-theft watermark, pinned the whole clip (alpha-A0 = ~63%
-    # transparent white so it reads as a watermark without ruining the shot).
-    "Style: BigMark,Garuda,88,&HA0FFFFFF,&HB0000000,&H00000000,-1,0,0,0,100,100,3,0,1,2,0,5,40,40,0,0\n\n"
+    # BigMark = big faded anti-theft watermark pinned the whole clip (alpha-A0 = ~63% transparent
+    # white). Alignment 8 = top-center, MarginV 120 → sits near the top per the user's request.
+    "Style: BigMark,Garuda,88,&HA0FFFFFF,&HB0000000,&H00000000,-1,0,0,0,100,100,3,0,1,2,0,8,40,40,120,0\n\n"
     "[Events]\n"
     "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
 )
