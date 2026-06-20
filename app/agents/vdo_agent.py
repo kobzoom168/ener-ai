@@ -104,7 +104,10 @@ _ASS_HEADER = (
     # Cover = big bold viral-style headline that stays on top the whole clip (white base,
     # keyword recolored yellow inline); thick black outline so it reads on any background.
     "Style: Cover,Garuda,134,&H00FFFFFF,&H00000000,&H96000000,-1,0,0,0,100,112,1,0,1,11,6,8,36,36,470,0\n"
-    "Style: Brand,Garuda,40,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,1,0,1,2,2,7,40,40,60,0\n\n"
+    "Style: Brand,Garuda,40,&H00FFFFFF,&H00111111,&H64000000,-1,0,0,0,100,100,1,0,1,2,2,7,40,40,60,0\n"
+    # BigMark = big faded centered anti-theft watermark, pinned the whole clip (alpha-A0 = ~63%
+    # transparent white so it reads as a watermark without ruining the shot).
+    "Style: BigMark,Garuda,88,&HA0FFFFFF,&HB0000000,&H00000000,-1,0,0,0,100,100,3,0,1,2,0,5,40,40,0,0\n\n"
     "[Events]\n"
     "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
 )
@@ -476,6 +479,12 @@ def _build_ass(title: str, segments: list[tuple[str, float]], ass_path: str,
     if brand_parts:
         events.append(
             f"Dialogue: 0,{_ass_ts(0)},{_ass_ts(total)},Brand,,0,0,0,,{'  '.join(brand_parts)}"
+        )
+    # 🔒 Big faded anti-theft watermark (the website, centered, the WHOLE clip) so ripped re-uploads
+    # always carry the brand. Layer 0 = under the captions; alpha set in the BigMark style.
+    if web:
+        events.append(
+            f"Dialogue: 0,{_ass_ts(0)},{_ass_ts(total)},BigMark,,0,0,0,,{web}"
         )
     # big viral-style COVER headline pinned to the top for the WHOLE clip (white base with one
     # keyword recolored yellow) — doubles as the thumbnail hook and keeps people watching.
