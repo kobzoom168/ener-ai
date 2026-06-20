@@ -53,16 +53,22 @@ async def _agent_model(key: str) -> str:
 
 # Narration tone presets for the mystery script (chosen in the Auto Post UI).
 TONE_GUIDE = {
-    "evidence": "โทน: สารคดีจริงจัง น่าเชื่อถือ เน้นข้อเท็จจริง/หลักฐาน/แหล่งอ้างอิงจริง ปิดด้วยประโยคชวนคิด",
-    "cheeky": "โทน: กวนๆ สนุก เป็นกันเอง แซวเบาๆ ชวนยิ้ม แต่ยังเคารพความเชื่อ ไม่ลบหลู่",
-    "twist": "โทน: ปูเรื่องสร้างความสงสัยทีละนิด แล้วพลิกหักมุมตอนจบให้คนดูอึ้ง/ร้องเฮ้ย",
-    "academic": "โทน: วิชาการ เจาะลึกที่มา/ประวัติศาสตร์/มานุษยวิทยา/รากของความเชื่อ ให้ความรู้แน่นแต่ฟังง่าย",
-    "creepy": "โทน: ขนลุก สยอง บรรยากาศหลอน เสียวสันหลัง สร้างความกลัวแบบสายมู (ไม่โหด/ไม่กราฟิกเกินไป)",
+    # 100% สายมู — ความเชื่อขั้นสุด ใช้ภาษามูที่แรงแต่ปลอดภัย (เปิดทรัพย์/เฮง/ดวงพุ่ง แทน ถูกหวย/รวยแน่)
+    "lucky": "โทน: สายโชคลาภ-เปิดทรัพย์ เร้าใจ เชื่อสุดใจ เน้นว่าสิ่งนี้ 'เรียกเงินทอง เปิดทาง ดวงการเงินพุ่ง "
+             "เฮงรับทรัพย์' พูดให้คนรู้สึกว่าโชคใหญ่กำลังมา (ใช้ 'เปิดทรัพย์/หนุนดวงการเงิน' ไม่ใช่ 'ถูกหวยแน่ 100%')",
+    "blessing": "โทน: ขอพรสมหวัง ศรัทธาเต็มเปี่ยม เน้น 'สิ่งศักดิ์สิทธิ์นี้ขอแล้วสมหวัง ดั่งใจ' บอกขอเรื่องอะไรดี "
+                "วิธีไหว้/บูชา ให้คนอยากตามไปขอ พูดอบอุ่นมั่นใจเหมือนคนเคยได้ผลมาเล่า",
+    "lifeup": "โทน: ชีวิตพลิก-เสริมดวง สายมูแก้ปัญหา เน้น 'ของ/วิธีนี้ช่วยแก้ชง หนุนดวง ปังทุกด้าน "
+              "ชีวิตดีขึ้น' ให้กำลังใจแรงๆ เหมือนเปลี่ยนชีวิตได้",
+    "love": "โทน: เมตตามหานิยม-เสน่ห์ เน้น 'เสริมเสน่ห์ คนรักคนเอ็นดู ค้าขายลูกค้ารักใคร่' พูดให้คนอยากได้บ้าง",
+    "creepy": "โทน: มูสยอง-ขนลุก ของขลัง/ห้ามลองของ บรรยากาศหลอนเสียวสันหลัง (ไม่โหด/ไม่กราฟิกเกินไป) "
+              "สร้างความศักดิ์สิทธิ์น่าเกรงขาม",
 }
+_DEFAULT_TONE = "lucky"
 
 
 def _tone_guide(tone: str) -> str:
-    return TONE_GUIDE.get(tone or "evidence", TONE_GUIDE["evidence"])
+    return TONE_GUIDE.get(tone or _DEFAULT_TONE, TONE_GUIDE[_DEFAULT_TONE])
 
 
 # --- Retention script engine -------------------------------------------------
@@ -1215,23 +1221,29 @@ async def _retention_qc(lines: list[str], profile: "ChannelProfile", subject: st
 
 
 async def _compliance_pass(lines: list[str], profile: "ChannelProfile") -> tuple[list[str], str]:
-    """✅ Compliance: keep belief content within platform policy — no guaranteed-outcome
-    claims (รวย/หาย/ปลอดภัยแน่), frame as 'ตามความเชื่อ/ตำนานเล่าว่า', no disrespect."""
+    """✅ Compliance = WORD-SWAPPER, not a claim-stripper. The creator wants MAX มู intensity; we
+    only swap the few literal trigger words that platforms flag (guaranteed lottery / get-rich /
+    medical-cure) for equally-strong มู-vernacular — the belief promise stays, the risky word goes.
+    Never add 'ตามความเชื่อ' disclaimers, never water the script down."""
     if profile.research_mode != "belief" or not lines:
         return lines, ""
     system = (
-        "คุณคือ QC นโยบายแพลตฟอร์มสายมู/ความเชื่อ แก้ 'เฉพาะจุดเสี่ยงจริง' เท่านั้น: "
-        "(1) ห้ามสัญญาผลลัพธ์ (ทำแล้วรวยแน่/หายป่วยแน่/ปลอดภัยแน่) "
-        "(2) ประโยคที่ยืนยันเรื่องเหนือธรรมชาติว่าจริง 100% ให้ frame เป็นความเชื่อ — "
-        "แต่ทำ 'เท่าที่จำเป็น สั้นๆ ไม่เกิน 1-2 จุดทั้งคลิป และห้ามใส่ซ้ำ' "
-        "ห้ามขึ้นต้นหลายบรรทัดด้วย 'ตามความเชื่อ/ตามทฤษฎี' (ทำให้บทจืด+ซ้ำ+อ่อน) สลับคำ/ตำแหน่งได้ "
-        "(3) ไม่ลบหลู่ ไม่ขู่เกินเหตุ "
-        "สำคัญมาก: ต้องคงความคม/น่าตื่นเต้น/จังหวะของบทไว้ ห้ามทำให้จืดลง "
-        "ถ้าปลอดภัยอยู่แล้วตอบ ok:true ไม่ต้องแก้ คงจำนวนบรรทัดเดิม ตอบ JSON เท่านั้น"
+        "คุณคือ 'ตัวสลับคำสายมู' หน้าที่เดียว: คงพลังความเชื่อให้สุดขั้ว แต่เปลี่ยน 'คำที่แพลตฟอร์ม "
+        "(YouTube/Facebook) จับ' ให้เป็น 'ภาษามู' ที่ความหมายแรงเท่าเดิมแต่ปลอดภัย. "
+        "อย่า 'ลดทอน/ทำให้จืด/ใส่ตามความเชื่อ' เด็ดขาด — มูต้องเต็มพลังเสมอ. "
+        "วิธีสลับ (เปลี่ยนเฉพาะคำ คงประโยคให้แรงเท่าเดิม):\n"
+        "• 'ถูกหวยแน่/รวยแน่/รวย 100%/การันตีรวย' → 'เปิดทรัพย์/เรียกโชคลาภก้อนใหญ่/ดวงการเงินพุ่ง/"
+        "เฮงรับทรัพย์/ดวงเศรษฐีมาเยือน/เงินทองไหลมา'\n"
+        "• 'รักษาโรค...หาย/หยุดยา/แทนการรักษา' → 'ปัดเป่าสิ่งไม่ดี/เสริมพลังกายใจ/ใจสงบสบายขึ้น' "
+        "(ห้ามแนะให้เลิกหาหมอ/หยุดยา)\n"
+        "• 'เลขเด็ด/เลขถูกแน่งวดนี้/การันตีถูก' → คงตัวเลขไว้ได้ แต่เรียกเป็น 'เลขมงคล/เลขนำโชค/"
+        "เลขเสริมดวง' (กรอบความบันเทิง-ความเชื่อ ไม่ใช่การการันตีถูกรางวัล)\n"
+        "อย่างอื่น (โชคลาภ/เมตตา/ขอพรสมหวัง/แคล้วคลาด/ปังเรื่องงาน/ดวงพุ่ง/ชีวิตพลิก) = ปล่อยเต็มที่ ไม่ต้องแก้. "
+        "คงจำนวนบรรทัดเดิมเป๊ะ ถ้าไม่มีคำเสี่ยงเลยตอบ ok:true ตอบ JSON เท่านั้น"
     )
     prompt = ("บท:\n" + _json.dumps(lines, ensure_ascii=False) + "\n\n"
-              'ตอบ JSON: {"ok": true ถ้าปลอดภัย/false ถ้าต้องแก้, '
-              '"fixed_lines": [บทที่แก้ให้ปลอดภัยแล้ว ครบทุกบรรทัด], "note": "จุดเสี่ยงที่แก้"}')
+              'ตอบ JSON: {"ok": true ถ้าไม่มีคำเสี่ยง/false ถ้าสลับคำ, '
+              '"fixed_lines": [บทที่สลับคำแล้ว ครบทุกบรรทัด คงพลังมูเต็ม], "note": "คำที่สลับ"}')
     qc = _parse_json(await _or_chat(await _agent_model("compliance"), system, prompt, 4500))
     fixed = [_strip_quotes(str(x)) for x in (qc.get("fixed_lines") or []) if str(x).strip()]
     if not qc.get("ok", True) and fixed:
@@ -1453,7 +1465,7 @@ async def _shot_plan(lines: list[str], profile: "ChannelProfile") -> list[dict]:
 
 
 async def generate_mystery_script(topic: str = "", title: str = "", summary: str = "",
-                                  tone: str = "evidence") -> dict:
+                                  tone: str = "lucky") -> dict:
     """Back-compat wrapper: the สายมู channel of the generic engine."""
     from app.agents.channels import MYSTERY
     return await generate_channel_script(MYSTERY, topic, title, summary, tone=tone)
