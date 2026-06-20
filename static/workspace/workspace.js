@@ -2853,17 +2853,29 @@ document.addEventListener('DOMContentLoaded', function() {
 
   function startApStatusPoll() {
     stopApStatusPoll();
+    // realtime: poll the lightweight status+console endpoint every 1s
     _apStatusTimer = setInterval(async () => {
       const panel = document.getElementById('panel-autopost');
       if (!panel || panel.style.display === 'none') { stopApStatusPoll(); return; }
       try {
-        const d = await api('/workspace/autopost/data');
+        const d = await api('/workspace/vdo/status');
         renderApStatus(d.status);
         renderApConsole(d.console);
-        renderApLog(d.log || []);
+        // show/hide the Kill button based on whether a clip is actually running
+        const running = d.status && ['script', 'media', 'render', 'posting'].includes(d.status.stage);
+        const kb = document.getElementById('ap-kill-btn');
+        if (kb) kb.style.display = running ? 'inline-flex' : 'none';
       } catch (e) {}
-    }, 3000);
+    }, 1000);
   }
+  async function cancelAutopost() {
+    if (!confirm('ยกเลิกคลิปที่กำลังสร้าง?')) return;
+    try {
+      await api('/workspace/vdo/cancel', { method: 'POST' });
+      showToast('🛑 ยกเลิกแล้ว');
+    } catch (e) { showToast('❌ ' + ((e && e.message) || 'ยกเลิกไม่สำเร็จ')); }
+  }
+  window.cancelAutopost = cancelAutopost;
   function stopApStatusPoll() { if (_apStatusTimer) { clearInterval(_apStatusTimer); _apStatusTimer = null; } }
 
   function _apFormBody() {

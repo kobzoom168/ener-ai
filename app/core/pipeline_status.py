@@ -78,3 +78,49 @@ async def clear_console() -> None:
         await set_config(_LOG_KEY, "[]")
     except Exception:
         pass
+
+
+# ── cancel flag + stale-status recovery ──────────────────────────────────────
+_CANCEL_KEY = "vdo_pipeline_cancel"
+_RUNNING = ("script", "media", "render", "posting")
+
+
+async def request_cancel() -> None:
+    """User pressed Kill — raise the flag; the pipeline aborts at its next checkpoint."""
+    try:
+        await set_config(_CANCEL_KEY, "1")
+    except Exception:
+        pass
+
+
+async def clear_cancel() -> None:
+    try:
+        await set_config(_CANCEL_KEY, "")
+    except Exception:
+        pass
+
+
+async def is_cancelled() -> bool:
+    try:
+        return (await get_config(_CANCEL_KEY, "")).strip() == "1"
+    except Exception:
+        return False
+
+
+async def checkpoint() -> None:
+    """Call between pipeline stages — raises to abort the clip if the user hit Kill."""
+    if await is_cancelled():
+        raise RuntimeError("ยกเลิกโดยผู้ใช้")
+
+
+async def recover_stale() -> None:
+    """On startup: if a clip was mid-render when the process restarted (e.g. a deploy), the
+    status is frozen at a running stage — reset it to idle so the UI isn't stuck forever."""
+    try:
+        st = await get_status()
+        if st.get("stage") in _RUNNING:
+            await set_status("idle")
+            await log_line("⚠️ รีสตาร์ทระหว่างสร้างคลิป — รีเซ็ตสถานะแล้ว (ลองสร้าง/ตั้งเวลาใหม่ได้)")
+        await clear_cancel()
+    except Exception:
+        pass

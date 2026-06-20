@@ -1847,6 +1847,8 @@ async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: 
         except Exception:
             face_pip = False
 
+    from app.core.pipeline_status import checkpoint
+    await checkpoint()  # 🛑 abort here if the user hit Kill during scripting
     await set_status("media", title=script.get("title", ""))
     imps = script.get("image_prompts") or [script["title"]]
     vqs = script.get("video_queries") or []
@@ -1945,6 +1947,7 @@ async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: 
     except Exception:
         pass
 
+    await checkpoint()  # 🛑 abort here if the user hit Kill during media generation
     await set_status("render", title=script.get("title", ""))
     await log_line("🎙️ พากย์ (เสียงคุณ V3)" + (" + 🗣️ หน้าพูด D-ID" if face_pip else "") + " + 🎬 ตัดต่อ…")
     r = await _render_clip(script["title"], script["lines"], bg_items=items, face_pip=face_pip,

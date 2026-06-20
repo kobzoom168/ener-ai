@@ -5235,6 +5235,12 @@ def _parse_brainstorm_blocks(raw_text: str) -> dict:
 async def lifespan(app: FastAPI):
     global scheduler
     await init_db()
+    # if a clip was mid-render when the process restarted (e.g. a deploy), unstick the frozen status
+    try:
+        from app.core.pipeline_status import recover_stale
+        await recover_stale()
+    except Exception:
+        pass
     await _load_api_keys_to_env()  # config-stored API keys → process env (so os.environ readers work)
     await telegram_app.initialize()
     await telegram_app.bot.set_webhook(url=f"{settings.telegram_webhook_url}/webhook")
@@ -7060,8 +7066,41 @@ async def workspace_autopost_run(request: Request):
                "_state": {}}
     preview = bool(body.get("preview"))
     import asyncio as _aio
-    _aio.create_task(autopost.run_job(job, source="manual", preview=preview))
+    from app.core.pipeline_status import clear_cancel
+    await clear_cancel()  # fresh run — drop any stale Kill flag
+    global _CURRENT_VDO_TASK
+    _CURRENT_VDO_TASK = _aio.create_task(autopost.run_job(job, source="manual", preview=preview))
     return JSONResponse({"ok": True, "queued": True})
+
+
+_CURRENT_VDO_TASK = None
+
+
+@app.post("/workspace/vdo/cancel")
+async def workspace_vdo_cancel(request: Request):
+    """🛑 Kill the running clip: flag-cancel (the pipeline aborts at its next checkpoint),
+    cancel the tracked task, and reset the status so the UI unblocks immediately."""
+    await _require_admin(request)
+    from app.core.pipeline_status import request_cancel, set_status, log_line
+    await request_cancel()
+    global _CURRENT_VDO_TASK
+    try:
+        if _CURRENT_VDO_TASK is not None and not _CURRENT_VDO_TASK.done():
+            _CURRENT_VDO_TASK.cancel()
+    except Exception:
+        pass
+    _CURRENT_VDO_TASK = None
+    await log_line("🛑 ยกเลิกโดยผู้ใช้")
+    await set_status("idle")
+    return JSONResponse({"ok": True})
+
+
+@app.get("/workspace/vdo/status")
+async def workspace_vdo_status(request: Request):
+    """Lightweight status+console for realtime polling (no schedules/platform payload)."""
+    await _require_admin(request)
+    from app.core.pipeline_status import get_status, get_console
+    return JSONResponse({"status": await get_status(), "console": await get_console()})
 
 
 @app.post("/workspace/vdo/delete")
