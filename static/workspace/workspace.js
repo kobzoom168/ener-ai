@@ -2251,6 +2251,14 @@ document.addEventListener('DOMContentLoaded', function() {
       renderApChannels();
       renderApPlatforms();
       renderApCalendar();
+      apApplyDraft();  // restore the remembered new-schedule form (only if not editing)
+      // one delegated listener saves the draft whenever any field (name/topic/time/platform) changes
+      const _pp = document.getElementById('panel-autopost');
+      if (_pp && !_pp._apDraftHook) {
+        _pp._apDraftHook = 1;
+        _pp.addEventListener('input', apSaveDraft);
+        _pp.addEventListener('change', apSaveDraft);
+      }
       renderApSchedules(_apSchedules);
       renderApLog(data.log || []);
       renderApStatus(data.status);
@@ -2579,7 +2587,7 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   // chip picker for the autopost form (content-type + tone). Writes to the hidden input + highlights.
-  function apChip(group, val, el) {
+  function apChip(group, val, el, remember) {
     const hid = document.getElementById('ap-' + group);
     if (hid) hid.value = val;
     document.querySelectorAll('.ap-chips[data-group="' + group + '"] .ap-chip').forEach(b => {
@@ -2588,7 +2596,35 @@ document.addEventListener('DOMContentLoaded', function() {
       b.style.color = on ? '#fff' : 'var(--foreground)';
       b.style.borderColor = on ? '#7c3aed' : 'var(--border)';
     });
+    if (remember !== false) apSaveDraft();  // remember the whole form so a refresh keeps it
   }
+
+  // 💾 remember the ENTIRE new-schedule form across refresh (localStorage draft). Skipped while
+  // editing an existing schedule (id set) or while we're programmatically applying the draft.
+  let _apApplying = false;
+  function apSaveDraft() {
+    if (_apApplying) return;
+    try {
+      if ((document.getElementById('ap-id') || {}).value) return;  // editing → don't clobber draft
+      localStorage.setItem('ap_draft', JSON.stringify(_apFormBody()));
+    } catch (e) {}
+  }
+  function apApplyDraft() {
+    let d; try { d = JSON.parse(localStorage.getItem('ap_draft') || 'null'); } catch (e) { d = null; }
+    if (!d) return;
+    _apApplying = true;
+    try {
+      if (d.label != null) document.getElementById('ap-label').value = d.label;
+      if (d.topic != null) document.getElementById('ap-topic').value = d.topic;
+      apSetChip('channel', d.channel || 'random');
+      apSetChip('tone', d.tone || 'duan');
+      apSetMonthDays(Array.isArray(d.month_days) ? d.month_days : []);
+      if (typeof d.enabled === 'boolean') document.getElementById('ap-enabled').checked = d.enabled;
+      renderApPlatforms(d.platforms || []);
+    } catch (e) {}
+    _apApplying = false;
+  }
+  window.apSaveDraft = apSaveDraft;
   function apSetChip(group, val) {
     const sel = '.ap-chips[data-group="' + group + '"] .ap-chip';
     let el = document.querySelector(sel + '[data-val="' + val + '"]') || document.querySelector(sel);
@@ -2725,14 +2761,15 @@ document.addEventListener('DOMContentLoaded', function() {
   function _apToggleDay(day, cell) {
     if (_apDrag === 'on') { _apMonthDays.add(day); cell.classList.add('on'); }
     else if (_apDrag === 'off') { _apMonthDays.delete(day); cell.classList.remove('on'); }
+    apSaveDraft();
   }
   document.addEventListener('mouseup', () => { _apDrag = null; });
   function apSetMonthDays(arr) {
     _apMonthDays = new Set([..._AP_LOTTO, ...(Array.isArray(arr) ? arr.map(Number).filter(n => n >= 1 && n <= 31) : [])]);
     renderApCalendar();
   }
-  function apCalAll() { const a = []; for (let d = 1; d <= 31; d++) a.push(d); apSetMonthDays(a); }
-  function apCalClear() { apSetMonthDays([]); }
+  function apCalAll() { const a = []; for (let d = 1; d <= 31; d++) a.push(d); apSetMonthDays(a); apSaveDraft(); }
+  function apCalClear() { apSetMonthDays([]); apSaveDraft(); }
   window.apCalAll = apCalAll; window.apCalClear = apCalClear;
 
   const AP_STAGES = [
