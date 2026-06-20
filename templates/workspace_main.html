@@ -313,7 +313,7 @@
           <div id="vdo-analyst-clips" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px"></div>
         </div>
 
-        <div class="surface" style="padding:14px;border:1px solid var(--border);border-radius:12px;margin-bottom:14px;max-width:920px">
+        <div class="surface" style="padding:14px;border:1px solid var(--border);border-radius:12px;margin-bottom:14px">
           <div style="font-weight:600;margin-bottom:12px" id="autopost-form-title">➕ ตั้งตารางโพสต์ใหม่</div>
           <input type="hidden" id="ap-id" value="">
           <input type="hidden" id="ap-channel" value="random">
@@ -331,9 +331,11 @@
             .apc-d.lotto{background:#4a1d52;border-color:#7c3a6e;cursor:not-allowed}
             .apc-d.lotto::after{content:"🔮";position:absolute;top:-3px;right:-2px;font-size:9px}
             .ap-sechead{font-size:12px;color:var(--muted-foreground);margin-bottom:6px}
+            .ap-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:28px;align-items:start}
+            @media(max-width:780px){.ap-form-grid{grid-template-columns:1fr}}
           </style>
 
-          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:20px;align-items:start">
+          <div class="ap-form-grid">
 
             <!-- ◀ ซ้าย: เนื้อหา + สร้างคลิป -->
             <div>
