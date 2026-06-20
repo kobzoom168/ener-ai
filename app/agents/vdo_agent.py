@@ -1434,7 +1434,8 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
             await _vlog("🔥 Trend Scout: เลือกหัวข้อ — " + subject)
     if subject and profile.research_mode != "none":
         _t = time.time()
-        # 📚 Wikipedia FIRST — real, complete Thai data + a citable source URL.
+        # 📚 Wikipedia = FACTS ONLY (Thai page first, else English for international subjects).
+        # The writer must REWRITE these facts in its own spoken words — never copy the phrasing.
         try:
             from app.agents import wiki_images
             art = await wiki_images.fetch_article(subject, "th") or await wiki_images.fetch_article(subject, "en")
@@ -1443,11 +1444,9 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
         if art and art.get("text"):
             research = art["text"]
             source_url = art.get("source", "")
-            await _vlog(f"📚 ดึงข้อมูลจาก Wikipedia: {art.get('title', subject)} · {int(time.time() - _t)} วิ")
+            await _vlog(f"📚 ข้อมูลจาก Wikipedia (แต่งใหม่ ไม่ลอก): {art.get('title', subject)} · {int(time.time() - _t)} วิ")
         else:
-            # No exact Wikipedia page → write from the model's own knowledge. (The web-search
-            # Researcher was removed: it was slow + flaky and drifted to off-topic sources.)
-            await _vlog("📝 ไม่มีหน้าวิกิตรงๆ — เขียนจากความรู้โมเดล (ไม่ลากข้อมูลผิด)")
+            await _vlog("📝 ไม่มีหน้าวิกิ — เขียนจากความรู้โมเดล")
     system = (
         f"{profile.persona} {profile.audience} "
         f"{_tone_guide(tone)} "
@@ -1475,7 +1474,12 @@ async def generate_channel_script(profile: "ChannelProfile", topic: str = "", ti
     if avoid_block:
         body += avoid_block
     if research:
-        body += "\n\nข้อมูลอ้างอิงที่ถูกต้อง (ยึดตามนี้เป๊ะ ห้ามขัด ห้ามเข้าใจความหมายผิด):\n" + research[:1500]
+        body += ("\n\nข้อเท็จจริงอ้างอิง (ใช้แค่ 'ข้อมูล' เช่น ชื่อ/ปี/เหตุการณ์/ความเชื่อ ให้ถูกต้อง):\n"
+                 + research[:1500] +
+                 "\n\n⚠️ สำคัญมาก: ห้ามลอกประโยค/สำนวน/ลำดับคำจากข้อความนี้เด็ดขาด — มันคือ 'สารานุกรม' "
+                 "อ่านแล้วเข้าใจ แล้ว 'เล่าใหม่ด้วยภาษาพูดของตัวเอง' แบบสนุก ดึงดูด เป็นกันเอง "
+                 "(ห้ามขึ้นต้นแบบวิกิ เช่น 'เป็นพระเกจิอาจารย์ที่มีชื่อเสียงของจังหวัด...'). "
+                 "เอาเฉพาะข้อเท็จจริงมา แต่เรียบเรียงสำนวนใหม่ทั้งหมด")
     await _vlog(f"✍️ Scriptwriter ({await _agent_model('scriptwriter')}): เขียนบทตามโครง retention… (รอ ~15-45 วิ)")
     prompt = (
         f"{body}\n\n"
@@ -1647,13 +1651,16 @@ async def _suggest_real_subjects(profile: "ChannelProfile", avoid: list[str], n:
     `avoid` (already-done titles)."""
     avoid_txt = "; ".join([a for a in avoid if a][:20]) or "-"
     system = (f"คุณคือผู้ช่วยเลือกหัวข้อสำหรับช่อง '{profile.name}'. "
-              "เสนอเฉพาะ 'ชื่อจริงเจาะจง' ที่มีอยู่จริงและน่าจะมีหน้าใน Wikipedia ไทย "
-              "(พระเครื่อง/หิน/แร่/วัด/สถานที่ศักดิ์สิทธิ์/เครื่องราง ที่มีชื่อชัดเจน). ตอบ JSON เท่านั้น")
+              "เสนอ 'ชื่อจริงเจาะจง' ที่มีอยู่จริงและน่าจะมีหน้าใน Wikipedia (ไทยหรืออังกฤษ). "
+              "ผสมทั้งของไทย และของต่างประเทศทั่วโลก (เครื่องราง/เทพ/สิ่งลึกลับ/ตำนาน ของชาติอื่น). "
+              "ตอบ JSON เท่านั้น")
     prompt = (f"แนวช่อง: {profile.topic_pick}\n"
               f"ห้ามซ้ำกับที่ทำไปแล้ว: {avoid_txt}\n"
-              f'เสนอ {n} ชื่อเฉพาะเจาะจง (ภาษาไทย) ที่ "มีจริงและค้นเจอใน Wikipedia" '
-              '(เช่น พระสมเด็จวัดระฆัง, วัดอรุณราชวราราม, อเมทิสต์, หลวงปู่ทวด). '
-              'เรียงจากที่คนน่าสนใจที่สุด ตอบ JSON: {"subjects": ["...", "..."]}')
+              f'เสนอ {n} ชื่อเฉพาะเจาะจง ที่ "มีจริงและค้นเจอใน Wikipedia" — '
+              'ผสมไทย + ต่างประเทศ (เช่น ไทย: พระสมเด็จวัดระฆัง, หลวงปู่ทวด, อเมทิสต์; '
+              'ต่างประเทศ: ตาปีศาจ Nazar, เครื่องราง Omamori ญี่ปุ่น, เทพอานูบิส, ด้วงสคารับอียิปต์, '
+              'ค้อนธอร์ Mjolnir, เทพกวนอู, หินมูนสโตน). '
+              'เรียงจากที่คนน่าสนใจที่สุด เน้นที่ดูแล้วอยากกดดู ตอบ JSON: {"subjects": ["...", "..."]}')
     try:
         data = _parse_json(await _or_chat(await _agent_model("trend_scout"), system, prompt, 1500))
     except Exception:
@@ -1703,19 +1710,24 @@ async def _pick_catalog_subject(profile: "ChannelProfile") -> str:
     avoid = {c.get("title", "").strip() for c in recent if c.get("title")}
     avoid |= {c.get("subject", "").strip() for c in recent if c.get("subject")}
     cats = _WIKI_CATS.get(profile.id, [])
-    pool = []
+    wiki_pool = []
     if cats:
         try:
             from app.agents import wiki_images
-            pool = await wiki_images.catalog(cats)
+            wiki_pool = await wiki_images.catalog(cats)
         except Exception:
-            pool = []
-    pool = [s for s in pool if s and s not in avoid and not s.startswith(_WIKI_SKIP_PREFIX)]
-    if not pool:  # fallback: ask the model for real subjects
-        pool = [s for s in await _suggest_real_subjects(profile, list(avoid)) if s not in avoid]
+            wiki_pool = []
+    wiki_pool = [s for s in wiki_pool if s and s not in avoid and not s.startswith(_WIKI_SKIP_PREFIX)]
+    # Blend Thai catalog subjects with model-suggested ones (Thai + INTERNATIONAL) so foreign
+    # amulets/deities/legends enter the rotation, not just Thai-wiki pages.
+    intl_pool = [s for s in await _suggest_real_subjects(profile, list(avoid)) if s not in avoid]
+    random.shuffle(wiki_pool)
+    random.shuffle(intl_pool)
+    # ~50/50 mix: interleave so international shows up about as often as Thai catalog subjects.
+    pool = [s for pair in zip(wiki_pool, intl_pool) for s in pair]
+    pool += wiki_pool[len(intl_pool):] + intl_pool[len(wiki_pool):]
     if not pool:
         return ""
-    random.shuffle(pool)
     return pool[0]
 
 
@@ -1739,7 +1751,7 @@ async def make_channel_short(profile: "ChannelProfile", topic: str = "", title: 
             picked = await _pick_catalog_subject(profile)
             if picked:
                 topic = picked
-                await log_line(f"📜 เลือกหัวข้อจากคลัง Wikipedia: {picked}")
+                await log_line(f"🔥 AI เลือกหัวข้อ (ไทย+ต่างประเทศ): {picked}")
         except Exception:
             pass
     await set_status("script")
