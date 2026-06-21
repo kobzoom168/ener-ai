@@ -12478,6 +12478,7 @@ async def admin_story_status(request: Request):
 @app.get("/admin/story/img")
 async def admin_story_img(request: Request):
     await _require_admin(request)
+    import os
     from app.agents import story_studio
     try:
         i = int(request.query_params.get("i") or 0)
@@ -12531,6 +12532,7 @@ async def admin_story_regen(request: Request):
 async def admin_story_upload(request: Request):
     await _require_admin(request)
     from app.agents import story_studio
+    import os
     i = int(request.query_params.get("i") or 0)
     form = await request.form()
     f = form.get("video")
@@ -12561,6 +12563,7 @@ async def admin_story_assemble(request: Request):
 @app.get("/admin/story/file")
 async def admin_story_file(request: Request):
     await _require_admin(request)
+    import os
     from app.agents import story_studio
     mp4 = story_studio.STORY_STATE.get("mp4") or ""
     if not mp4 or not os.path.exists(mp4):
