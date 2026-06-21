@@ -20,6 +20,17 @@ from app.core.ai import chat_json
 
 _STORY_DIR = "/app/data/story"
 _SIZE_16x9 = {"width": 1344, "height": 768}
+_SIZE_9x16 = {"width": 768, "height": 1344}
+
+
+def _aspect_size(aspect: str) -> dict:
+    """fal image_size for the chosen format. 9:16 = Shorts/TikTok/Reels (default), 16:9 = ปกติ."""
+    return _SIZE_9x16 if str(aspect) == "9:16" else _SIZE_16x9
+
+
+def _aspect_dims(aspect: str) -> tuple[int, int]:
+    """Final mp4 dimensions (w, h)."""
+    return (1080, 1920) if str(aspect) == "9:16" else (1920, 1080)
 _REAL_STYLE = ("cinematic photorealistic film still, real authentic Thai people and Thai setting, "
                "natural realistic lighting, shot on a cinema camera, shallow depth of field, "
                "rich fine detail, true-to-life. No text, no watermark, no caption")
@@ -147,14 +158,16 @@ async def preview_hero(scene: str = "") -> str | None:
                       "soft dramatic lighting").strip()
     edit = ("Keep the SAME person from the reference image(s) — identical face and features. Render "
             "them as a polished cinematic film character: " + scene + ". " + _REAL_STYLE)
-    return await aivideo.generate_image_edit(edit, h["images"], _HERO_PREVIEW, aspect="16:9")
+    return await aivideo.generate_image_edit(edit, h["images"], _HERO_PREVIEW, aspect="9:16")
 
 
-async def _render_shots_with_refs(shots: list[dict], ref_imgs: list[str], seed: int | None) -> list[str | None]:
+async def _render_shots_with_refs(shots: list[dict], ref_imgs: list[str], seed: int | None,
+                                  aspect: str = "9:16") -> list[str | None]:
     """Render every shot as a Nano Banana edit referencing ref_imgs (the hero) → same lead character in
     every scene; falls back to a plain photorealistic shot if the edit fails."""
     from app.agents import aivideo
     os.makedirs(_STORY_DIR, exist_ok=True)
+    size = _aspect_size(aspect)
 
     async def _img(s):
         out = os.path.join(_STORY_DIR, f"shot_{int(time.time()*1000)}_{s.get('idx', 0)}.png")
@@ -162,11 +175,11 @@ async def _render_shots_with_refs(shots: list[dict], ref_imgs: list[str], seed: 
             edit = ("Keep the SAME main character as the reference image(s) — identical face, hair, "
                     "outfit and overall design. Place this character into a NEW scene: "
                     + s.get("image_prompt", "") + ". " + _REAL_STYLE + ". Do not copy the reference background.")
-            p = await aivideo.generate_image_edit(edit, ref_imgs, out, seed=seed, aspect="16:9")
+            p = await aivideo.generate_image_edit(edit, ref_imgs, out, seed=seed, aspect=aspect)
             if p:
                 return p
         return await aivideo.generate_image(_story_style(s.get("image_prompt", "")), out,
-                                            seed=seed, size=_SIZE_16x9)
+                                            seed=seed, size=size)
 
     return list(await asyncio.gather(*[_img(s) for s in shots]))
 
@@ -175,7 +188,8 @@ def _log_state(m):
     STORY_STATE["log"].append(str(m))
 
 
-async def run_board_bg(topic: str, n_shots: int, characters: int, model: str) -> None:
+async def run_board_bg(topic: str, n_shots: int, characters: int, model: str,
+                       aspect: str = "9:16") -> None:
     """Stage 1-3 → a STORYBOARD (shots with image + editable script + narration). Per-shot upload /
     regenerate / assemble happen via separate endpoints afterward."""
     STORY_STATE.update(running=True, log=["🚀 สร้างสตอรี่บอร์ด…"], board=None, mp4="", title="", err="")
@@ -189,16 +203,17 @@ async def run_board_bg(topic: str, n_shots: int, characters: int, model: str) ->
         hero = _hero_refs()
         if hero:  # ตัวละครเอก overrides the AI's generated characters → your character stars in it
             _log_state(f"🎭 ใช้ตัวละครเอกของคุณเป็นตัวหลัก ({len(story['shots'])} ช็อต)…")
-            images = await _render_shots_with_refs(story["shots"], hero, seed=_seed(topic))
+            images = await _render_shots_with_refs(story["shots"], hero, seed=_seed(topic), aspect=aspect)
         else:
             _log_state(f"🎭 สร้างชีตตัวละคร {len(story['characters'])} ตัว…")
-            sheets = await gen_character_sheets(story["characters"], seed=_seed(topic))
+            sheets = await gen_character_sheets(story["characters"], seed=_seed(topic), aspect=aspect)
             _log_state(f"🖼️ สร้างภาพ {len(story['shots'])} ช็อต (ตัวละครคงที่)…")
-            images = await gen_shot_images(story["shots"], sheets, seed=_seed(topic))
+            images = await gen_shot_images(story["shots"], sheets, seed=_seed(topic), aspect=aspect)
         shots = []
         for s, img in zip(story["shots"], images):
             shots.append({**s, "image": img or "", "video": ""})
         STORY_STATE["board"] = {"title": story["title"], "logline": story.get("logline", ""),
+                                "aspect": aspect,
                                 "characters": story["characters"], "shots": shots}
         STORY_STATE["title"] = story["title"]
         _save_board()
@@ -307,7 +322,7 @@ def parse_script_table(text: str) -> list[dict]:
     return shots
 
 
-async def run_import_bg(text: str) -> None:
+async def run_import_bg(text: str, aspect: str = "9:16") -> None:
     """Import a user's own shot table → generate one image per shot → storyboard (no AI scripting)."""
     STORY_STATE.update(running=True, log=["📥 นำเข้าสคริปต์…"], board=None, mp4="", title="", err="")
     try:
@@ -318,16 +333,17 @@ async def run_import_bg(text: str) -> None:
         from app.agents import aivideo
         os.makedirs(_STORY_DIR, exist_ok=True)
         seed = _seed(text[:60])
+        size = _aspect_size(aspect)
         hero = _hero_refs()
 
         if hero:  # ── ตัวละครเอก: every shot is THIS character (across all clips) ──
             _log_state(f"🎭 ใช้ตัวละครเอกของคุณ — ตัวหลักทุกช็อต ({len(shots)} ช็อต)…")
-            imgs = await _render_shots_with_refs(shots, hero, seed)
+            imgs = await _render_shots_with_refs(shots, hero, seed, aspect=aspect)
         else:  # ── no hero → shot 1 establishes the character, rest lock to it ──
             _log_state("🖼️ ช็อต 1 — ตั้งตัวละคร/โทน (ตัวจำ)…")
             a_out = os.path.join(_STORY_DIR, f"shot_{int(time.time()*1000)}_1.png")
             anchor = await aivideo.generate_image(_story_style(shots[0]["image_prompt"]), a_out,
-                                                  seed=seed, size=_SIZE_16x9)
+                                                  seed=seed, size=size)
 
             async def _img(s):
                 out = os.path.join(_STORY_DIR, f"shot_{int(time.time()*1000)}_{s['idx']}.png")
@@ -335,17 +351,18 @@ async def run_import_bg(text: str) -> None:
                     edit = ("Keep the SAME main character(s), wardrobe, art style, color grade and world "
                             "as the reference image — same identity. Now show a NEW connected scene: "
                             + s["image_prompt"] + ". " + _REAL_STYLE + ". Do not copy the reference background.")
-                    p = await aivideo.generate_image_edit(edit, [anchor], out, seed=seed, aspect="16:9")
+                    p = await aivideo.generate_image_edit(edit, [anchor], out, seed=seed, aspect=aspect)
                     if p:
                         return p
-                return await aivideo.generate_image(_story_style(s["image_prompt"]), out, seed=seed, size=_SIZE_16x9)
+                return await aivideo.generate_image(_story_style(s["image_prompt"]), out, seed=seed, size=size)
 
             if len(shots) > 1:
                 _log_state(f"🔗 ล็อกตัวละครให้ต่อเนื่องอีก {len(shots)-1} ช็อต…")
             rest = await asyncio.gather(*[_img(s) for s in shots[1:]])
             imgs = [anchor, *rest]
         board_shots = [{**s, "image": img or "", "video": ""} for s, img in zip(shots, imgs)]
-        STORY_STATE["board"] = {"title": "สคริปต์นำเข้า", "logline": "", "characters": [], "shots": board_shots}
+        STORY_STATE["board"] = {"title": "สคริปต์นำเข้า", "logline": "", "aspect": aspect,
+                                "characters": [], "shots": board_shots}
         STORY_STATE["title"] = "สคริปต์นำเข้า"
         _save_board()
         _log_state(f"✅ นำเข้า {len(board_shots)} ช็อต — แก้/รีเจน/อัปวิดีโอ แล้วกดตัดต่อ")
@@ -450,9 +467,10 @@ async def assemble_board_bg(motion: str) -> None:
                         else (s["image"], "image")) for s in shots]
         _log_state("🎙️ พากย์เสียง…")
         narr_paths, durs = await narrate_shots(shots)
-        _log_state("🎬 ตัดต่อ → mp4…")
+        aspect = b.get("aspect", "16:9")  # boards made before this feature were 16:9
+        _log_state(f"🎬 ตัดต่อ → mp4 ({aspect})…")
         out = os.path.join(_STORY_DIR, f"story_{int(time.time())}.mp4")
-        mp4 = await asyncio.to_thread(assemble_story, visuals, narr_paths, durs, out)
+        mp4 = await asyncio.to_thread(assemble_story, visuals, narr_paths, durs, out, 30, aspect)
         if mp4:
             STORY_STATE["mp4"] = mp4
             _save_board()
@@ -545,18 +563,20 @@ async def generate_story(topic: str, n_shots: int = 8, characters: int = 2,
 
 
 # ── stage 2: character reference sheets (one clean anchor per character) ──────
-async def gen_character_sheets(characters: list[dict], seed: int | None = None) -> dict:
+async def gen_character_sheets(characters: list[dict], seed: int | None = None,
+                               aspect: str = "9:16") -> dict:
     """One clean full-body+face reference per character → the anchor that locks the face/outfit
     across every shot (fed to Nano Banana). Returns {name: image_path}."""
     from app.agents import aivideo
     os.makedirs(_STORY_DIR, exist_ok=True)
+    size = _aspect_size(aspect)
 
     async def _one(i: int, c: dict) -> tuple[str, str | None]:
         prompt = (c.get("ref_prompt", "") +
                   ", full body and clear face, neutral plain studio background, character reference "
                   "sheet, " + _REAL_STYLE)
         out = os.path.join(_STORY_DIR, f"char_{int(time.time()*1000)}_{i}.png")
-        path = await aivideo.generate_image(prompt, out, seed=seed, size=_SIZE_16x9)
+        path = await aivideo.generate_image(prompt, out, seed=seed, size=size)
         return c.get("name", ""), path
 
     res = await asyncio.gather(*[_one(i, c) for i, c in enumerate(characters or [])])
@@ -564,11 +584,13 @@ async def gen_character_sheets(characters: list[dict], seed: int | None = None) 
 
 
 # ── stage 3: one image per shot, with the SAME characters via Nano Banana ─────
-async def gen_shot_images(shots: list[dict], sheets: dict, seed: int | None = None) -> list[str | None]:
+async def gen_shot_images(shots: list[dict], sheets: dict, seed: int | None = None,
+                          aspect: str = "9:16") -> list[str | None]:
     """For each shot: if characters appear → Nano Banana edit referencing their sheets (same faces);
-    else → plain Flux pro. 16:9. Returns paths 1:1 with shots (None where a shot failed)."""
+    else → plain Flux pro. Returns paths 1:1 with shots (None where a shot failed)."""
     from app.agents import aivideo
     os.makedirs(_STORY_DIR, exist_ok=True)
+    size = _aspect_size(aspect)
 
     async def _one(shot: dict) -> str | None:
         idx = shot.get("idx", 0)
@@ -578,12 +600,12 @@ async def gen_shot_images(shots: list[dict], sheets: dict, seed: int | None = No
             edit = ("Keep the EXACT same character(s) from the reference image(s) — identical face, "
                     "body, hair and clothing. Put them into a NEW scene: " + shot.get("image_prompt", "")
                     + ". " + _REAL_STYLE + ". Do not copy the reference background.")
-            p = await aivideo.generate_image_edit(edit, refs, out, seed=seed, aspect="16:9")
+            p = await aivideo.generate_image_edit(edit, refs, out, seed=seed, aspect=aspect)
             if p:
                 return p
         # no characters, or the edit failed → plain photorealistic scene
         return await aivideo.generate_image(_story_style(shot.get("image_prompt", "")),
-                                            out, seed=seed, size=_SIZE_16x9)
+                                            out, seed=seed, size=size)
 
     return list(await asyncio.gather(*[_one(s) for s in (shots or [])]))
 
@@ -617,13 +639,15 @@ async def narrate_shots(shots: list[dict]) -> tuple[list[str], list[float]]:
     return paths, durs
 
 
-# ── stage 5: assemble → mp4 (16:9, Ken Burns on stills or Kling videos) ───────
+# ── stage 5: assemble → mp4 (9:16 Shorts/TikTok by default, or 16:9) ──────────
 def assemble_story(visuals: list[tuple[str, str]], narr_paths: list[str],
-                   durs: list[float], out_mp4: str, fps: int = 30) -> str:
-    """Build the final 16:9 video: each shot's visual (image→Ken Burns zoom, or video) timed to its
-    narration, concatenated, with the narration as the audio track. Fail-open → '' on error."""
+                   durs: list[float], out_mp4: str, fps: int = 30, aspect: str = "9:16") -> str:
+    """Build the final video at the chosen aspect: each shot's visual (image→Ken Burns zoom, or video)
+    timed to its narration, concatenated, with the narration as the audio track. Fail-open → ''."""
     import subprocess
     from app.agents.vdo_agent import _concat_audio
+    W, H = _aspect_dims(aspect)
+    BW, BH = int(W * 1.5), int(H * 1.5)  # oversample so the Ken Burns zoom never reveals edges
     visuals = [(p, k) for (p, k) in visuals if p and os.path.exists(p)]
     if not visuals:
         return ""
@@ -644,14 +668,14 @@ def assemble_story(visuals: list[tuple[str, str]], narr_paths: list[str],
     chains = []
     for i, ((path, kind), d) in enumerate(zip(visuals, durs)):
         frames = max(1, int(max(1.0, d) * fps))
-        if kind == "image":  # slow cinematic Ken Burns zoom-in at 1080p
+        if kind == "image":  # slow cinematic Ken Burns zoom-in
             chains.append(
-                f"[{i}:v]scale=2560:1440:force_original_aspect_ratio=increase,crop=2560:1440,"
+                f"[{i}:v]scale={BW}:{BH}:force_original_aspect_ratio=increase,crop={BW}:{BH},"
                 f"zoompan=z='min(zoom+0.0004,1.12)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
-                f"d={frames}:s=1920x1080:fps={fps},setsar=1[v{i}]")
+                f"d={frames}:s={W}x{H}:fps={fps},setsar=1[v{i}]")
         else:
             chains.append(
-                f"[{i}:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,"
+                f"[{i}:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},"
                 f"fps={fps},setpts=PTS-STARTPTS,setsar=1[v{i}]")
     cat = "".join(f"[v{i}]" for i in range(n))
     fc = ";".join(chains) + f";{cat}concat=n={n}:v=1:a=0[vout]"

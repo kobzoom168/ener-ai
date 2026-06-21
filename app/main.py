@@ -12342,6 +12342,7 @@ _STORY_PAGE = """<!DOCTYPE html><html lang="th"><head><meta charset="utf-8">
    <div><label>จำนวนช็อต</label><select id="shots"><option>3</option><option>5</option><option selected>8</option><option>12</option><option>20</option><option>30</option></select></div>
    <div><label>ตัวละคร</label><select id="chars"><option>1</option><option selected>2</option><option>3</option></select></div>
    <div><label>โมเดลบท</label><select id="model"><option value="grok">Grok (xAI)</option><option value="gemini">Gemini</option><option value="deepseek">DeepSeek</option></select></div>
+   <div><label>ขนาด</label><select id="aspect"><option value="9:16">9:16 Shorts/TikTok</option><option value="16:9">16:9 ปกติ</option></select></div>
   </div>
   <div style="display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap">
    <button id="go" onclick="createBoard()">🎬 สร้างสตอรี่บอร์ด</button>
@@ -12389,12 +12390,12 @@ async function createBoard(){
  const t=document.getElementById('topic').value.trim();if(!t){alert('ใส่หัวข้อก่อน');return;}
  document.getElementById('go').disabled=true;document.getElementById('board').innerHTML='';
  await api('/admin/story/board',{method:'POST',headers:{'Content-Type':'application/json'},
-  body:JSON.stringify({topic:t,n_shots:+shots.value,characters:+chars.value,model:model.value})});
+  body:JSON.stringify({topic:t,n_shots:+shots.value,characters:+chars.value,model:model.value,aspect:document.getElementById('aspect').value})});
  startPoll();
 }
 async function importScript(){const t=document.getElementById('impt').value.trim();if(!t){alert('วางสคริปต์ก่อน');return;}
  document.getElementById('go').disabled=true;document.getElementById('board').innerHTML='';
- await api('/admin/story/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({script:t})});
+ await api('/admin/story/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({script:t,aspect:document.getElementById('aspect').value})});
  startPoll();}
 function startPoll(){if(timer)clearInterval(timer);timer=setInterval(poll,2000);poll();}
 async function poll(){
@@ -12412,9 +12413,11 @@ async function poll(){
 function esc(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');}
 function renderBoard(b){
  const el=document.getElementById('board');
+ const ar=(b.aspect==='9:16')?'9/16':'16/9';
  el.innerHTML=b.shots.map(s=>{
-  const media=s.has_video?`<video class="media" src="/admin/story/img?i=${s.idx}&v=1&t=${Date.now()}" muted></video>`
-   :(s.has_image?`<img class="media" src="/admin/story/img?i=${s.idx}&t=${Date.now()}">`:`<div class="media"></div>`);
+  const ms=`style="aspect-ratio:${ar}"`;
+  const media=s.has_video?`<video class="media" ${ms} src="/admin/story/img?i=${s.idx}&v=1&t=${Date.now()}" muted></video>`
+   :(s.has_image?`<img class="media" ${ms} src="/admin/story/img?i=${s.idx}&t=${Date.now()}">`:`<div class="media" ${ms}></div>`);
   return `<div class="shot" data-i="${s.idx}">
    <div class="num">ช็อต ${s.idx}${s.has_video?' · 🎞️ วิดีโอที่อัป':''}</div>
    ${media}
@@ -12486,8 +12489,9 @@ async def admin_story_board(request: Request):
     model = str(body.get("model") or "grok").strip().lower()
     if model not in ("grok", "gemini", "deepseek"):
         model = "grok"
+    aspect = "16:9" if str(body.get("aspect")) == "16:9" else "9:16"
     import asyncio as _aio
-    _aio.create_task(story_studio.run_board_bg(topic, n_shots, chars, model))
+    _aio.create_task(story_studio.run_board_bg(topic, n_shots, chars, model, aspect))
     return JSONResponse({"ok": True})
 
 
@@ -12502,8 +12506,9 @@ async def admin_story_import(request: Request):
     text = str(body.get("script") or "")
     if not text.strip():
         return JSONResponse({"ok": False, "msg": "วางสคริปต์ก่อน"})
+    aspect = "16:9" if str(body.get("aspect")) == "16:9" else "9:16"
     import asyncio as _aio
-    _aio.create_task(story_studio.run_import_bg(text))
+    _aio.create_task(story_studio.run_import_bg(text, aspect))
     return JSONResponse({"ok": True})
 
 
@@ -12515,7 +12520,7 @@ async def admin_story_status(request: Request):
     b = s.get("board")
     board = None
     if b:
-        board = {"title": b.get("title", ""), "shots": [
+        board = {"title": b.get("title", ""), "aspect": b.get("aspect", "9:16"), "shots": [
             {"idx": x.get("idx"), "image_prompt": x.get("image_prompt", ""),
              "narration": x.get("narration", ""), "has_image": bool(x.get("image")),
              "has_video": bool(x.get("video"))} for x in b.get("shots", [])]}
