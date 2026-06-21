@@ -516,8 +516,10 @@ def _prepend_cover_card(clip_mp4: str, cover_jpg: str, seconds: float = 1.5) -> 
         return clip_mp4
     out = clip_mp4 + ".cv.mp4"
     try:
+        # boost the card's contrast/saturation so YouTube's frame-picker (prefers high "saliency")
+        # is more likely to grab the title card as the Shorts grid thumbnail
         fc = ("[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,"
-              "fps=30,format=yuv420p[c];"
+              "fps=30,eq=contrast=1.14:saturation=1.18:brightness=0.02,format=yuv420p[c];"
               "[2:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,"
               "fps=30,format=yuv420p[m];"
               "[1:a]aresample=44100[a0];[2:a]aresample=44100[a1];"
@@ -527,7 +529,10 @@ def _prepend_cover_card(clip_mp4: str, cover_jpg: str, seconds: float = 1.5) -> 
                "-f", "lavfi", "-t", f"{seconds:.2f}", "-i",
                "anullsrc=channel_layout=stereo:sample_rate=44100",
                "-i", clip_mp4, "-filter_complex", fc, "-map", "[v]", "-map", "[a]",
+               # frequent keyframes + a forced keyframe at t=0 → the card frame is a clean I-frame
+               # that YouTube can extract (the "first-frame keyframe" trick the consults recommend)
                "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+               "-g", "15", "-force_key_frames", "0",
                "-c:a", "aac", "-b:a", "128k", out]
         r = subprocess.run(cmd, capture_output=True, timeout=180)
         if r.returncode == 0 and os.path.exists(out) and os.path.getsize(out) > 10000:
