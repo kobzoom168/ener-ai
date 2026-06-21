@@ -118,14 +118,31 @@ async def run_import_bg(text: str) -> None:
             STORY_STATE["err"] = "แยกตารางไม่ได้ — ตรวจรูปแบบ (CSV: ช็อต,เนื้อหา,บรรยาย,Prompt)"
             _log_state("❌ " + STORY_STATE["err"]); return
         from app.agents import aivideo
-        _log_state(f"🖼️ สร้างภาพ {len(shots)} ช็อตจากสคริปต์พี่…")
+        os.makedirs(_STORY_DIR, exist_ok=True)
         seed = _seed(text[:60])
 
+        # ── shot 1 = ANCHOR: establishes the character + look the whole clip is locked to ──
+        _log_state("🖼️ ช็อต 1 — ตั้งตัวละคร/โทน (ตัวจำ)…")
+        a_out = os.path.join(_STORY_DIR, f"shot_{int(time.time()*1000)}_1.png")
+        anchor = await aivideo.generate_image(_story_style(shots[0]["image_prompt"]), a_out,
+                                              seed=seed, size=_SIZE_16x9)
+
+        # ── shots 2..N: keep the SAME character/world via Nano Banana edit on the anchor ──
         async def _img(s):
             out = os.path.join(_STORY_DIR, f"shot_{int(time.time()*1000)}_{s['idx']}.png")
+            if anchor:
+                edit = ("Keep the SAME main character(s), wardrobe, art style, color grade and world "
+                        "as the reference image — same identity. Now show a NEW connected scene: "
+                        + s["image_prompt"] + ". " + _REAL_STYLE + ". Do not copy the reference background.")
+                p = await aivideo.generate_image_edit(edit, [anchor], out, seed=seed, aspect="16:9")
+                if p:
+                    return p
             return await aivideo.generate_image(_story_style(s["image_prompt"]), out, seed=seed, size=_SIZE_16x9)
-        os.makedirs(_STORY_DIR, exist_ok=True)
-        imgs = await asyncio.gather(*[_img(s) for s in shots])
+
+        if len(shots) > 1:
+            _log_state(f"🔗 ล็อกตัวละครให้ต่อเนื่องอีก {len(shots)-1} ช็อต…")
+        rest = await asyncio.gather(*[_img(s) for s in shots[1:]])
+        imgs = [anchor, *rest]
         board_shots = [{**s, "image": img or "", "video": ""} for s, img in zip(shots, imgs)]
         STORY_STATE["board"] = {"title": "สคริปต์นำเข้า", "logline": "", "characters": [], "shots": board_shots}
         STORY_STATE["title"] = "สคริปต์นำเข้า"
