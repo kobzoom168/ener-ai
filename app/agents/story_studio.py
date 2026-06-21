@@ -12,10 +12,21 @@ Pipeline (built in stages):
 """
 from __future__ import annotations
 
-import json
-import re
+import asyncio
+import os
+import time
 
 from app.core.ai import chat_json
+
+_STORY_DIR = "/app/data/story"
+_SIZE_16x9 = {"width": 1344, "height": 768}
+_REAL_STYLE = ("cinematic photorealistic film still, real authentic Thai people and Thai setting, "
+               "natural realistic lighting, shot on a cinema camera, shallow depth of field, "
+               "rich fine detail, true-to-life. No text, no watermark, no caption")
+
+
+def _story_style(prompt: str) -> str:
+    return f"{prompt}. {_REAL_STYLE}"
 
 # Default LLM for the story brain. xAI (Grok) is strong at vivid narrative; override per call.
 _STORY_MODEL = "grok"
@@ -95,3 +106,47 @@ async def generate_story(topic: str, n_shots: int = 8, characters: int = 2,
         return {"ok": False, "error": "โมเดลไม่คืนช็อต — ลองใหม่/เปลี่ยนหัวข้อ"}
     return {"ok": True, "title": title, "logline": str(data.get("logline") or "").strip()[:200],
             "characters": chars, "shots": shots[:n]}
+
+
+# ── stage 2: character reference sheets (one clean anchor per character) ──────
+async def gen_character_sheets(characters: list[dict], seed: int | None = None) -> dict:
+    """One clean full-body+face reference per character → the anchor that locks the face/outfit
+    across every shot (fed to Nano Banana). Returns {name: image_path}."""
+    from app.agents import aivideo
+    os.makedirs(_STORY_DIR, exist_ok=True)
+
+    async def _one(i: int, c: dict) -> tuple[str, str | None]:
+        prompt = (c.get("ref_prompt", "") +
+                  ", full body and clear face, neutral plain studio background, character reference "
+                  "sheet, " + _REAL_STYLE)
+        out = os.path.join(_STORY_DIR, f"char_{int(time.time()*1000)}_{i}.png")
+        path = await aivideo.generate_image(prompt, out, seed=seed, size=_SIZE_16x9)
+        return c.get("name", ""), path
+
+    res = await asyncio.gather(*[_one(i, c) for i, c in enumerate(characters or [])])
+    return {n: p for n, p in res if n and p}
+
+
+# ── stage 3: one image per shot, with the SAME characters via Nano Banana ─────
+async def gen_shot_images(shots: list[dict], sheets: dict, seed: int | None = None) -> list[str | None]:
+    """For each shot: if characters appear → Nano Banana edit referencing their sheets (same faces);
+    else → plain Flux pro. 16:9. Returns paths 1:1 with shots (None where a shot failed)."""
+    from app.agents import aivideo
+    os.makedirs(_STORY_DIR, exist_ok=True)
+
+    async def _one(shot: dict) -> str | None:
+        idx = shot.get("idx", 0)
+        out = os.path.join(_STORY_DIR, f"shot_{int(time.time()*1000)}_{idx}.png")
+        refs = [sheets[n] for n in shot.get("characters", []) if n in sheets and sheets[n]]
+        if refs:
+            edit = ("Keep the EXACT same character(s) from the reference image(s) — identical face, "
+                    "body, hair and clothing. Put them into a NEW scene: " + shot.get("image_prompt", "")
+                    + ". " + _REAL_STYLE + ". Do not copy the reference background.")
+            p = await aivideo.generate_image_edit(edit, refs, out, seed=seed, aspect="16:9")
+            if p:
+                return p
+        # no characters, or the edit failed → plain photorealistic scene
+        return await aivideo.generate_image(_story_style(shot.get("image_prompt", "")),
+                                            out, seed=seed, size=_SIZE_16x9)
+
+    return list(await asyncio.gather(*[_one(s) for s in (shots or [])]))

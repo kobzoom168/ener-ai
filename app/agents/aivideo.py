@@ -38,10 +38,12 @@ def enabled() -> bool:
     return bool(_key())
 
 
-async def generate_image(prompt: str, out_path: str, model: str = "", seed: int | None = None) -> str | None:
+async def generate_image(prompt: str, out_path: str, model: str = "", seed: int | None = None,
+                         size: dict | None = None) -> str | None:
     """9:16 background image via fal. Default Flux DEV — far better prompt adherence than schnell
     (so the picture matches the script) at ~$0.025/img. Override with FAL_IMAGE_MODEL. A shared
-    `seed` across a clip keeps the look cohesive. Fail-open."""
+    `seed` across a clip keeps the look cohesive. `size` overrides the default 9:16 (e.g. 16:9 for
+    Story Studio). Fail-open."""
     key = _key()
     prompt = (prompt or "").strip()
     if not key or not prompt:
@@ -49,7 +51,7 @@ async def generate_image(prompt: str, out_path: str, model: str = "", seed: int 
     mdl = (model or os.environ.get("FAL_IMAGE_MODEL", "") or "fal-ai/flux-pro/v1.1").strip()
     headers = {"Authorization": f"Key {key}", "Content-Type": "application/json"}
     body = {"prompt": prompt, "num_images": 1,
-            "image_size": {"width": 768, "height": 1344}}  # ~9:16
+            "image_size": size or {"width": 768, "height": 1344}}  # default ~9:16
     if seed is not None:
         body["seed"] = int(seed)
     if "/dev" in mdl:  # flux dev benefits from a few more steps; pro tunes itself
@@ -74,7 +76,7 @@ async def generate_image(prompt: str, out_path: str, model: str = "", seed: int 
 
 
 async def generate_image_edit(prompt: str, ref_paths: list[str], out_path: str,
-                              seed: int | None = None) -> str | None:
+                              seed: int | None = None, aspect: str = "9:16") -> str | None:
     """Character-consistent 9:16 image via fal Nano Banana 2 edit: generate a NEW scene from
     `prompt` while keeping the SAME character/subject shown in the reference image(s). Unlike
     Redux this is a SEMANTIC edit (it re-poses the character into a new scene instead of cloning
@@ -95,7 +97,7 @@ async def generate_image_edit(prompt: str, ref_paths: list[str], out_path: str,
             with open(p, "rb") as f:
                 urls.append("data:image/jpeg;base64," + base64.b64encode(f.read()).decode())
         body = {"prompt": prompt, "image_urls": urls, "num_images": 1,
-                "aspect_ratio": "9:16", "resolution": "1K", "output_format": "jpeg"}
+                "aspect_ratio": aspect, "resolution": "1K", "output_format": "jpeg"}
         if seed is not None:
             body["seed"] = int(seed)
         async with httpx.AsyncClient(timeout=180) as c:
