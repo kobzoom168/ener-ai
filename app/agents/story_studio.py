@@ -32,6 +32,36 @@ def _story_style(prompt: str) -> str:
 # live state for the /admin/story storyboard UI (single uvicorn worker → a module global is enough)
 STORY_STATE: dict = {"running": False, "log": [], "board": None, "mp4": "", "title": "", "err": ""}
 
+_BOARD_FILE = os.path.join(_STORY_DIR, "_board.json")
+
+
+def _save_board() -> None:
+    """Persist the board so a deploy/restart doesn't wipe the user's storyboard (images stay on disk)."""
+    import json
+    try:
+        os.makedirs(_STORY_DIR, exist_ok=True)
+        with open(_BOARD_FILE, "w", encoding="utf-8") as f:
+            json.dump({"board": STORY_STATE.get("board"), "title": STORY_STATE.get("title", ""),
+                       "mp4": STORY_STATE.get("mp4", "")}, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def _load_board() -> None:
+    import json
+    try:
+        with open(_BOARD_FILE, encoding="utf-8") as f:
+            d = json.load(f)
+        if d.get("board"):
+            STORY_STATE["board"] = d["board"]
+            STORY_STATE["title"] = d.get("title", "")
+            STORY_STATE["mp4"] = d.get("mp4", "")
+    except Exception:
+        pass
+
+
+_load_board()  # restore last storyboard on import (survives restarts)
+
 
 def _log_state(m):
     STORY_STATE["log"].append(str(m))
@@ -58,6 +88,7 @@ async def run_board_bg(topic: str, n_shots: int, characters: int, model: str) ->
         STORY_STATE["board"] = {"title": story["title"], "logline": story.get("logline", ""),
                                 "characters": story["characters"], "shots": shots}
         STORY_STATE["title"] = story["title"]
+        _save_board()
         _log_state(f"✅ สตอรี่บอร์ดเสร็จ {len(shots)} ช็อต — แก้/อัปวิดีโอ แล้วกดตัดต่อ")
     except Exception as exc:
         STORY_STATE["err"] = str(exc)[:200]
@@ -200,6 +231,7 @@ async def run_import_bg(text: str) -> None:
         board_shots = [{**s, "image": img or "", "video": ""} for s, img in zip(shots, imgs)]
         STORY_STATE["board"] = {"title": "สคริปต์นำเข้า", "logline": "", "characters": [], "shots": board_shots}
         STORY_STATE["title"] = "สคริปต์นำเข้า"
+        _save_board()
         _log_state(f"✅ นำเข้า {len(board_shots)} ช็อต — แก้/รีเจน/อัปวิดีโอ แล้วกดตัดต่อ")
     except Exception as exc:
         STORY_STATE["err"] = str(exc)[:200]; _log_state("❌ " + str(exc)[:200])
@@ -219,6 +251,7 @@ def update_shot(idx: int, image_prompt: str | None = None, narration: str | None
                 s["image_prompt"] = str(image_prompt).strip()[:600]
             if narration is not None:
                 s["narration"] = str(narration).strip()[:400]
+            _save_board()
             return True
     return False
 
@@ -231,23 +264,41 @@ def set_shot_video(idx: int, path: str) -> bool:
     for s in b["shots"]:
         if s.get("idx") == idx:
             s["video"] = path
+            _save_board()
             return True
     return False
 
 
 async def regen_shot(idx: int) -> bool:
-    """Re-generate one shot's image (keeps the same character refs)."""
+    """Re-generate one shot's image from its (possibly edited) prompt, keeping character continuity:
+    AI boards use the character sheets; imported boards anchor on shot 1's image (Nano Banana)."""
     b = STORY_STATE.get("board")
     if not b:
         return False
     shot = next((s for s in b["shots"] if s.get("idx") == idx), None)
     if not shot:
         return False
-    sheets = await gen_character_sheets(b["characters"], seed=_seed(b["title"]))
-    imgs = await gen_shot_images([shot], sheets, seed=_seed(str(idx)))
-    if imgs and imgs[0]:
-        shot["image"] = imgs[0]
+    new = None
+    if b.get("characters"):  # AI-generated board → re-use the character reference sheets
+        sheets = await gen_character_sheets(b["characters"], seed=_seed(b["title"]))
+        imgs = await gen_shot_images([shot], sheets, seed=_seed(str(idx)))
+        new = imgs[0] if imgs else None
+    else:  # imported board → lock to shot 1 so the regenerated shot still matches the others
+        from app.agents import aivideo
+        out = os.path.join(_STORY_DIR, f"shot_{int(time.time()*1000)}_{idx}.png")
+        anchor = b["shots"][0].get("image") if b.get("shots") else ""
+        if anchor and os.path.exists(anchor) and anchor != shot.get("image"):
+            edit = ("Keep the SAME main character(s), wardrobe, style and world as the reference "
+                    "image. New connected scene: " + shot.get("image_prompt", "") + ". " + _REAL_STYLE
+                    + ". Do not copy the reference background.")
+            new = await aivideo.generate_image_edit(edit, [anchor], out, seed=_seed(str(idx)), aspect="16:9")
+        if not new:
+            new = await aivideo.generate_image(_story_style(shot.get("image_prompt", "")), out,
+                                               seed=_seed(str(idx)), size=_SIZE_16x9)
+    if new:
+        shot["image"] = new
         shot["video"] = ""
+        _save_board()
         return True
     return False
 
@@ -282,6 +333,7 @@ async def assemble_board_bg(motion: str) -> None:
         mp4 = await asyncio.to_thread(assemble_story, visuals, narr_paths, durs, out)
         if mp4:
             STORY_STATE["mp4"] = mp4
+            _save_board()
             _log_state("✅ คลิปเสร็จ!")
         else:
             STORY_STATE["err"] = "ตัดต่อไม่สำเร็จ"; _log_state("❌ ตัดต่อไม่สำเร็จ")
