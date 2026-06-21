@@ -12311,6 +12311,112 @@ def _tt_redirect_uri(request: Request, configured: str) -> str:
     return base + "/admin/tiktok/callback"
 
 
+_STORY_PAGE = """<!DOCTYPE html><html lang="th"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>🎬 Story Studio</title>
+<style>
+ *{box-sizing:border-box}body{margin:0;background:#0a0e16;color:#e8edf5;font-family:system-ui,'Segoe UI',sans-serif}
+ .wrap{max-width:1100px;margin:0 auto;padding:24px}
+ h1{font-size:24px;margin:0 0 4px}.sub{color:#8b96a8;font-size:13px;margin-bottom:20px}
+ .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}@media(max-width:780px){.grid{grid-template-columns:1fr}}
+ .card{background:#121826;border:1px solid #222c3d;border-radius:14px;padding:16px}
+ label{display:block;font-size:12px;color:#8b96a8;margin:10px 0 4px}
+ input,select{width:100%;background:#1a2231;border:1px solid #2a3548;border-radius:9px;padding:10px;color:#e8edf5;font-size:14px}
+ .row{display:flex;gap:10px}.row>div{flex:1}
+ button{background:linear-gradient(135deg,#7c3aed,#db2777);color:#fff;border:none;border-radius:10px;padding:13px;font-size:15px;font-weight:600;cursor:pointer;width:100%;margin-top:16px}
+ button:disabled{opacity:.5;cursor:default}
+ #log{font-family:ui-monospace,monospace;font-size:13px;background:#070b12;border:1px solid #1e293b;border-radius:10px;padding:12px;height:320px;overflow:auto;white-space:pre-wrap;line-height:1.7}
+ video{width:100%;border-radius:12px;margin-top:12px;background:#000}
+ .hint{font-size:11px;color:#6b7689;margin-top:4px}
+</style></head><body><div class="wrap">
+ <h1>🎬 Story Studio <span style="font-size:13px;color:#8b96a8">(เล่าเรื่องไทยสมจริง)</span></h1>
+ <div class="sub">หัวข้อ → AI เขียนบท → ตัวละครไทยคงที่ → ภาพสมจริง → พากย์ → ตัดต่อ → mp4</div>
+ <div class="grid">
+  <div class="card">
+   <label>หัวข้อเรื่อง</label>
+   <input id="topic" placeholder="เช่น พุทธประวัติ ตอนผจญมาร / นิทานชาวนากับงูเห่า">
+   <div class="row">
+    <div><label>จำนวนช็อต</label><select id="shots"><option>5</option><option selected>8</option><option>12</option><option>20</option><option>30</option></select><div class="hint">~8 วิ/ช็อต</div></div>
+    <div><label>ตัวละครหลัก</label><select id="chars"><option>1</option><option selected>2</option><option>3</option></select></div>
+   </div>
+   <label>ภาพเคลื่อนไหว</label>
+   <select id="motion"><option value="kenburns" selected>Ken Burns (ซูมนุ่ม) — ฟรี เร็ว</option><option value="kling">Kling ทุกช็อต — สมจริงสุด แต่แพง+ช้า</option></select>
+   <button id="go" onclick="createStory()">▶ สร้างเรื่อง</button>
+  </div>
+  <div class="card">
+   <label>📜 ความคืบหน้า</label>
+   <div id="log">— พิมพ์หัวข้อแล้วกดสร้าง —</div>
+   <video id="vid" controls style="display:none"></video>
+  </div>
+ </div>
+</div>
+<script>
+let timer=null;
+async function createStory(){
+ const t=document.getElementById('topic').value.trim();
+ if(!t){alert('ใส่หัวข้อก่อน');return;}
+ document.getElementById('go').disabled=true;
+ document.getElementById('vid').style.display='none';
+ document.getElementById('log').textContent='🚀 ส่งคำสั่ง…';
+ await fetch('/admin/story/create',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',
+   body:JSON.stringify({topic:t,n_shots:+document.getElementById('shots').value,characters:+document.getElementById('chars').value,motion:document.getElementById('motion').value})});
+ if(timer)clearInterval(timer); timer=setInterval(poll,2000); poll();
+}
+async function poll(){
+ try{const r=await fetch('/admin/story/status',{credentials:'same-origin'});const d=await r.json();
+  document.getElementById('log').textContent=(d.log||[]).join('\\n');
+  document.getElementById('log').scrollTop=1e9;
+  if(!d.running){
+   document.getElementById('go').disabled=false; clearInterval(timer); timer=null;
+   if(d.mp4){const v=document.getElementById('vid');v.src='/admin/story/file?t='+Date.now();v.style.display='block';}
+  }
+ }catch(e){}
+}
+</script></body></html>"""
+
+
+@app.get("/admin/story")
+async def admin_story_page(request: Request):
+    await _require_admin(request)
+    return HTMLResponse(_STORY_PAGE)
+
+
+@app.post("/admin/story/create")
+async def admin_story_create(request: Request):
+    await _require_admin(request)
+    from app.agents import story_studio
+    if story_studio.STORY_STATE.get("running"):
+        return JSONResponse({"ok": False, "msg": "กำลังสร้างอยู่"})
+    body = await request.json()
+    topic = str(body.get("topic") or "").strip()[:200]
+    if not topic:
+        return JSONResponse({"ok": False, "msg": "ไม่มีหัวข้อ"})
+    n_shots = max(3, min(30, int(body.get("n_shots") or 8)))
+    chars = max(1, min(3, int(body.get("characters") or 2)))
+    motion = "kling" if str(body.get("motion")) == "kling" else "kenburns"
+    import asyncio as _aio
+    _aio.create_task(story_studio.run_story_bg(topic, n_shots, chars, motion))
+    return JSONResponse({"ok": True})
+
+
+@app.get("/admin/story/status")
+async def admin_story_status(request: Request):
+    await _require_admin(request)
+    from app.agents import story_studio
+    s = story_studio.STORY_STATE
+    return JSONResponse({"running": s.get("running"), "log": s.get("log", [])[-60:],
+                         "mp4": bool(s.get("mp4")), "title": s.get("title", "")})
+
+
+@app.get("/admin/story/file")
+async def admin_story_file(request: Request):
+    await _require_admin(request)
+    from app.agents import story_studio
+    mp4 = story_studio.STORY_STATE.get("mp4") or ""
+    if not mp4 or not os.path.exists(mp4):
+        return JSONResponse({"ok": False}, status_code=404)
+    return FileResponse(mp4, media_type="video/mp4")
+
+
 @app.get("/admin/tiktok")
 async def admin_tiktok_page(request: Request):
     await _verify_admin_session(request)
