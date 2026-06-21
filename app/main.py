@@ -12339,8 +12339,9 @@ _STORY_PAGE = """<!DOCTYPE html><html lang="th"><head><meta charset="utf-8">
  <div class="sub">หัวข้อ → AI เขียนบท+ภาพ (storyboard) → แก้/รีเจน/อัปวิดีโอเองต่อช็อต → AI ตัดต่อ → mp4</div>
  <div class="card">
   <div class="row">
-   <div style="flex:3"><label>หัวข้อเรื่อง</label><input id="topic" placeholder="เช่น พุทธประวัติ ตอนผจญมาร / นิทานชาวนากับงูเห่า"></div>
-   <div><label>จำนวนช็อต</label><select id="shots"><option>3</option><option>5</option><option selected>8</option><option>12</option><option>20</option><option>30</option></select></div>
+   <div style="flex:3"><label>หัวข้อเรื่อง</label><input id="topic" placeholder="เช่น พุทธประวัติ ตอนผจญมาร / นิทานชาวนากับงูเห่า">
+    <div style="margin-top:6px"><button class="sm" style="background:#1a2940" onclick="getIdeas(event)">🎲 ให้ AI คิดเรื่องให้ (ละครไทย)</button><div id="ideas"></div></div></div>
+   <div><label>จำนวนช็อต</label><select id="shots"><option>3</option><option>5</option><option selected>8</option><option>12</option><option>15</option><option>20</option><option>30</option></select><div class="hint" style="font-size:10px;color:#5b6678">15 ช็อต ≈ 2 นาที</div></div>
    <div><label>ตัวละคร</label><select id="chars"><option>1</option><option selected>2</option><option>3</option></select></div>
    <div><label>โมเดลบท</label><select id="model"><option value="grok">Grok (xAI)</option><option value="gemini">Gemini</option><option value="deepseek">DeepSeek</option></select></div>
    <div><label>ขนาด</label><select id="aspect"><option value="9:16">9:16 Shorts/TikTok</option><option value="16:9">16:9 ปกติ</option></select></div>
@@ -12398,6 +12399,19 @@ async function importScript(){const t=document.getElementById('impt').value.trim
  document.getElementById('go').disabled=true;document.getElementById('board').innerHTML='';
  await api('/admin/story/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({script:t,aspect:document.getElementById('aspect').value})});
  startPoll();}
+let _ideas=[];
+async function getIdeas(e){const b=e.target;b.disabled=true;b.textContent='⏳ กำลังคิด…';
+ try{const r=await(await api('/admin/story/idea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:document.getElementById('model').value})})).json();
+  _ideas=r.ideas||[];const box=document.getElementById('ideas');
+  if(!_ideas.length){box.innerHTML='<span style="color:#f87171;font-size:12px">คิดไม่ออก ลองใหม่</span>';}
+  else{box.innerHTML='<div style="margin-top:8px;display:flex;flex-direction:column;gap:6px">'+_ideas.map((it,i)=>
+   '<button class="sm" style="text-align:left;background:#16213a;line-height:1.4" onclick="pickIdea('+i+')"><b>'+esc(it.title)+'</b>'+(it.hook?' — '+esc(it.hook):'')+'</button>').join('')+'</div>';}
+ }catch(err){}
+ b.disabled=false;b.textContent='🎲 ให้ AI คิดเรื่องให้ (ละครไทย)';}
+function pickIdea(i){const it=_ideas[i];if(!it)return;
+ document.getElementById('topic').value=it.title+(it.hook?' — '+it.hook:'');
+ document.getElementById('shots').value='15';
+ document.getElementById('ideas').innerHTML='<span style="color:#34d399;font-size:12px">เลือกแล้ว ✓ (ตั้ง 15 ช็อต ~2 นาที) — ปรับได้ แล้วกดสร้างสตอรี่บอร์ด</span>';}
 function startPoll(){if(timer)clearInterval(timer);timer=setInterval(poll,2000);poll();}
 async function poll(){
  try{const d=await(await api('/admin/story/status')).json();
@@ -12725,6 +12739,18 @@ async def admin_story_balance(request: Request):
     from app.agents import story_studio
     b = await story_studio.fal_balance()
     return JSONResponse({"usd": b, "baht": (round(b * 36) if b is not None else None)})
+
+
+@app.post("/admin/story/idea")
+async def admin_story_idea(request: Request):
+    await _require_admin(request)
+    from app.agents import story_studio
+    body = await request.json()
+    model = str(body.get("model") or "grok").strip().lower()
+    if model not in ("grok", "gemini", "deepseek"):
+        model = "grok"
+    ideas = await story_studio.suggest_ideas(genre=str(body.get("genre") or ""), model=model)
+    return JSONResponse({"ideas": ideas})
 
 
 @app.get("/admin/tiktok")
