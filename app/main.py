@@ -12343,10 +12343,11 @@ _STORY_PAGE = """<!DOCTYPE html><html lang="th"><head><meta charset="utf-8">
    <div><label>ตัวละคร</label><select id="chars"><option>1</option><option selected>2</option><option>3</option></select></div>
    <div><label>โมเดลบท</label><select id="model"><option value="grok">Grok (xAI)</option><option value="gemini">Gemini</option><option value="deepseek">DeepSeek</option></select></div>
   </div>
-  <div style="display:flex;gap:10px;align-items:end;margin-top:10px;flex-wrap:wrap">
+  <div style="display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap">
    <button id="go" onclick="createBoard()">🎬 สร้างสตอรี่บอร์ด</button>
-   <div style="flex:1;min-width:140px"><label>ภาพเคลื่อนไหวตอนตัดต่อ</label><select id="motion"><option value="kenburns" selected>Ken Burns (ฟรี)</option><option value="kling">Kling (สมจริง แพง)</option></select></div>
-   <button id="render" onclick="assemble()" disabled>✂️ AI ตัดต่อ → mp4</button>
+   <span style="color:#475569">|  ตัดต่อ:</span>
+   <button id="renderKB" onclick="assemble('kenburns')" disabled style="background:#26304a">✂️ Ken Burns (ซูม · ฟรี)</button>
+   <button id="renderKL" onclick="assemble('kling')" disabled style="background:linear-gradient(135deg,#0891b2,#7c3aed)">🎬 Kling — ตัวละครขยับจริง (~฿13/ช็อต)</button>
   </div>
   <details style="margin-top:10px"><summary style="cursor:pointer;color:#a78bfa;font-size:13px">📥 หรือ นำเข้าสคริปต์เอง (วางตาราง — คอลัมน์: ช็อต, เนื้อหา, บรรยาย, Prompt)</summary>
    <textarea id="impt" style="margin-top:8px;min-height:90px" placeholder="ช็อตที่,เนื้อหา (Visual Scene),ข้อความบรรยาย (Voiceover Script),Prompt สำหรับ AI Video&#10;1,...,...,Cinematic shot..."></textarea>
@@ -12378,7 +12379,8 @@ async function poll(){
   if(d.board&&d.board.shots)renderBoard(d.board);
   if(!d.running){clearInterval(timer);timer=null;
    document.getElementById('go').disabled=false;
-   document.getElementById('render').disabled=!(d.board&&d.board.shots&&d.board.shots.length);
+   const has=!!(d.board&&d.board.shots&&d.board.shots.length);
+   document.getElementById('renderKB').disabled=!has;document.getElementById('renderKL').disabled=!has;
    if(d.mp4){const v=document.getElementById('vid');v.src='/admin/story/file?t='+Date.now();document.getElementById('resultCard').style.display='block';}
   }
  }catch(e){}
@@ -12411,9 +12413,13 @@ async function regen(i){await saveShot(i);flash(i,'🔄 กำลังรีเ
 async function upload(i,inp){if(!inp.files[0])return;flash(i,'⬆️ กำลังอัป…');
  const fd=new FormData();fd.append('video',inp.files[0]);
  await api('/admin/story/upload?i='+i,{method:'POST',body:fd});startPoll();}
-async function assemble(){document.getElementById('render').disabled=true;
- await api('/admin/story/assemble?motion='+document.getElementById('motion').value,{method:'POST'});startPoll();}
+async function assemble(motion){
+ if(motion==='kling'){const n=document.querySelectorAll('.shot').length||5;
+  if(!confirm('🎬 Kling จะสร้างวิดีโอ AI ทุกช็อต — ตัวละครขยับจริง\\nค่าใช้จ่าย ~฿13/ช็อต (รวม ~฿'+(n*13)+')\\nใช้เวลา ~5-8 นาที\\n\\nยืนยันทำต่อ?'))return;}
+ document.getElementById('renderKB').disabled=true;document.getElementById('renderKL').disabled=true;
+ await api('/admin/story/assemble?motion='+motion,{method:'POST'});startPoll();}
 function flash(i,m){const c=shotEl(i);if(c)c.querySelector('.num').insertAdjacentHTML('beforeend',' <span style="color:#22c55e">'+m+'</span>');}
+poll();  // restore the saved storyboard on page open
 </script></body></html>"""
 
 
