@@ -42,8 +42,11 @@ async def is_on() -> bool:
         return False
 
 
-async def animate_image(image_path: str, out_path: str, model: str = "") -> str | None:
-    """Animate ONE still → mp4 via fal Kling i2v (queue API). Fail-open → None."""
+async def animate_image(image_path: str, out_path: str, model: str = "",
+                        prompt: str = "", duration: str = "5") -> str | None:
+    """Animate ONE still → mp4 via fal Kling i2v (queue API). Fail-open → None.
+    `prompt` overrides the default subtle-motion prompt (Story Studio passes a prompt that lets the
+    CHARACTER act/move, vs the Auto-Post default that keeps the subject still)."""
     key = _key()
     if not key or not image_path or not os.path.exists(image_path):
         return None
@@ -52,7 +55,7 @@ async def animate_image(image_path: str, out_path: str, model: str = "") -> str 
         with open(image_path, "rb") as f:
             data_uri = "data:image/jpeg;base64," + base64.b64encode(f.read()).decode()
         headers = {"Authorization": f"Key {key}", "Content-Type": "application/json"}
-        body = {"image_url": data_uri, "prompt": _ANIM_PROMPT, "duration": "5",
+        body = {"image_url": data_uri, "prompt": (prompt or _ANIM_PROMPT), "duration": duration,
                 "cfg_scale": 0.6, "negative_prompt": _ANIM_NEGATIVE}
         async with httpx.AsyncClient(timeout=240) as c:
             sub = await c.post(f"https://queue.fal.run/{mdl}", headers=headers, json=body)

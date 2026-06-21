@@ -314,13 +314,19 @@ async def assemble_board_bg(motion: str) -> None:
         shots = [s for s in b["shots"] if s.get("image") or s.get("video")]
         if motion == "kling":
             from app.agents import animate
-            _log_state("🎬 Kling ขยับช็อตที่ไม่ได้อัปวิดีโอ…")
+            _log_state("🎬 Kling ทำภาพเคลื่อนไหว (ตัวละครขยับจริง)… อาจนานหลายนาที")
 
             async def _vis(i, s):
                 if s.get("video") and os.path.exists(s["video"]):
                     return (s["video"], "video")
                 out = os.path.join(_STORY_DIR, f"mv_{int(time.time()*1000)}_{i}.mp4")
-                v = await animate.animate_image(s["image"], out)
+                hint = str(s.get("motion") or "").strip()
+                mprompt = ("cinematic character animation: the character moves and acts naturally — "
+                           "subtle head/eye/hand motion, breathing, clothing and hair sway, living "
+                           "expression; gentle camera move; "
+                           + (hint + "; " if hint else "")
+                           + "smooth realistic motion, consistent identity, no morphing")
+                v = await animate.animate_image(s["image"], out, prompt=mprompt)
                 return (v, "video") if v else (s["image"], "image")
             visuals = list(await asyncio.gather(*[_vis(i, s) for i, s in enumerate(shots)]))
         else:
