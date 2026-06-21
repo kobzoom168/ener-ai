@@ -12355,6 +12355,30 @@ _STORY_PAGE = """<!DOCTYPE html><html lang="th"><head><meta charset="utf-8">
   </details>
   <label style="margin-top:10px">📜 ความคืบหน้า</label><div id="log">— พิมพ์หัวข้อแล้วกดสร้าง / หรือนำเข้าสคริปต์เอง —</div>
  </div>
+ <div class="card" id="heroCard">
+  <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start">
+   <div style="flex:0 0 auto">
+    <label>🎭 ตัวละครเอก (ใช้เป็นตัวหลักทุกคลิป)</label>
+    <img id="heroImg" style="width:130px;aspect-ratio:1;object-fit:cover;border-radius:10px;background:#0b0f17;display:none">
+    <div id="heroNone" style="width:130px;height:130px;border-radius:10px;background:#0b0f17;border:1px dashed #2a3548;display:flex;align-items:center;justify-content:center;color:#5b6678;font-size:12px;text-align:center">ยังไม่มี<br>ตัวละครเอก</div>
+   </div>
+   <div style="flex:1;min-width:230px">
+    <div class="row">
+     <label class="up" style="flex:0 0 auto"><button class="sm" type="button">⬆️ อัปรูปหน้าจริง</button><input type="file" accept="image/*" onchange="heroUpload(this)"></label>
+     <button class="sm" onclick="heroPreview(event)">👁️ พรีวิว AI</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+     <input id="heroDesc" placeholder="หรือพิมพ์อธิบายตัวละคร เช่น ชายไทยหนุ่มใส่ชุดสูท" style="flex:1">
+     <button class="sm" onclick="heroGen(event)">✨ สร้าง</button>
+    </div>
+    <div style="margin-top:8px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+     <label style="display:flex;gap:6px;align-items:center;color:#e8edf5;font-size:13px"><input type="checkbox" id="heroOn" onchange="heroToggle()" style="width:auto"> ใช้ตัวละครนี้เป็นตัวหลักทุกคลิป</label>
+     <button class="sm" style="background:#3a2230" onclick="heroClear()">🗑️ ลบ</button>
+    </div>
+    <div id="heroPrev" style="margin-top:10px;display:none"><label>พรีวิว AI เรนเดอร์ (หน้าคุณในฉากหนัง):</label><img id="heroPrevImg" style="width:100%;max-width:340px;border-radius:10px;display:block"></div>
+   </div>
+  </div>
+ </div>
  <div id="board"></div>
  <div class="card" id="resultCard" style="display:none"><label>🎥 วิดีโอผลลัพธ์</label><video id="vid" controls style="width:100%;border-radius:10px;background:#000"></video></div>
 </div>
@@ -12419,7 +12443,25 @@ async function assemble(motion){
  document.getElementById('renderKB').disabled=true;document.getElementById('renderKL').disabled=true;
  await api('/admin/story/assemble?motion='+motion,{method:'POST'});startPoll();}
 function flash(i,m){const c=shotEl(i);if(c)c.querySelector('.num').insertAdjacentHTML('beforeend',' <span style="color:#22c55e">'+m+'</span>');}
-poll();  // restore the saved storyboard on page open
+async function loadHero(){try{const d=await(await api('/admin/story/hero')).json();
+ const img=document.getElementById('heroImg'),none=document.getElementById('heroNone');
+ if(d.has){img.src='/admin/story/hero/img?t='+Date.now();img.style.display='block';none.style.display='none';}
+ else{img.style.display='none';none.style.display='flex';}
+ document.getElementById('heroOn').checked=d.enabled;}catch(e){}}
+async function heroUpload(inp){if(!inp.files[0])return;const fd=new FormData();fd.append('image',inp.files[0]);
+ await api('/admin/story/hero/upload',{method:'POST',body:fd});loadHero();}
+async function heroGen(e){const d=document.getElementById('heroDesc').value.trim();if(!d){alert('ใส่คำอธิบายตัวละคร');return;}
+ const b=e.target;b.disabled=true;b.textContent='⏳…';
+ await api('/admin/story/hero/gen',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({desc:d})});
+ b.disabled=false;b.textContent='✨ สร้าง';loadHero();}
+async function heroPreview(e){const b=e.target;b.disabled=true;b.textContent='⏳ เรนเดอร์…';
+ const r=await(await api('/admin/story/hero/preview',{method:'POST'})).json();
+ b.disabled=false;b.textContent='👁️ พรีวิว AI';
+ if(r.ok){document.getElementById('heroPrev').style.display='block';document.getElementById('heroPrevImg').src='/admin/story/hero/img?preview=1&t='+Date.now();}
+ else alert('ยังไม่มีตัวละคร — อัปรูป/สร้างก่อน');}
+async function heroToggle(){await api('/admin/story/hero/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({on:document.getElementById('heroOn').checked})});}
+async function heroClear(){if(!confirm('ลบตัวละครเอก?'))return;await api('/admin/story/hero/clear',{method:'POST'});document.getElementById('heroPrev').style.display='none';loadHero();}
+poll(); loadHero();  // restore the saved storyboard + hero on page open
 </script></body></html>"""
 
 
@@ -12575,6 +12617,96 @@ async def admin_story_file(request: Request):
     if not mp4 or not os.path.exists(mp4):
         return JSONResponse({"ok": False}, status_code=404)
     return FileResponse(mp4, media_type="video/mp4")
+
+
+# ── ตัวละครเอก (persistent signature character reused in every clip) ──
+@app.get("/admin/story/hero")
+async def admin_story_hero(request: Request):
+    await _require_admin(request)
+    from app.agents import story_studio
+    h = story_studio.get_hero()
+    return JSONResponse({"has": bool(h), "enabled": bool(h and h.get("enabled")),
+                         "name": (h or {}).get("name", ""), "desc": (h or {}).get("desc", ""),
+                         "n": len((h or {}).get("images", []))})
+
+
+@app.get("/admin/story/hero/img")
+async def admin_story_hero_img(request: Request):
+    await _require_admin(request)
+    import os
+    from app.agents import story_studio
+    if request.query_params.get("preview"):  # the AI-rendered sample
+        p = story_studio._HERO_PREVIEW
+        if not os.path.exists(p):
+            return JSONResponse({"ok": False}, status_code=404)
+        return FileResponse(p, media_type="image/png")
+    h = story_studio.get_hero()
+    if not h or not h.get("images"):
+        return JSONResponse({"ok": False}, status_code=404)
+    try:
+        i = int(request.query_params.get("i") or 0)
+    except Exception:
+        i = 0
+    imgs = h["images"]
+    p = imgs[i] if 0 <= i < len(imgs) else imgs[0]
+    if not os.path.exists(p):
+        return JSONResponse({"ok": False}, status_code=404)
+    return FileResponse(p, media_type="image/png")
+
+
+@app.post("/admin/story/hero/preview")
+async def admin_story_hero_preview(request: Request):
+    await _require_admin(request)
+    from app.agents import story_studio
+    p = await story_studio.preview_hero()
+    return JSONResponse({"ok": bool(p)})
+
+
+@app.post("/admin/story/hero/upload")
+async def admin_story_hero_upload(request: Request):
+    await _require_admin(request)
+    import os
+    import time as _t
+    from app.agents import story_studio
+    form = await request.form()
+    f = form.get("image")
+    if f is None:
+        return JSONResponse({"ok": False}, status_code=400)
+    os.makedirs(story_studio._HERO_DIR, exist_ok=True)
+    out = os.path.join(story_studio._HERO_DIR, f"hero_{int(_t.time()*1000)}.png")
+    with open(out, "wb") as fh:
+        fh.write(await f.read())
+    story_studio.add_hero_image(out)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/admin/story/hero/gen")
+async def admin_story_hero_gen(request: Request):
+    await _require_admin(request)
+    from app.agents import story_studio
+    body = await request.json()
+    desc = str(body.get("desc") or "").strip()
+    if not desc:
+        return JSONResponse({"ok": False, "msg": "ใส่คำอธิบายตัวละคร"})
+    p = await story_studio.gen_hero(desc)
+    return JSONResponse({"ok": bool(p)})
+
+
+@app.post("/admin/story/hero/toggle")
+async def admin_story_hero_toggle(request: Request):
+    await _require_admin(request)
+    from app.agents import story_studio
+    body = await request.json()
+    story_studio.set_hero_enabled(bool(body.get("on")))
+    return JSONResponse({"ok": True})
+
+
+@app.post("/admin/story/hero/clear")
+async def admin_story_hero_clear(request: Request):
+    await _require_admin(request)
+    from app.agents import story_studio
+    story_studio.clear_hero()
+    return JSONResponse({"ok": True})
 
 
 @app.get("/admin/tiktok")

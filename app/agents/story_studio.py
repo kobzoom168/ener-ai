@@ -63,6 +63,114 @@ def _load_board() -> None:
 _load_board()  # restore last storyboard on import (survives restarts)
 
 
+# ── ตัวละครเอก (HERO): a persistent signature character reused as the lead in EVERY clip ──
+_HERO_DIR = os.path.join(_STORY_DIR, "hero")
+_HERO_FILE = os.path.join(_STORY_DIR, "_hero.json")
+
+
+def get_hero() -> dict | None:
+    """The saved signature character {name, desc, images:[paths], enabled}. None if unset/no images."""
+    import json
+    try:
+        with open(_HERO_FILE, encoding="utf-8") as f:
+            h = json.load(f)
+        h["images"] = [p for p in h.get("images", []) if p and os.path.exists(p)]
+        return h if h["images"] else None
+    except Exception:
+        return None
+
+
+def save_hero(h: dict) -> None:
+    import json
+    try:
+        os.makedirs(_HERO_DIR, exist_ok=True)
+        with open(_HERO_FILE, "w", encoding="utf-8") as f:
+            json.dump(h, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def add_hero_image(path: str) -> None:
+    h = get_hero() or {"name": "ตัวละครเอก", "desc": "", "images": [], "enabled": True}
+    h["images"] = ([path] + [p for p in h.get("images", []) if p != path])[:4]  # newest first, keep ≤4
+    h["enabled"] = True
+    save_hero(h)
+
+
+def set_hero_enabled(on: bool) -> None:
+    h = get_hero()
+    if h:
+        h["enabled"] = bool(on)
+        save_hero(h)
+
+
+def clear_hero() -> None:
+    try:
+        os.remove(_HERO_FILE)
+    except Exception:
+        pass
+
+
+async def gen_hero(desc: str) -> str | None:
+    """Generate a brand-new signature character from a text description, then save it as the hero."""
+    from app.agents import aivideo
+    os.makedirs(_HERO_DIR, exist_ok=True)
+    out = os.path.join(_HERO_DIR, f"hero_{int(time.time()*1000)}.png")
+    prompt = (desc.strip() + ", full body and clear face, character reference sheet, clean neutral "
+              "studio background, " + _REAL_STYLE)
+    p = await aivideo.generate_image(prompt, out, size=_SIZE_16x9)
+    if p:
+        save_hero({"name": "ตัวละครเอก", "desc": desc.strip()[:300], "images": [p], "enabled": True})
+    return p
+
+
+def _hero_refs() -> list[str] | None:
+    """Hero image paths if a hero is set AND enabled — used as the lead-character anchor for all shots."""
+    h = get_hero()
+    if h and h.get("enabled") and h.get("images"):
+        return h["images"]
+    return None
+
+
+_HERO_PREVIEW = os.path.join(_HERO_DIR, "_preview.png")
+
+
+async def preview_hero(scene: str = "") -> str | None:
+    """Render ONE sample shot of the saved hero (e.g. the user's real face) as a cinematic character,
+    so they can see how it looks before committing. Works even if the hero isn't enabled yet."""
+    h = get_hero()
+    if not h or not h.get("images"):
+        return None
+    from app.agents import aivideo
+    os.makedirs(_HERO_DIR, exist_ok=True)
+    scene = (scene or "standing in a beautiful cinematic Thai setting, confident hero pose, "
+                      "soft dramatic lighting").strip()
+    edit = ("Keep the SAME person from the reference image(s) — identical face and features. Render "
+            "them as a polished cinematic film character: " + scene + ". " + _REAL_STYLE)
+    return await aivideo.generate_image_edit(edit, h["images"], _HERO_PREVIEW, aspect="16:9")
+
+
+async def _render_shots_with_refs(shots: list[dict], ref_imgs: list[str], seed: int | None) -> list[str | None]:
+    """Render every shot as a Nano Banana edit referencing ref_imgs (the hero) → same lead character in
+    every scene; falls back to a plain photorealistic shot if the edit fails."""
+    from app.agents import aivideo
+    os.makedirs(_STORY_DIR, exist_ok=True)
+
+    async def _img(s):
+        out = os.path.join(_STORY_DIR, f"shot_{int(time.time()*1000)}_{s.get('idx', 0)}.png")
+        if ref_imgs:
+            edit = ("Keep the SAME main character as the reference image(s) — identical face, hair, "
+                    "outfit and overall design. Place this character into a NEW scene: "
+                    + s.get("image_prompt", "") + ". " + _REAL_STYLE + ". Do not copy the reference background.")
+            p = await aivideo.generate_image_edit(edit, ref_imgs, out, seed=seed, aspect="16:9")
+            if p:
+                return p
+        return await aivideo.generate_image(_story_style(s.get("image_prompt", "")), out,
+                                            seed=seed, size=_SIZE_16x9)
+
+    return list(await asyncio.gather(*[_img(s) for s in shots]))
+
+
 def _log_state(m):
     STORY_STATE["log"].append(str(m))
 
@@ -78,10 +186,15 @@ async def run_board_bg(topic: str, n_shots: int, characters: int, model: str) ->
         if not story.get("ok"):
             STORY_STATE["err"] = story.get("error", "")
             _log_state("❌ " + story.get("error", "")); return
-        _log_state(f"🎭 สร้างชีตตัวละคร {len(story['characters'])} ตัว…")
-        sheets = await gen_character_sheets(story["characters"], seed=_seed(topic))
-        _log_state(f"🖼️ สร้างภาพ {len(story['shots'])} ช็อต (ตัวละครคงที่)…")
-        images = await gen_shot_images(story["shots"], sheets, seed=_seed(topic))
+        hero = _hero_refs()
+        if hero:  # ตัวละครเอก overrides the AI's generated characters → your character stars in it
+            _log_state(f"🎭 ใช้ตัวละครเอกของคุณเป็นตัวหลัก ({len(story['shots'])} ช็อต)…")
+            images = await _render_shots_with_refs(story["shots"], hero, seed=_seed(topic))
+        else:
+            _log_state(f"🎭 สร้างชีตตัวละคร {len(story['characters'])} ตัว…")
+            sheets = await gen_character_sheets(story["characters"], seed=_seed(topic))
+            _log_state(f"🖼️ สร้างภาพ {len(story['shots'])} ช็อต (ตัวละครคงที่)…")
+            images = await gen_shot_images(story["shots"], sheets, seed=_seed(topic))
         shots = []
         for s, img in zip(story["shots"], images):
             shots.append({**s, "image": img or "", "video": ""})
@@ -205,29 +318,32 @@ async def run_import_bg(text: str) -> None:
         from app.agents import aivideo
         os.makedirs(_STORY_DIR, exist_ok=True)
         seed = _seed(text[:60])
+        hero = _hero_refs()
 
-        # ── shot 1 = ANCHOR: establishes the character + look the whole clip is locked to ──
-        _log_state("🖼️ ช็อต 1 — ตั้งตัวละคร/โทน (ตัวจำ)…")
-        a_out = os.path.join(_STORY_DIR, f"shot_{int(time.time()*1000)}_1.png")
-        anchor = await aivideo.generate_image(_story_style(shots[0]["image_prompt"]), a_out,
-                                              seed=seed, size=_SIZE_16x9)
+        if hero:  # ── ตัวละครเอก: every shot is THIS character (across all clips) ──
+            _log_state(f"🎭 ใช้ตัวละครเอกของคุณ — ตัวหลักทุกช็อต ({len(shots)} ช็อต)…")
+            imgs = await _render_shots_with_refs(shots, hero, seed)
+        else:  # ── no hero → shot 1 establishes the character, rest lock to it ──
+            _log_state("🖼️ ช็อต 1 — ตั้งตัวละคร/โทน (ตัวจำ)…")
+            a_out = os.path.join(_STORY_DIR, f"shot_{int(time.time()*1000)}_1.png")
+            anchor = await aivideo.generate_image(_story_style(shots[0]["image_prompt"]), a_out,
+                                                  seed=seed, size=_SIZE_16x9)
 
-        # ── shots 2..N: keep the SAME character/world via Nano Banana edit on the anchor ──
-        async def _img(s):
-            out = os.path.join(_STORY_DIR, f"shot_{int(time.time()*1000)}_{s['idx']}.png")
-            if anchor:
-                edit = ("Keep the SAME main character(s), wardrobe, art style, color grade and world "
-                        "as the reference image — same identity. Now show a NEW connected scene: "
-                        + s["image_prompt"] + ". " + _REAL_STYLE + ". Do not copy the reference background.")
-                p = await aivideo.generate_image_edit(edit, [anchor], out, seed=seed, aspect="16:9")
-                if p:
-                    return p
-            return await aivideo.generate_image(_story_style(s["image_prompt"]), out, seed=seed, size=_SIZE_16x9)
+            async def _img(s):
+                out = os.path.join(_STORY_DIR, f"shot_{int(time.time()*1000)}_{s['idx']}.png")
+                if anchor:
+                    edit = ("Keep the SAME main character(s), wardrobe, art style, color grade and world "
+                            "as the reference image — same identity. Now show a NEW connected scene: "
+                            + s["image_prompt"] + ". " + _REAL_STYLE + ". Do not copy the reference background.")
+                    p = await aivideo.generate_image_edit(edit, [anchor], out, seed=seed, aspect="16:9")
+                    if p:
+                        return p
+                return await aivideo.generate_image(_story_style(s["image_prompt"]), out, seed=seed, size=_SIZE_16x9)
 
-        if len(shots) > 1:
-            _log_state(f"🔗 ล็อกตัวละครให้ต่อเนื่องอีก {len(shots)-1} ช็อต…")
-        rest = await asyncio.gather(*[_img(s) for s in shots[1:]])
-        imgs = [anchor, *rest]
+            if len(shots) > 1:
+                _log_state(f"🔗 ล็อกตัวละครให้ต่อเนื่องอีก {len(shots)-1} ช็อต…")
+            rest = await asyncio.gather(*[_img(s) for s in shots[1:]])
+            imgs = [anchor, *rest]
         board_shots = [{**s, "image": img or "", "video": ""} for s, img in zip(shots, imgs)]
         STORY_STATE["board"] = {"title": "สคริปต์นำเข้า", "logline": "", "characters": [], "shots": board_shots}
         STORY_STATE["title"] = "สคริปต์นำเข้า"
