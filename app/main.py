@@ -12315,62 +12315,97 @@ _STORY_PAGE = """<!DOCTYPE html><html lang="th"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>🎬 Story Studio</title>
 <style>
  *{box-sizing:border-box}body{margin:0;background:#0a0e16;color:#e8edf5;font-family:system-ui,'Segoe UI',sans-serif}
- .wrap{max-width:1100px;margin:0 auto;padding:24px}
- h1{font-size:24px;margin:0 0 4px}.sub{color:#8b96a8;font-size:13px;margin-bottom:20px}
- .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}@media(max-width:780px){.grid{grid-template-columns:1fr}}
- .card{background:#121826;border:1px solid #222c3d;border-radius:14px;padding:16px}
- label{display:block;font-size:12px;color:#8b96a8;margin:10px 0 4px}
- input,select{width:100%;background:#1a2231;border:1px solid #2a3548;border-radius:9px;padding:10px;color:#e8edf5;font-size:14px}
- .row{display:flex;gap:10px}.row>div{flex:1}
- button{background:linear-gradient(135deg,#7c3aed,#db2777);color:#fff;border:none;border-radius:10px;padding:13px;font-size:15px;font-weight:600;cursor:pointer;width:100%;margin-top:16px}
+ .wrap{max-width:1280px;margin:0 auto;padding:22px}
+ h1{font-size:22px;margin:0 0 4px}.sub{color:#8b96a8;font-size:12px;margin-bottom:16px}
+ .card{background:#121826;border:1px solid #222c3d;border-radius:14px;padding:14px;margin-bottom:14px}
+ label{display:block;font-size:12px;color:#8b96a8;margin:8px 0 4px}
+ input,select,textarea{width:100%;background:#1a2231;border:1px solid #2a3548;border-radius:9px;padding:9px;color:#e8edf5;font-size:13px;font-family:inherit}
+ textarea{resize:vertical;min-height:54px}
+ .row{display:flex;gap:10px;flex-wrap:wrap}.row>div{flex:1;min-width:120px}
+ button{background:linear-gradient(135deg,#7c3aed,#db2777);color:#fff;border:none;border-radius:9px;padding:11px 14px;font-size:14px;font-weight:600;cursor:pointer}
+ button.sm{padding:6px 10px;font-size:12px;background:#26304a}
  button:disabled{opacity:.5;cursor:default}
- #log{font-family:ui-monospace,monospace;font-size:13px;background:#070b12;border:1px solid #1e293b;border-radius:10px;padding:12px;height:320px;overflow:auto;white-space:pre-wrap;line-height:1.7}
- video{width:100%;border-radius:12px;margin-top:12px;background:#000}
- .hint{font-size:11px;color:#6b7689;margin-top:4px}
+ #log{font-family:ui-monospace,monospace;font-size:12px;background:#070b12;border:1px solid #1e293b;border-radius:9px;padding:10px;max-height:120px;overflow:auto;white-space:pre-wrap;line-height:1.6}
+ #board{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
+ .shot{background:#141b2a;border:1px solid #263149;border-radius:12px;padding:10px}
+ .shot .num{font-weight:700;font-size:13px;color:#a78bfa;margin-bottom:6px}
+ .shot .media{width:100%;aspect-ratio:16/9;background:#000;border-radius:8px;object-fit:cover;display:block}
+ .shot .btns{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+ .up{position:relative;overflow:hidden;display:inline-block}.up input{position:absolute;inset:0;opacity:0;cursor:pointer}
+ video.media{background:#000}
 </style></head><body><div class="wrap">
- <h1>🎬 Story Studio <span style="font-size:13px;color:#8b96a8">(เล่าเรื่องไทยสมจริง)</span></h1>
- <div class="sub">หัวข้อ → AI เขียนบท → ตัวละครไทยคงที่ → ภาพสมจริง → พากย์ → ตัดต่อ → mp4</div>
- <div class="grid">
-  <div class="card">
-   <label>หัวข้อเรื่อง</label>
-   <input id="topic" placeholder="เช่น พุทธประวัติ ตอนผจญมาร / นิทานชาวนากับงูเห่า">
-   <div class="row">
-    <div><label>จำนวนช็อต</label><select id="shots"><option>5</option><option selected>8</option><option>12</option><option>20</option><option>30</option></select><div class="hint">~8 วิ/ช็อต</div></div>
-    <div><label>ตัวละครหลัก</label><select id="chars"><option>1</option><option selected>2</option><option>3</option></select></div>
-   </div>
-   <label>ภาพเคลื่อนไหว</label>
-   <select id="motion"><option value="kenburns" selected>Ken Burns (ซูมนุ่ม) — ฟรี เร็ว</option><option value="kling">Kling ทุกช็อต — สมจริงสุด แต่แพง+ช้า</option></select>
-   <button id="go" onclick="createStory()">▶ สร้างเรื่อง</button>
+ <h1>🎬 Story Studio <span style="font-size:12px;color:#8b96a8">(เล่าเรื่องไทยสมจริง — เห็นทุกช็อต แก้ได้ทุกอย่าง)</span></h1>
+ <div class="sub">หัวข้อ → AI เขียนบท+ภาพ (storyboard) → แก้/รีเจน/อัปวิดีโอเองต่อช็อต → AI ตัดต่อ → mp4</div>
+ <div class="card">
+  <div class="row">
+   <div style="flex:3"><label>หัวข้อเรื่อง</label><input id="topic" placeholder="เช่น พุทธประวัติ ตอนผจญมาร / นิทานชาวนากับงูเห่า"></div>
+   <div><label>จำนวนช็อต</label><select id="shots"><option>3</option><option>5</option><option selected>8</option><option>12</option><option>20</option><option>30</option></select></div>
+   <div><label>ตัวละคร</label><select id="chars"><option>1</option><option selected>2</option><option>3</option></select></div>
+   <div><label>โมเดลบท</label><select id="model"><option value="grok">Grok (xAI)</option><option value="gemini">Gemini</option><option value="deepseek">DeepSeek</option></select></div>
   </div>
-  <div class="card">
-   <label>📜 ความคืบหน้า</label>
-   <div id="log">— พิมพ์หัวข้อแล้วกดสร้าง —</div>
-   <video id="vid" controls style="display:none"></video>
+  <div style="display:flex;gap:10px;align-items:end;margin-top:10px;flex-wrap:wrap">
+   <button id="go" onclick="createBoard()">🎬 สร้างสตอรี่บอร์ด</button>
+   <div style="flex:1;min-width:140px"><label>ภาพเคลื่อนไหวตอนตัดต่อ</label><select id="motion"><option value="kenburns" selected>Ken Burns (ฟรี)</option><option value="kling">Kling (สมจริง แพง)</option></select></div>
+   <button id="render" onclick="assemble()" disabled>✂️ AI ตัดต่อ → mp4</button>
   </div>
+  <label style="margin-top:10px">📜 ความคืบหน้า</label><div id="log">— พิมพ์หัวข้อแล้วกดสร้างสตอรี่บอร์ด —</div>
  </div>
+ <div id="board"></div>
+ <div class="card" id="resultCard" style="display:none"><label>🎥 วิดีโอผลลัพธ์</label><video id="vid" controls style="width:100%;border-radius:10px;background:#000"></video></div>
 </div>
 <script>
 let timer=null;
-async function createStory(){
- const t=document.getElementById('topic').value.trim();
- if(!t){alert('ใส่หัวข้อก่อน');return;}
- document.getElementById('go').disabled=true;
- document.getElementById('vid').style.display='none';
- document.getElementById('log').textContent='🚀 ส่งคำสั่ง…';
- await fetch('/admin/story/create',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',
-   body:JSON.stringify({topic:t,n_shots:+document.getElementById('shots').value,characters:+document.getElementById('chars').value,motion:document.getElementById('motion').value})});
- if(timer)clearInterval(timer); timer=setInterval(poll,2000); poll();
+function api(u,o){o=o||{};o.credentials='same-origin';return fetch(u,o);}
+async function createBoard(){
+ const t=document.getElementById('topic').value.trim();if(!t){alert('ใส่หัวข้อก่อน');return;}
+ document.getElementById('go').disabled=true;document.getElementById('board').innerHTML='';
+ await api('/admin/story/board',{method:'POST',headers:{'Content-Type':'application/json'},
+  body:JSON.stringify({topic:t,n_shots:+shots.value,characters:+chars.value,model:model.value})});
+ startPoll();
 }
+function startPoll(){if(timer)clearInterval(timer);timer=setInterval(poll,2000);poll();}
 async function poll(){
- try{const r=await fetch('/admin/story/status',{credentials:'same-origin'});const d=await r.json();
-  document.getElementById('log').textContent=(d.log||[]).join('\\n');
-  document.getElementById('log').scrollTop=1e9;
-  if(!d.running){
-   document.getElementById('go').disabled=false; clearInterval(timer); timer=null;
-   if(d.mp4){const v=document.getElementById('vid');v.src='/admin/story/file?t='+Date.now();v.style.display='block';}
+ try{const d=await(await api('/admin/story/status')).json();
+  document.getElementById('log').textContent=(d.log||[]).join('\\n');document.getElementById('log').scrollTop=1e9;
+  if(d.board&&d.board.shots)renderBoard(d.board);
+  if(!d.running){clearInterval(timer);timer=null;
+   document.getElementById('go').disabled=false;
+   document.getElementById('render').disabled=!(d.board&&d.board.shots&&d.board.shots.length);
+   if(d.mp4){const v=document.getElementById('vid');v.src='/admin/story/file?t='+Date.now();document.getElementById('resultCard').style.display='block';}
   }
  }catch(e){}
 }
+function esc(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');}
+function renderBoard(b){
+ const el=document.getElementById('board');
+ el.innerHTML=b.shots.map(s=>{
+  const media=s.has_video?`<video class="media" src="/admin/story/img?i=${s.idx}&v=1&t=${Date.now()}" muted></video>`
+   :(s.has_image?`<img class="media" src="/admin/story/img?i=${s.idx}&t=${Date.now()}">`:`<div class="media"></div>`);
+  return `<div class="shot" data-i="${s.idx}">
+   <div class="num">ช็อต ${s.idx}${s.has_video?' · 🎞️ วิดีโอที่อัป':''}</div>
+   ${media}
+   <label>พรอมต์ภาพ (อังกฤษ)</label><textarea class="ip">${esc(s.image_prompt)}</textarea>
+   <label>บทบรรยาย (ไทย)</label><textarea class="nr">${esc(s.narration)}</textarea>
+   <div class="btns">
+    <button class="sm" onclick="saveShot(${s.idx})">💾 บันทึก</button>
+    <button class="sm" onclick="regen(${s.idx})">🔄 รีเจนภาพ</button>
+    <label class="up"><button class="sm" type="button">⬆️ อัปวิดีโอ</button><input type="file" accept="video/*" onchange="upload(${s.idx},this)"></label>
+   </div></div>`;}).join('');
+}
+function shotEl(i){return document.querySelector('.shot[data-i="'+i+'"]');}
+async function saveShot(i){const c=shotEl(i);
+ await api('/admin/story/update',{method:'POST',headers:{'Content-Type':'application/json'},
+  body:JSON.stringify({idx:i,image_prompt:c.querySelector('.ip').value,narration:c.querySelector('.nr').value})});
+ flash(i,'💾 บันทึกแล้ว');
+}
+async function regen(i){await saveShot(i);flash(i,'🔄 กำลังรีเจน…');
+ await api('/admin/story/regen?i='+i,{method:'POST'});startPoll();}
+async function upload(i,inp){if(!inp.files[0])return;flash(i,'⬆️ กำลังอัป…');
+ const fd=new FormData();fd.append('video',inp.files[0]);
+ await api('/admin/story/upload?i='+i,{method:'POST',body:fd});startPoll();}
+async function assemble(){document.getElementById('render').disabled=true;
+ await api('/admin/story/assemble?motion='+document.getElementById('motion').value,{method:'POST'});startPoll();}
+function flash(i,m){const c=shotEl(i);if(c)c.querySelector('.num').insertAdjacentHTML('beforeend',' <span style="color:#22c55e">'+m+'</span>');}
 </script></body></html>"""
 
 
@@ -12380,21 +12415,23 @@ async def admin_story_page(request: Request):
     return HTMLResponse(_STORY_PAGE)
 
 
-@app.post("/admin/story/create")
-async def admin_story_create(request: Request):
+@app.post("/admin/story/board")
+async def admin_story_board(request: Request):
     await _require_admin(request)
     from app.agents import story_studio
     if story_studio.STORY_STATE.get("running"):
-        return JSONResponse({"ok": False, "msg": "กำลังสร้างอยู่"})
+        return JSONResponse({"ok": False, "msg": "กำลังทำงานอยู่"})
     body = await request.json()
     topic = str(body.get("topic") or "").strip()[:200]
     if not topic:
         return JSONResponse({"ok": False, "msg": "ไม่มีหัวข้อ"})
     n_shots = max(3, min(30, int(body.get("n_shots") or 8)))
     chars = max(1, min(3, int(body.get("characters") or 2)))
-    motion = "kling" if str(body.get("motion")) == "kling" else "kenburns"
+    model = str(body.get("model") or "grok").strip().lower()
+    if model not in ("grok", "gemini", "deepseek"):
+        model = "grok"
     import asyncio as _aio
-    _aio.create_task(story_studio.run_story_bg(topic, n_shots, chars, motion))
+    _aio.create_task(story_studio.run_board_bg(topic, n_shots, chars, model))
     return JSONResponse({"ok": True})
 
 
@@ -12403,8 +12440,98 @@ async def admin_story_status(request: Request):
     await _require_admin(request)
     from app.agents import story_studio
     s = story_studio.STORY_STATE
-    return JSONResponse({"running": s.get("running"), "log": s.get("log", [])[-60:],
-                         "mp4": bool(s.get("mp4")), "title": s.get("title", "")})
+    b = s.get("board")
+    board = None
+    if b:
+        board = {"title": b.get("title", ""), "shots": [
+            {"idx": x.get("idx"), "image_prompt": x.get("image_prompt", ""),
+             "narration": x.get("narration", ""), "has_image": bool(x.get("image")),
+             "has_video": bool(x.get("video"))} for x in b.get("shots", [])]}
+    return JSONResponse({"running": s.get("running"), "log": s.get("log", [])[-40:],
+                         "mp4": bool(s.get("mp4")), "title": s.get("title", ""), "board": board})
+
+
+@app.get("/admin/story/img")
+async def admin_story_img(request: Request):
+    await _require_admin(request)
+    from app.agents import story_studio
+    try:
+        i = int(request.query_params.get("i") or 0)
+    except Exception:
+        i = 0
+    b = story_studio.STORY_STATE.get("board") or {}
+    shot = next((s for s in b.get("shots", []) if s.get("idx") == i), None)
+    if not shot:
+        return JSONResponse({"ok": False}, status_code=404)
+    path = shot.get("video") if request.query_params.get("v") else shot.get("image")
+    if not path or not os.path.exists(path):
+        path = shot.get("image")
+    if not path or not os.path.exists(path):
+        return JSONResponse({"ok": False}, status_code=404)
+    mt = "video/mp4" if path.endswith(".mp4") else "image/png"
+    return FileResponse(path, media_type=mt)
+
+
+@app.post("/admin/story/update")
+async def admin_story_update(request: Request):
+    await _require_admin(request)
+    from app.agents import story_studio
+    body = await request.json()
+    story_studio.update_shot(int(body.get("idx") or 0),
+                             image_prompt=body.get("image_prompt"), narration=body.get("narration"))
+    return JSONResponse({"ok": True})
+
+
+@app.post("/admin/story/regen")
+async def admin_story_regen(request: Request):
+    await _require_admin(request)
+    from app.agents import story_studio
+    if story_studio.STORY_STATE.get("running"):
+        return JSONResponse({"ok": False})
+    i = int(request.query_params.get("i") or 0)
+    story_studio.STORY_STATE["running"] = True
+    story_studio.STORY_STATE["log"] = story_studio.STORY_STATE.get("log", []) + [f"🔄 รีเจนช็อต {i}…"]
+
+    async def _go():
+        try:
+            await story_studio.regen_shot(i)
+            story_studio.STORY_STATE["log"].append(f"✅ ช็อต {i} ใหม่แล้ว")
+        finally:
+            story_studio.STORY_STATE["running"] = False
+    import asyncio as _aio
+    _aio.create_task(_go())
+    return JSONResponse({"ok": True})
+
+
+@app.post("/admin/story/upload")
+async def admin_story_upload(request: Request):
+    await _require_admin(request)
+    from app.agents import story_studio
+    i = int(request.query_params.get("i") or 0)
+    form = await request.form()
+    f = form.get("video")
+    if f is None:
+        return JSONResponse({"ok": False}, status_code=400)
+    os.makedirs(story_studio._STORY_DIR, exist_ok=True)
+    import time as _t
+    out = os.path.join(story_studio._STORY_DIR, f"up_{int(_t.time()*1000)}_{i}.mp4")
+    with open(out, "wb") as fh:
+        fh.write(await f.read())
+    story_studio.set_shot_video(i, out)
+    story_studio.STORY_STATE["log"] = story_studio.STORY_STATE.get("log", []) + [f"⬆️ อัปวิดีโอช็อต {i} แล้ว"]
+    return JSONResponse({"ok": True})
+
+
+@app.post("/admin/story/assemble")
+async def admin_story_assemble(request: Request):
+    await _require_admin(request)
+    from app.agents import story_studio
+    if story_studio.STORY_STATE.get("running"):
+        return JSONResponse({"ok": False})
+    motion = "kling" if request.query_params.get("motion") == "kling" else "kenburns"
+    import asyncio as _aio
+    _aio.create_task(story_studio.assemble_board_bg(motion))
+    return JSONResponse({"ok": True})
 
 
 @app.get("/admin/story/file")

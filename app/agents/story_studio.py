@@ -29,29 +29,130 @@ def _story_style(prompt: str) -> str:
     return f"{prompt}. {_REAL_STYLE}"
 
 
-# live state for the /admin/story UI (single uvicorn worker → a module global is enough)
-STORY_STATE: dict = {"running": False, "log": [], "mp4": "", "title": "", "err": ""}
+# live state for the /admin/story storyboard UI (single uvicorn worker → a module global is enough)
+STORY_STATE: dict = {"running": False, "log": [], "board": None, "mp4": "", "title": "", "err": ""}
 
 
-async def run_story_bg(topic: str, n_shots: int, characters: int, motion: str) -> None:
-    """Background runner the UI triggers; mirrors progress into STORY_STATE for polling."""
-    STORY_STATE.update(running=True, log=["🚀 เริ่มสร้างเรื่อง…"], mp4="", title="", err="")
+def _log_state(m):
+    STORY_STATE["log"].append(str(m))
 
-    async def _log(m):
-        STORY_STATE["log"].append(str(m))
 
+async def run_board_bg(topic: str, n_shots: int, characters: int, model: str) -> None:
+    """Stage 1-3 → a STORYBOARD (shots with image + editable script + narration). Per-shot upload /
+    regenerate / assemble happen via separate endpoints afterward."""
+    STORY_STATE.update(running=True, log=["🚀 สร้างสตอรี่บอร์ด…"], board=None, mp4="", title="", err="")
     try:
-        import os as _os
-        _os.environ.setdefault("FAL_KEY", "")  # ensured loaded at app startup
-        r = await make_story(topic, n_shots=n_shots, characters=characters, motion=motion, log=_log)
-        if r.get("ok"):
-            STORY_STATE.update(mp4=r.get("mp4", ""), title=r.get("title", ""))
-        else:
-            STORY_STATE["err"] = r.get("error", "")
-            STORY_STATE["log"].append("❌ " + r.get("error", ""))
+        from app.agents import aivideo
+        _log_state("✍️ เขียนบท…")
+        story = await generate_story(topic, n_shots=n_shots, characters=characters, model=model)
+        if not story.get("ok"):
+            STORY_STATE["err"] = story.get("error", "")
+            _log_state("❌ " + story.get("error", "")); return
+        _log_state(f"🎭 สร้างชีตตัวละคร {len(story['characters'])} ตัว…")
+        sheets = await gen_character_sheets(story["characters"], seed=_seed(topic))
+        _log_state(f"🖼️ สร้างภาพ {len(story['shots'])} ช็อต (ตัวละครคงที่)…")
+        images = await gen_shot_images(story["shots"], sheets, seed=_seed(topic))
+        shots = []
+        for s, img in zip(story["shots"], images):
+            shots.append({**s, "image": img or "", "video": ""})
+        STORY_STATE["board"] = {"title": story["title"], "logline": story.get("logline", ""),
+                                "characters": story["characters"], "shots": shots}
+        STORY_STATE["title"] = story["title"]
+        _log_state(f"✅ สตอรี่บอร์ดเสร็จ {len(shots)} ช็อต — แก้/อัปวิดีโอ แล้วกดตัดต่อ")
     except Exception as exc:
         STORY_STATE["err"] = str(exc)[:200]
-        STORY_STATE["log"].append("❌ " + str(exc)[:200])
+        _log_state("❌ " + str(exc)[:200])
+    finally:
+        STORY_STATE["running"] = False
+
+
+import zlib as _zlib
+
+
+def _seed(topic: str) -> int:
+    return _zlib.crc32((topic or "story").encode()) % 2147483647
+
+
+def update_shot(idx: int, image_prompt: str | None = None, narration: str | None = None) -> bool:
+    """Edit a shot's image prompt and/or narration (user override). Regenerate after to apply the
+    new prompt to the picture; narration is used at assemble time."""
+    b = STORY_STATE.get("board")
+    if not b:
+        return False
+    for s in b["shots"]:
+        if s.get("idx") == idx:
+            if image_prompt is not None:
+                s["image_prompt"] = str(image_prompt).strip()[:600]
+            if narration is not None:
+                s["narration"] = str(narration).strip()[:400]
+            return True
+    return False
+
+
+def set_shot_video(idx: int, path: str) -> bool:
+    """Attach an uploaded mp4 to a shot (overrides AI image for that shot)."""
+    b = STORY_STATE.get("board")
+    if not b:
+        return False
+    for s in b["shots"]:
+        if s.get("idx") == idx:
+            s["video"] = path
+            return True
+    return False
+
+
+async def regen_shot(idx: int) -> bool:
+    """Re-generate one shot's image (keeps the same character refs)."""
+    b = STORY_STATE.get("board")
+    if not b:
+        return False
+    shot = next((s for s in b["shots"] if s.get("idx") == idx), None)
+    if not shot:
+        return False
+    sheets = await gen_character_sheets(b["characters"], seed=_seed(b["title"]))
+    imgs = await gen_shot_images([shot], sheets, seed=_seed(str(idx)))
+    if imgs and imgs[0]:
+        shot["image"] = imgs[0]
+        shot["video"] = ""
+        return True
+    return False
+
+
+async def assemble_board_bg(motion: str) -> None:
+    """Stage 4-5 on the current board: narrate + assemble (uploaded video > Kling > Ken Burns)."""
+    b = STORY_STATE.get("board")
+    if not b:
+        STORY_STATE["err"] = "ยังไม่มีสตอรี่บอร์ด"; return
+    STORY_STATE.update(running=True, mp4="", err="")
+    STORY_STATE["log"] = STORY_STATE.get("log", []) + ["🎬 เริ่มตัดต่อ…"]
+    try:
+        shots = [s for s in b["shots"] if s.get("image") or s.get("video")]
+        if motion == "kling":
+            from app.agents import animate
+            _log_state("🎬 Kling ขยับช็อตที่ไม่ได้อัปวิดีโอ…")
+
+            async def _vis(i, s):
+                if s.get("video") and os.path.exists(s["video"]):
+                    return (s["video"], "video")
+                out = os.path.join(_STORY_DIR, f"mv_{int(time.time()*1000)}_{i}.mp4")
+                v = await animate.animate_image(s["image"], out)
+                return (v, "video") if v else (s["image"], "image")
+            visuals = list(await asyncio.gather(*[_vis(i, s) for i, s in enumerate(shots)]))
+        else:
+            visuals = [((s["video"], "video") if s.get("video") and os.path.exists(s["video"])
+                        else (s["image"], "image")) for s in shots]
+        _log_state("🎙️ พากย์เสียง…")
+        narr_paths, durs = await narrate_shots(shots)
+        _log_state("🎬 ตัดต่อ → mp4…")
+        out = os.path.join(_STORY_DIR, f"story_{int(time.time())}.mp4")
+        mp4 = await asyncio.to_thread(assemble_story, visuals, narr_paths, durs, out)
+        if mp4:
+            STORY_STATE["mp4"] = mp4
+            _log_state("✅ คลิปเสร็จ!")
+        else:
+            STORY_STATE["err"] = "ตัดต่อไม่สำเร็จ"; _log_state("❌ ตัดต่อไม่สำเร็จ")
+    except Exception as exc:
+        STORY_STATE["err"] = str(exc)[:200]; _log_state("❌ " + str(exc)[:200])
     finally:
         STORY_STATE["running"] = False
 
