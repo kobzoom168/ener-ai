@@ -73,39 +73,93 @@ def _seed(topic: str) -> int:
     return _zlib.crc32((topic or "story").encode()) % 2147483647
 
 
+def _mk_shot(idx: int, prompt: str, narr: str) -> dict:
+    return {"idx": idx, "image_prompt": (prompt or narr).strip()[:600],
+            "narration": (narr or "").strip()[:400], "dialogue": [],
+            "motion": "slow cinematic push-in", "characters": []}
+
+
+_HDR_RE = __import__("re").compile(r"prompt|visual scene|voiceover|ช็อตที่|ข้อความบรรยาย", __import__("re").I)
+_QUOTE_RE = __import__("re").compile(r"[\"'“”„«»]{1,3}(.+?)[\"'“”„«»]{1,3}", __import__("re").S)
+_TRAIL_EN_RE = __import__("re").compile(r"([A-Za-z][A-Za-z0-9 ,\.\-:;()/]{14,})\s*$")
+
+
+def _parse_line_heuristic(line: str) -> dict | None:
+    """One pasted row → (image_prompt, narration) without relying on column splitting. The English
+    cinematic prompt is the trailing Latin block; the Thai narration is the quoted segment."""
+    import re
+    s = (line or "").strip().strip(",").strip()
+    if not s:
+        return None
+    s = re.sub(r"^\s*\d+\s*[\.\)\,\t|]*\s*", "", s)  # drop leading shot number
+    narr, prompt = "", ""
+    m = _QUOTE_RE.search(s)
+    if m:  # narration is the quoted Thai; prompt is whatever Latin trails it
+        narr = m.group(1).strip()
+        tail = s[m.end():].strip().strip(",").strip()
+        prompt = tail or s[:m.start()].strip()
+    else:  # no quotes → split Thai (front) vs trailing English prompt
+        em = _TRAIL_EN_RE.search(s)
+        if em:
+            prompt = em.group(1).strip()
+            narr = s[:em.start()].strip().strip(",").strip()
+        else:
+            prompt = narr = s
+    if not (prompt or narr):
+        return None
+    return _mk_shot(0, prompt, narr)
+
+
 def parse_script_table(text: str) -> list[dict]:
-    """Parse a pasted shot table (CSV/TSV) into shots. Maps the 'Prompt' column → image_prompt and
-    the 'บรรยาย/voiceover/narration' column → narration; falls back to positional (last col = prompt,
-    a Thai-looking col = narration). Lenient about headers, quotes and delimiters."""
+    """Parse a pasted shot table into shots. Tries clean CSV/TSV columns first (Prompt→image_prompt,
+    บรรยาย/voiceover→narration); if the columns collapse (space-aligned paste, merged header), falls
+    back to a per-line heuristic that uses quotes + Thai/English to separate narration vs prompt."""
     import csv
     import io
     text = (text or "").strip()
     if not text:
         return []
-    delim = "\t" if (text.count("\t") > text.count(",")) else ","
-    rows = [r for r in csv.reader(io.StringIO(text), delimiter=delim) if any(str(c).strip() for c in r)]
-    if not rows:
-        return []
-    header = [str(h).strip().lower() for h in rows[0]]
+    lines = [ln for ln in text.splitlines() if ln.strip()]
 
-    def _find(keys):
-        for i, h in enumerate(header):
-            if any(k in h for k in keys):
-                return i
-        return -1
-    pi = _find(["prompt"])
-    ni = _find(["บรรยาย", "voiceover", "narration", "script", "เสียง"])
-    has_header = (pi >= 0 or ni >= 0)
-    shots = []
-    for r in rows[1:] if has_header else rows:
-        cells = [str(c).strip().strip('"').strip("'").strip() for c in r]
-        prompt = (cells[pi] if 0 <= pi < len(cells) else (cells[-1] if cells else "")).strip()
-        narr = (cells[ni] if 0 <= ni < len(cells) else "").strip()
-        if not (prompt or narr):
+    # ── attempt 1: real delimited table (comma or tab), only trusted if columns are distinct ──
+    for delim in ("\t", ","):
+        if sum(ln.count(delim) for ln in lines) < len(lines):
             continue
-        shots.append({"idx": len(shots) + 1, "image_prompt": (prompt or narr)[:600],
-                      "narration": narr[:400], "dialogue": [], "motion": "slow cinematic push-in",
-                      "characters": []})
+        rows = [r for r in csv.reader(io.StringIO(text), delimiter=delim) if any(str(c).strip() for c in r)]
+        if not rows or max(len(r) for r in rows) < 3:
+            continue
+        header = [str(h).strip().lower() for h in rows[0]]
+
+        def _find(keys, hdr=header):
+            for i, h in enumerate(hdr):
+                if any(k in h for k in keys):
+                    return i
+            return -1
+        pi = _find(["prompt"])
+        ni = _find(["บรรยาย", "voiceover", "narration", "script", "เสียง"])
+        if pi >= 0 and ni >= 0 and pi != ni:  # distinct columns → trustworthy
+            shots = []
+            for r in rows[1:]:
+                cells = [str(c).strip().strip('"').strip("'").strip() for c in r]
+                pr = (cells[pi] if pi < len(cells) else "").strip()
+                nr = (cells[ni] if ni < len(cells) else "").strip()
+                if pr or nr:
+                    shots.append(_mk_shot(len(shots) + 1, pr or nr, nr))
+            if shots:
+                return shots
+        break
+
+    # ── attempt 2: heuristic per-line (handles Excel/space paste & merged columns) ──
+    _hdr_markers = ("visual scene", "voiceover", "ช็อตที่", "prompt สำหรับ", "ข้อความบรรยาย")
+    shots = []
+    for ln in lines:
+        low = ln.lower()
+        if sum(1 for mk in _hdr_markers if mk in low) >= 2:
+            continue  # column-title header row
+        s = _parse_line_heuristic(ln)
+        if s:
+            s["idx"] = len(shots) + 1
+            shots.append(s)
     return shots
 
 
