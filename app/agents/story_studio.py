@@ -31,6 +31,23 @@ def _aspect_size(aspect: str) -> dict:
 def _aspect_dims(aspect: str) -> tuple[int, int]:
     """Final mp4 dimensions (w, h)."""
     return (1080, 1920) if str(aspect) == "9:16" else (1920, 1080)
+
+
+async def fal_balance() -> float | None:
+    """Current fal.ai credit balance in USD (so the UI can warn before it runs dry). None on error."""
+    import httpx
+    key = os.environ.get("FAL_KEY", "").strip()
+    if not key:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get("https://rest.alpha.fal.ai/billing/user_balance",
+                            headers={"Authorization": f"Key {key}"})
+            if r.status_code < 300:
+                return round(float(r.text.strip()), 2)
+    except Exception:
+        return None
+    return None
 _REAL_STYLE = ("cinematic photorealistic film still, real authentic Thai people and Thai setting, "
                "natural realistic lighting, shot on a cinema camera, shallow depth of field, "
                "rich fine detail, true-to-life. No text, no watermark, no caption")
