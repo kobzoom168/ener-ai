@@ -73,6 +73,69 @@ def _seed(topic: str) -> int:
     return _zlib.crc32((topic or "story").encode()) % 2147483647
 
 
+def parse_script_table(text: str) -> list[dict]:
+    """Parse a pasted shot table (CSV/TSV) into shots. Maps the 'Prompt' column → image_prompt and
+    the 'บรรยาย/voiceover/narration' column → narration; falls back to positional (last col = prompt,
+    a Thai-looking col = narration). Lenient about headers, quotes and delimiters."""
+    import csv
+    import io
+    text = (text or "").strip()
+    if not text:
+        return []
+    delim = "\t" if (text.count("\t") > text.count(",")) else ","
+    rows = [r for r in csv.reader(io.StringIO(text), delimiter=delim) if any(str(c).strip() for c in r)]
+    if not rows:
+        return []
+    header = [str(h).strip().lower() for h in rows[0]]
+
+    def _find(keys):
+        for i, h in enumerate(header):
+            if any(k in h for k in keys):
+                return i
+        return -1
+    pi = _find(["prompt"])
+    ni = _find(["บรรยาย", "voiceover", "narration", "script", "เสียง"])
+    has_header = (pi >= 0 or ni >= 0)
+    shots = []
+    for r in rows[1:] if has_header else rows:
+        cells = [str(c).strip().strip('"').strip("'").strip() for c in r]
+        prompt = (cells[pi] if 0 <= pi < len(cells) else (cells[-1] if cells else "")).strip()
+        narr = (cells[ni] if 0 <= ni < len(cells) else "").strip()
+        if not (prompt or narr):
+            continue
+        shots.append({"idx": len(shots) + 1, "image_prompt": (prompt or narr)[:600],
+                      "narration": narr[:400], "dialogue": [], "motion": "slow cinematic push-in",
+                      "characters": []})
+    return shots
+
+
+async def run_import_bg(text: str) -> None:
+    """Import a user's own shot table → generate one image per shot → storyboard (no AI scripting)."""
+    STORY_STATE.update(running=True, log=["📥 นำเข้าสคริปต์…"], board=None, mp4="", title="", err="")
+    try:
+        shots = parse_script_table(text)
+        if not shots:
+            STORY_STATE["err"] = "แยกตารางไม่ได้ — ตรวจรูปแบบ (CSV: ช็อต,เนื้อหา,บรรยาย,Prompt)"
+            _log_state("❌ " + STORY_STATE["err"]); return
+        from app.agents import aivideo
+        _log_state(f"🖼️ สร้างภาพ {len(shots)} ช็อตจากสคริปต์พี่…")
+        seed = _seed(text[:60])
+
+        async def _img(s):
+            out = os.path.join(_STORY_DIR, f"shot_{int(time.time()*1000)}_{s['idx']}.png")
+            return await aivideo.generate_image(_story_style(s["image_prompt"]), out, seed=seed, size=_SIZE_16x9)
+        os.makedirs(_STORY_DIR, exist_ok=True)
+        imgs = await asyncio.gather(*[_img(s) for s in shots])
+        board_shots = [{**s, "image": img or "", "video": ""} for s, img in zip(shots, imgs)]
+        STORY_STATE["board"] = {"title": "สคริปต์นำเข้า", "logline": "", "characters": [], "shots": board_shots}
+        STORY_STATE["title"] = "สคริปต์นำเข้า"
+        _log_state(f"✅ นำเข้า {len(board_shots)} ช็อต — แก้/รีเจน/อัปวิดีโอ แล้วกดตัดต่อ")
+    except Exception as exc:
+        STORY_STATE["err"] = str(exc)[:200]; _log_state("❌ " + str(exc)[:200])
+    finally:
+        STORY_STATE["running"] = False
+
+
 def update_shot(idx: int, image_prompt: str | None = None, narration: str | None = None) -> bool:
     """Edit a shot's image prompt and/or narration (user override). Regenerate after to apply the
     new prompt to the picture; narration is used at assemble time."""

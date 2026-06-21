@@ -12348,7 +12348,11 @@ _STORY_PAGE = """<!DOCTYPE html><html lang="th"><head><meta charset="utf-8">
    <div style="flex:1;min-width:140px"><label>ภาพเคลื่อนไหวตอนตัดต่อ</label><select id="motion"><option value="kenburns" selected>Ken Burns (ฟรี)</option><option value="kling">Kling (สมจริง แพง)</option></select></div>
    <button id="render" onclick="assemble()" disabled>✂️ AI ตัดต่อ → mp4</button>
   </div>
-  <label style="margin-top:10px">📜 ความคืบหน้า</label><div id="log">— พิมพ์หัวข้อแล้วกดสร้างสตอรี่บอร์ด —</div>
+  <details style="margin-top:10px"><summary style="cursor:pointer;color:#a78bfa;font-size:13px">📥 หรือ นำเข้าสคริปต์เอง (วางตาราง — คอลัมน์: ช็อต, เนื้อหา, บรรยาย, Prompt)</summary>
+   <textarea id="impt" style="margin-top:8px;min-height:90px" placeholder="ช็อตที่,เนื้อหา (Visual Scene),ข้อความบรรยาย (Voiceover Script),Prompt สำหรับ AI Video&#10;1,...,...,Cinematic shot..."></textarea>
+   <button class="sm" style="margin-top:6px" onclick="importScript()">📥 นำเข้า → สร้าง storyboard</button>
+  </details>
+  <label style="margin-top:10px">📜 ความคืบหน้า</label><div id="log">— พิมพ์หัวข้อแล้วกดสร้าง / หรือนำเข้าสคริปต์เอง —</div>
  </div>
  <div id="board"></div>
  <div class="card" id="resultCard" style="display:none"><label>🎥 วิดีโอผลลัพธ์</label><video id="vid" controls style="width:100%;border-radius:10px;background:#000"></video></div>
@@ -12363,6 +12367,10 @@ async function createBoard(){
   body:JSON.stringify({topic:t,n_shots:+shots.value,characters:+chars.value,model:model.value})});
  startPoll();
 }
+async function importScript(){const t=document.getElementById('impt').value.trim();if(!t){alert('วางสคริปต์ก่อน');return;}
+ document.getElementById('go').disabled=true;document.getElementById('board').innerHTML='';
+ await api('/admin/story/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({script:t})});
+ startPoll();}
 function startPoll(){if(timer)clearInterval(timer);timer=setInterval(poll,2000);poll();}
 async function poll(){
  try{const d=await(await api('/admin/story/status')).json();
@@ -12432,6 +12440,22 @@ async def admin_story_board(request: Request):
         model = "grok"
     import asyncio as _aio
     _aio.create_task(story_studio.run_board_bg(topic, n_shots, chars, model))
+    return JSONResponse({"ok": True})
+
+
+@app.post("/admin/story/import")
+async def admin_story_import(request: Request):
+    """Import the user's OWN shot table (CSV) → storyboard (skips AI scripting, uses their script)."""
+    await _require_admin(request)
+    from app.agents import story_studio
+    if story_studio.STORY_STATE.get("running"):
+        return JSONResponse({"ok": False, "msg": "กำลังทำงานอยู่"})
+    body = await request.json()
+    text = str(body.get("script") or "")
+    if not text.strip():
+        return JSONResponse({"ok": False, "msg": "วางสคริปต์ก่อน"})
+    import asyncio as _aio
+    _aio.create_task(story_studio.run_import_bg(text))
     return JSONResponse({"ok": True})
 
 
