@@ -178,6 +178,111 @@ async def preview_hero(scene: str = "") -> str | None:
     return await aivideo.generate_image_edit(edit, h["images"], _HERO_PREVIEW, aspect="9:16")
 
 
+# ── ค้นรูปบุคคลจริง (keyless DuckDuckGo image search) → reference for a true-to-life HERO face ──
+_SEARCH_DIR = os.path.join(_HERO_DIR, "search")
+HERO_SEARCH: dict = {"items": []}
+_DDG_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+           "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
+
+
+def _ddg_headers(referer: str | None = None, accept: str = "*/*") -> dict:
+    h = {"User-Agent": _DDG_UA, "Accept": accept, "Accept-Language": "th,en-US;q=0.9,en;q=0.8",
+         "X-Requested-With": "XMLHttpRequest", "Sec-Fetch-Dest": "empty",
+         "Sec-Fetch-Mode": "cors", "Sec-Fetch-Site": "same-origin"}
+    if referer:
+        h["Referer"] = referer
+    return h
+
+
+async def search_person_images(query: str, n: int = 8) -> list[dict]:
+    """Find real photos of a person via DuckDuckGo (keyless), download locally so the UI can show
+    them. Returns [{title, path, source}]. Bias toward face photos for the real-person HERO use case."""
+    import hashlib
+    import re
+    import urllib.parse
+    import httpx
+    HERO_SEARCH["items"] = []
+    q = query.strip()
+    if not q:
+        return []
+    if not any(k in q.lower() for k in ("รูป", "ภาพ", "portrait", "photo", "หน้า")):
+        q = q + " รูปถ่าย portrait"
+    os.makedirs(_SEARCH_DIR, exist_ok=True)
+    for f in os.listdir(_SEARCH_DIR):
+        try:
+            os.remove(os.path.join(_SEARCH_DIR, f))
+        except Exception:
+            pass
+    qe = urllib.parse.quote(q)
+    try:
+        async with httpx.AsyncClient(timeout=25, follow_redirects=True) as c:
+            html = (await c.get(f"https://duckduckgo.com/?q={qe}&iax=images&ia=images",
+                                headers=_ddg_headers(accept="text/html"))).text
+            vqd = None
+            for pat in (r'vqd="([^"]+)"', r"vqd=([\d-]+)&", r"vqd=([\d-]+)", r"vqd='([^']+)'"):
+                m = re.search(pat, html)
+                if m:
+                    vqd = m.group(1)
+                    break
+            if not vqd:
+                return []
+            iurl = "https://duckduckgo.com/i.js?" + urllib.parse.urlencode(
+                {"l": "th-th", "o": "json", "q": q, "vqd": vqd, "f": ",,,", "p": "1"})
+            r = await c.get(iurl, headers=_ddg_headers(referer=f"https://duckduckgo.com/?q={qe}"))
+            if r.status_code >= 300:
+                return []
+            results = (r.json() or {}).get("results", [])
+            slug = hashlib.md5(q.encode()).hexdigest()[:6]
+            items = []
+            for res in results:
+                if len(items) >= n:
+                    break
+                title = (res.get("title") or "รูป").replace("\n", " ").strip()[:70]
+                got = None
+                for cand in (res.get("image"), res.get("thumbnail")):
+                    if not cand:
+                        continue
+                    try:
+                        ref = "https://" + urllib.parse.urlparse(cand).netloc + "/"
+                        d = (await c.get(cand, headers=_ddg_headers(referer=ref, accept="image/*,*/*"))).content
+                        if d and len(d) > 1200:
+                            got = d
+                            break
+                    except Exception:
+                        pass
+                if not got:
+                    continue
+                ext = ".jpg"
+                if got[:4] == b"\x89PNG":
+                    ext = ".png"
+                elif got[:4] == b"RIFF" and got[8:12] == b"WEBP":
+                    ext = ".webp"
+                p = os.path.join(_SEARCH_DIR, f"{slug}_{len(items)+1}{ext}")
+                with open(p, "wb") as fh:
+                    fh.write(got)
+                items.append({"title": title, "path": p, "source": res.get("url") or ""})
+            HERO_SEARCH["items"] = items
+            return items
+    except Exception:
+        return []
+
+
+def use_search_image(i: int) -> bool:
+    """Add a searched photo (by index) to the hero reference set."""
+    import shutil
+    items = HERO_SEARCH.get("items", [])
+    if not (0 <= i < len(items)):
+        return False
+    src = items[i].get("path", "")
+    if not src or not os.path.exists(src):
+        return False
+    os.makedirs(_HERO_DIR, exist_ok=True)
+    dst = os.path.join(_HERO_DIR, f"hero_{int(time.time()*1000)}_{i}.png")
+    shutil.copy(src, dst)
+    add_hero_image(dst)
+    return True
+
+
 async def _render_shots_with_refs(shots: list[dict], ref_imgs: list[str], seed: int | None,
                                   aspect: str = "9:16") -> list[str | None]:
     """Render every shot as a Nano Banana edit referencing ref_imgs (the hero) → same lead character in
