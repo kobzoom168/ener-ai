@@ -1,6 +1,7 @@
 """Featherless.ai OpenAI-compatible API client (uncensored models)."""
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
@@ -8,6 +9,22 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
+
+# Featherless plans cap concurrent requests → a 429 (or 503 while a model loads) is usually
+# transient: a slot frees within seconds. Retry a few times before surfacing the error.
+_RETRY_STATUSES = {429, 503}
+_MAX_ATTEMPTS = 4
+
+
+def _retry_wait(response: httpx.Response | None, attempt: int) -> float:
+    if response is not None:
+        ra = response.headers.get("retry-after")
+        if ra:
+            try:
+                return min(float(ra), 15.0)
+            except ValueError:
+                pass
+    return min(2.0 * attempt + 1.0, 12.0)  # 3s, 5s, 7s, 9s…
 
 from app.core.config import settings
 
@@ -214,12 +231,17 @@ async def call_featherless(
     started_at = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(
-                url,
-                headers=_featherless_headers(api_key),
-                json=payload,
-            )
-            response.raise_for_status()
+            for attempt in range(1, _MAX_ATTEMPTS + 1):
+                response = await client.post(
+                    url,
+                    headers=_featherless_headers(api_key),
+                    json=payload,
+                )
+                if response.status_code in _RETRY_STATUSES and attempt < _MAX_ATTEMPTS:
+                    await asyncio.sleep(_retry_wait(response, attempt))
+                    continue
+                response.raise_for_status()
+                break
             data = response.json()
             text = _parse_completion(data)
             prompt_tokens, completion_tokens = _usage_counts(data)
@@ -244,6 +266,10 @@ async def call_featherless(
         detail = _http_error_detail(exc)
         if exc.response is not None and exc.response.status_code == 404:
             raise RuntimeError(f"Featherless model not found. {detail}") from exc
+        if exc.response is not None and exc.response.status_code == 429:
+            raise RuntimeError(
+                "Featherless แน่นชั่วคราว (429 — ลองหลายครั้งแล้ว) ลองใหม่อีกครั้ง หรือสลับโมเดล"
+            ) from exc
         raise RuntimeError(f"Featherless request failed: {detail}") from exc
     except Exception:
         await _log_ai_run(
@@ -291,36 +317,43 @@ async def stream_featherless(
     completion_tokens = 0
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
-            async with client.stream(
-                "POST",
-                url,
-                headers=_featherless_headers(api_key),
-                json=payload,
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line.startswith("data:"):
+            for attempt in range(1, _MAX_ATTEMPTS + 1):
+                async with client.stream(
+                    "POST",
+                    url,
+                    headers=_featherless_headers(api_key),
+                    json=payload,
+                ) as response:
+                    # retry transient concurrency/model-loading before any token is yielded
+                    if response.status_code in _RETRY_STATUSES and attempt < _MAX_ATTEMPTS:
+                        await response.aread()
+                        await asyncio.sleep(_retry_wait(response, attempt))
                         continue
-                    data = line[5:].strip()
-                    if not data or data == "[DONE]":
-                        if data == "[DONE]":
-                            break
-                        continue
-                    try:
-                        chunk = json.loads(data)
-                    except json.JSONDecodeError:
-                        continue
-                    prompt_tokens, completion_tokens = _apply_usage_from_chunk(
-                        chunk, prompt_tokens, completion_tokens
-                    )
-                    choices = chunk.get("choices") or []
-                    if not choices:
-                        continue
-                    first = choices[0] or {}
-                    delta = first.get("delta") or {}
-                    text = _stream_delta_text(delta)
-                    if text:
-                        yield text
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if not data or data == "[DONE]":
+                            if data == "[DONE]":
+                                break
+                            continue
+                        try:
+                            chunk = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+                        prompt_tokens, completion_tokens = _apply_usage_from_chunk(
+                            chunk, prompt_tokens, completion_tokens
+                        )
+                        choices = chunk.get("choices") or []
+                        if not choices:
+                            continue
+                        first = choices[0] or {}
+                        delta = first.get("delta") or {}
+                        text = _stream_delta_text(delta)
+                        if text:
+                            yield text
+                break  # streamed successfully → leave the retry loop
         await _log_ai_run(
             agent,
             model_key,
@@ -338,6 +371,10 @@ async def stream_featherless(
             int((time.perf_counter() - started_at) * 1000),
             False,
         )
+        if exc.response is not None and exc.response.status_code == 429:
+            raise RuntimeError(
+                "Featherless แน่นชั่วคราว (429 — ลองหลายครั้งแล้ว) ลองใหม่อีกครั้ง หรือสลับโมเดล"
+            ) from exc
         raise RuntimeError(
             f"Featherless request failed: {_http_error_detail(exc)}"
         ) from exc
