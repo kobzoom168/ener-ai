@@ -195,9 +195,12 @@ def _ddg_headers(referer: str | None = None, accept: str = "*/*") -> dict:
 
 
 async def search_person_images(query: str, n: int = 8) -> list[dict]:
-    """Find real photos of a person via DuckDuckGo (keyless), download locally so the UI can show
-    them. Returns [{title, path, source}]. Bias toward face photos for the real-person HERO use case."""
+    """Find real photos of a person via Bing image search (keyless, works from datacenter IPs — DDG's
+    i.js 403s from Hetzner). Downloads locally so the UI can show them. Returns [{title, path, source}].
+    Biases toward face photos for the real-person HERO use case."""
     import hashlib
+    import html as _html
+    import json as _json
     import re
     import urllib.parse
     import httpx
@@ -213,40 +216,42 @@ async def search_person_images(query: str, n: int = 8) -> list[dict]:
             os.remove(os.path.join(_SEARCH_DIR, f))
         except Exception:
             pass
-    qe = urllib.parse.quote(q)
+    ua = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+          "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
+    burl = "https://www.bing.com/images/search?q=" + urllib.parse.quote(q) + "&form=HDRSC2&first=1"
     try:
         async with httpx.AsyncClient(timeout=25, follow_redirects=True) as c:
-            html = (await c.get(f"https://duckduckgo.com/?q={qe}&iax=images&ia=images",
-                                headers=_ddg_headers(accept="text/html"))).text
-            vqd = None
-            for pat in (r'vqd="([^"]+)"', r"vqd=([\d-]+)&", r"vqd=([\d-]+)", r"vqd='([^']+)'"):
-                m = re.search(pat, html)
-                if m:
-                    vqd = m.group(1)
-                    break
-            if not vqd:
-                return []
-            iurl = "https://duckduckgo.com/i.js?" + urllib.parse.urlencode(
-                {"l": "th-th", "o": "json", "q": q, "vqd": vqd, "f": ",,,", "p": "1"})
-            r = await c.get(iurl, headers=_ddg_headers(referer=f"https://duckduckgo.com/?q={qe}"))
-            if r.status_code >= 300:
-                return []
-            results = (r.json() or {}).get("results", [])
+            page = (await c.get(burl, headers={"User-Agent": ua,
+                                               "Accept-Language": "th,en-US;q=0.9,en;q=0.8"})).text
+            metas = re.findall(r'\sm="([^"]+)"', page)  # iusc anchors carry HTML-escaped JSON
             slug = hashlib.md5(q.encode()).hexdigest()[:6]
-            items = []
-            for res in results:
+            seen: set = set()
+            items: list[dict] = []
+            for meta in metas:
                 if len(items) >= n:
                     break
-                title = (res.get("title") or "รูป").replace("\n", " ").strip()[:70]
+                try:
+                    d = _json.loads(_html.unescape(meta))
+                except Exception:
+                    continue
+                murl = d.get("murl") or ""
+                turl = d.get("turl") or ""
+                if not (murl or turl) or (murl or turl) in seen:
+                    continue
+                seen.add(murl or turl)
+                title = (d.get("t") or "รูป").replace("\n", " ").strip()[:70]
+                cands = []
+                if murl:
+                    cands.append((murl, "https://" + urllib.parse.urlparse(murl).netloc + "/"))
+                if turl:
+                    cands.append((turl, "https://www.bing.com/"))  # Bing CDN — reliable fallback
                 got = None
-                for cand in (res.get("image"), res.get("thumbnail")):
-                    if not cand:
-                        continue
+                for cand, ref in cands:
                     try:
-                        ref = "https://" + urllib.parse.urlparse(cand).netloc + "/"
-                        d = (await c.get(cand, headers=_ddg_headers(referer=ref, accept="image/*,*/*"))).content
-                        if d and len(d) > 1200:
-                            got = d
+                        dd = (await c.get(cand, headers={"User-Agent": ua, "Referer": ref,
+                                                         "Accept": "image/*,*/*"})).content
+                        if dd and len(dd) > 1500:
+                            got = dd
                             break
                     except Exception:
                         pass
@@ -260,7 +265,7 @@ async def search_person_images(query: str, n: int = 8) -> list[dict]:
                 p = os.path.join(_SEARCH_DIR, f"{slug}_{len(items)+1}{ext}")
                 with open(p, "wb") as fh:
                     fh.write(got)
-                items.append({"title": title, "path": p, "source": res.get("url") or ""})
+                items.append({"title": title, "path": p, "source": d.get("purl") or ""})
             HERO_SEARCH["items"] = items
             return items
     except Exception:
