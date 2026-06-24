@@ -278,10 +278,18 @@ async def extract_and_store_long_term_memories(text: str, reply: str) -> int:
     except Exception:
         return 0
 
-    memories = result.get("memories", [])
+    # the model sometimes returns a bare list instead of {"memories": [...]} — handle both
+    if isinstance(result, dict):
+        memories = result.get("memories", [])
+    elif isinstance(result, list):
+        memories = result
+    else:
+        memories = []
     saved = 0
     async with get_db() as db:
         for item in memories:
+            if not isinstance(item, dict):
+                continue
             content = _compact(str(item.get("content", "")).strip(), 240)
             memory_type = _compact(str(item.get("memory_type", "auto")).strip() or "auto", 24)
             if not content:

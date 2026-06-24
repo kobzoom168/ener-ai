@@ -192,14 +192,20 @@ async def run_chat(chat_id: str, text: str) -> str:
             await db.commit()
     except Exception:
         pass
-    await extract_and_store_long_term_memories(text, reply)
+    try:  # memory storage must NEVER break the reply (a bad extract once ate every Telegram answer)
+        await extract_and_store_long_term_memories(text, reply)
+    except Exception:
+        pass
     final_reply = reply
     lowered_text = text.lower()
     if any(keyword in lowered_text for keyword in SAVE_KEYWORDS):
         from app.agents.memory_keeper import extract_from_recent_messages
 
-        saved = await extract_from_recent_messages(chat_id, limit=20)
-        final_reply += f"\n\n📝 บันทึกแล้ว {saved} ความจำครับกบ"
+        try:
+            saved = await extract_from_recent_messages(chat_id, limit=20)
+            final_reply += f"\n\n📝 บันทึกแล้ว {saved} ความจำครับกบ"
+        except Exception:
+            pass
     try:
         await log_event(
             agent_name="MainChatAgent",
