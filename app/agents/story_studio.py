@@ -49,8 +49,10 @@ async def fal_balance() -> float | None:
         return None
     return None
 _REAL_STYLE = ("cinematic photorealistic film still, real authentic Thai people and Thai setting, "
-               "natural realistic lighting, shot on a cinema camera, shallow depth of field, "
-               "rich fine detail, true-to-life. No text, no watermark, no caption")
+               "natural realistic lighting, shot on a 35mm cinema camera, shallow depth of field, "
+               "fine skin texture and pores, natural imperfections, no plastic skin, "
+               "consistent cinematic color grading, filmic, true-to-life photograph. "
+               "No text, no watermark, no caption, no illustration, no 3d render, no cartoon, no anime")
 
 
 def _story_style(prompt: str) -> str:
@@ -292,16 +294,21 @@ def use_search_image(i: int) -> bool:
 
 
 async def _render_shots_with_refs(shots: list[dict], ref_imgs: list[str], seed: int | None,
-                                  aspect: str = "9:16") -> list[str | None]:
-    """Render every shot as a Nano Banana edit referencing ref_imgs (the hero) → same lead character in
-    every scene; falls back to a plain photorealistic shot if the edit fails."""
+                                  aspect: str = "9:16", protagonist: str = "") -> list[str | None]:
+    """Render shots with the hero as the lead. The hero is injected ONLY into shots where the
+    protagonist actually appears (from the shot's `characters`); scene/other-character shots are
+    rendered plainly from the prompt so the picture matches the script. If `protagonist` is empty
+    (import / no named lead) the hero goes into every shot. Fail-open → plain shot."""
     from app.agents import aivideo
     os.makedirs(_STORY_DIR, exist_ok=True)
     size = _aspect_size(aspect)
+    pl = (protagonist or "").strip().lower()
 
     async def _img(s):
         out = os.path.join(_STORY_DIR, f"shot_{int(time.time()*1000)}_{s.get('idx', 0)}.png")
-        if ref_imgs:
+        chars = [str(c).strip().lower() for c in (s.get("characters") or [])]
+        hero_here = bool(ref_imgs) and ((not pl) or any(pl == c or pl in c for c in chars))
+        if hero_here:
             edit = ("Keep the SAME main character as the reference image(s) — identical face, hair, "
                     "outfit and overall design. Place this character into a NEW scene: "
                     + s.get("image_prompt", "") + ". " + _REAL_STYLE + ". Do not copy the reference background.")
@@ -319,21 +326,24 @@ def _log_state(m):
 
 
 async def run_board_bg(topic: str, n_shots: int, characters: int, model: str,
-                       aspect: str = "9:16", genre: str = "") -> None:
+                       aspect: str = "9:16", genre: str = "", location: str = "") -> None:
     """Stage 1-3 → a STORYBOARD (shots with image + editable script + narration). Per-shot upload /
     regenerate / assemble happen via separate endpoints afterward."""
     STORY_STATE.update(running=True, log=["🚀 สร้างสตอรี่บอร์ด…"], board=None, mp4="", title="", err="")
     try:
         from app.agents import aivideo
         _log_state("✍️ เขียนบท…")
-        story = await generate_story(topic, n_shots=n_shots, characters=characters, model=model, genre=genre)
+        story = await generate_story(topic, n_shots=n_shots, characters=characters, model=model,
+                                     genre=genre, location=location)
         if not story.get("ok"):
             STORY_STATE["err"] = story.get("error", "")
             _log_state("❌ " + story.get("error", "")); return
         hero = _hero_refs()
-        if hero:  # ตัวละครเอก overrides the AI's generated characters → your character stars in it
-            _log_state(f"🎭 ใช้ตัวละครเอกของคุณเป็นตัวหลัก ({len(story['shots'])} ช็อต)…")
-            images = await _render_shots_with_refs(story["shots"], hero, seed=_seed(topic), aspect=aspect)
+        if hero:  # ตัวละครเอก = ตัวเอก (ใส่เฉพาะช็อตที่ตัวเอกอยู่ ช็อตฉาก/คนอื่นสร้างตามบท)
+            protagonist = (story["characters"][0].get("name", "") if story.get("characters") else "")
+            _log_state(f"🎭 ใส่ตัวละครเอก ({protagonist or 'ทุกช็อต'}) เฉพาะช็อตที่ตัวเอกอยู่…")
+            images = await _render_shots_with_refs(story["shots"], hero, seed=_seed(topic),
+                                                   aspect=aspect, protagonist=protagonist)
         else:
             _log_state(f"🎭 สร้างชีตตัวละคร {len(story['characters'])} ตัว…")
             sheets = await gen_character_sheets(story["characters"], seed=_seed(topic), aspect=aspect)
@@ -684,15 +694,17 @@ _GENRE_TONE = {
 
 async def generate_story(topic: str, n_shots: int = 8, characters: int = 2,
                          style: str = "สมจริง photorealistic", model: str = "",
-                         genre: str = "") -> dict:
+                         genre: str = "", location: str = "") -> dict:
     """Topic → a shot-by-shot Thai story script. n_shots controls length (≈8s/shot)."""
     n = max(3, min(50, int(n_shots or 8)))
     tone = _GENRE_TONE.get(str(genre).strip().lower(), "")
+    loc = (location or "").strip()
     prompt = (
         f"หัวข้อเรื่อง: {topic}\n"
         f"จำนวนช็อต: {n} ช็อต (ช็อตละ ~8 วินาที)\n"
         f"จำนวนตัวละครหลัก: ~{max(1, int(characters or 1))} ตัว\n"
         + (f"แนวเรื่อง: {tone}\n" if tone else "")
+        + (f"สถานที่/ฉากหลัก: {loc} — ทุก image_prompt ต้องอยู่ที่สถานที่นี้ ให้ฉาก/โทนสี/บรรยากาศเดียวกันทั้งเรื่อง\n" if loc else "")
         + f"สไตล์ภาพ: {style} — เน้นไทยแท้สมจริงที่สุด\n\n"
         f"เขียนบทเล่าเรื่องให้ครบ {n} ช็อต เรียงต่อเนื่องมีต้น-กลาง-จบ"
         + (" คุมโทน/อารมณ์ตามแนวเรื่องตลอดทั้งเรื่อง" if tone else "")

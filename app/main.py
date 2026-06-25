@@ -12341,6 +12341,7 @@ _STORY_PAGE = """<!DOCTYPE html><html lang="th"><head><meta charset="utf-8">
   <div class="row">
    <div style="flex:3"><label>หัวข้อเรื่อง</label><input id="topic" placeholder="เช่น พุทธประวัติ ตอนผจญมาร / นิทานชาวนากับงูเห่า">
     <div style="margin-top:6px"><button class="sm" style="background:#1a2940" onclick="getIdeas(event)">🎲 ให้ AI คิดเรื่องให้ (ละครไทย)</button><div id="ideas"></div></div></div>
+   <div style="flex:2;min-width:160px"><label>สถานที่/ฉาก (โทนเดียวกัน)</label><input id="location" placeholder="เช่น ในเมืองกรุงเทพ, หมู่บ้านชนบท, วัดเก่า"></div>
    <div><label>แนวเรื่อง</label><select id="genre"><option value="">คละ</option><option value="horror">😱 สยองขวัญ</option><option value="drama">😢 ดราม่า</option><option value="comedy">😂 ตลก</option></select></div>
    <div><label>ความยาว</label><select id="dur" onchange="setDur()"><option value="15" selected>2 นาที</option><option value="30">4 นาที</option><option value="45">6 นาที</option></select><div class="hint" style="font-size:10px;color:#5b6678">ยิ่งยาวยิ่งแพง</div></div>
    <div><label>จำนวนช็อต</label><select id="shots"><option>3</option><option>5</option><option>8</option><option>12</option><option selected>15</option><option>20</option><option>30</option><option>45</option></select><div class="hint" style="font-size:10px;color:#5b6678">~8 วิ/ช็อต</div></div>
@@ -12400,7 +12401,7 @@ async function createBoard(){
  const t=document.getElementById('topic').value.trim();if(!t){alert('ใส่หัวข้อก่อน');return;}
  document.getElementById('go').disabled=true;document.getElementById('board').innerHTML='';
  await api('/admin/story/board',{method:'POST',headers:{'Content-Type':'application/json'},
-  body:JSON.stringify({topic:t,n_shots:+shots.value,characters:+chars.value,model:model.value,aspect:document.getElementById('aspect').value,genre:document.getElementById('genre').value})});
+  body:JSON.stringify({topic:t,n_shots:+shots.value,characters:+chars.value,model:model.value,aspect:document.getElementById('aspect').value,genre:document.getElementById('genre').value,location:document.getElementById('location').value})});
  startPoll();
 }
 async function importScript(){const t=document.getElementById('impt').value.trim();if(!t){alert('วางสคริปต์ก่อน');return;}
@@ -12532,8 +12533,9 @@ async def admin_story_board(request: Request):
     genre = str(body.get("genre") or "").strip().lower()
     if genre not in ("horror", "drama", "comedy"):
         genre = ""
+    location = str(body.get("location") or "").strip()[:120]
     import asyncio as _aio
-    _aio.create_task(story_studio.run_board_bg(topic, n_shots, chars, model, aspect, genre))
+    _aio.create_task(story_studio.run_board_bg(topic, n_shots, chars, model, aspect, genre, location))
     return JSONResponse({"ok": True})
 
 
