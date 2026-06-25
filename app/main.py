@@ -12341,7 +12341,9 @@ _STORY_PAGE = """<!DOCTYPE html><html lang="th"><head><meta charset="utf-8">
   <div class="row">
    <div style="flex:3"><label>หัวข้อเรื่อง</label><input id="topic" placeholder="เช่น พุทธประวัติ ตอนผจญมาร / นิทานชาวนากับงูเห่า">
     <div style="margin-top:6px"><button class="sm" style="background:#1a2940" onclick="getIdeas(event)">🎲 ให้ AI คิดเรื่องให้ (ละครไทย)</button><div id="ideas"></div></div></div>
-   <div><label>จำนวนช็อต</label><select id="shots"><option>3</option><option>5</option><option selected>8</option><option>12</option><option>15</option><option>20</option><option>30</option></select><div class="hint" style="font-size:10px;color:#5b6678">15 ช็อต ≈ 2 นาที</div></div>
+   <div><label>แนวเรื่อง</label><select id="genre"><option value="">คละ</option><option value="horror">😱 สยองขวัญ</option><option value="drama">😢 ดราม่า</option><option value="comedy">😂 ตลก</option></select></div>
+   <div><label>ความยาว</label><select id="dur" onchange="setDur()"><option value="15" selected>2 นาที</option><option value="30">4 นาที</option><option value="45">6 นาที</option></select><div class="hint" style="font-size:10px;color:#5b6678">ยิ่งยาวยิ่งแพง</div></div>
+   <div><label>จำนวนช็อต</label><select id="shots"><option>3</option><option>5</option><option>8</option><option>12</option><option selected>15</option><option>20</option><option>30</option><option>45</option></select><div class="hint" style="font-size:10px;color:#5b6678">~8 วิ/ช็อต</div></div>
    <div><label>ตัวละคร</label><select id="chars"><option>1</option><option selected>2</option><option>3</option></select></div>
    <div><label>โมเดลบท</label><select id="model"><option value="grok">Grok (xAI)</option><option value="gemini">Gemini</option><option value="deepseek">DeepSeek</option></select></div>
    <div><label>ขนาด</label><select id="aspect"><option value="9:16">9:16 Shorts/TikTok</option><option value="16:9">16:9 ปกติ</option></select></div>
@@ -12398,7 +12400,7 @@ async function createBoard(){
  const t=document.getElementById('topic').value.trim();if(!t){alert('ใส่หัวข้อก่อน');return;}
  document.getElementById('go').disabled=true;document.getElementById('board').innerHTML='';
  await api('/admin/story/board',{method:'POST',headers:{'Content-Type':'application/json'},
-  body:JSON.stringify({topic:t,n_shots:+shots.value,characters:+chars.value,model:model.value,aspect:document.getElementById('aspect').value})});
+  body:JSON.stringify({topic:t,n_shots:+shots.value,characters:+chars.value,model:model.value,aspect:document.getElementById('aspect').value,genre:document.getElementById('genre').value})});
  startPoll();
 }
 async function importScript(){const t=document.getElementById('impt').value.trim();if(!t){alert('วางสคริปต์ก่อน');return;}
@@ -12407,17 +12409,19 @@ async function importScript(){const t=document.getElementById('impt').value.trim
  startPoll();}
 let _ideas=[];
 async function getIdeas(e){const b=e.target;b.disabled=true;b.textContent='⏳ กำลังคิด…';
- try{const r=await(await api('/admin/story/idea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:document.getElementById('model').value})})).json();
+ try{const r=await(await api('/admin/story/idea',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:document.getElementById('model').value,genre:document.getElementById('genre').value})})).json();
   _ideas=r.ideas||[];const box=document.getElementById('ideas');
   if(!_ideas.length){box.innerHTML='<span style="color:#f87171;font-size:12px">คิดไม่ออก ลองใหม่</span>';}
   else{box.innerHTML='<div style="margin-top:8px;display:flex;flex-direction:column;gap:6px">'+_ideas.map((it,i)=>
    '<button class="sm" style="text-align:left;background:#16213a;line-height:1.4" onclick="pickIdea('+i+')"><b>'+esc(it.title)+'</b>'+(it.hook?' — '+esc(it.hook):'')+'</button>').join('')+'</div>';}
  }catch(err){}
  b.disabled=false;b.textContent='🎲 ให้ AI คิดเรื่องให้ (ละครไทย)';}
+function setDur(){document.getElementById('shots').value=document.getElementById('dur').value;}
 function pickIdea(i){const it=_ideas[i];if(!it)return;
  document.getElementById('topic').value=it.title+(it.hook?' — '+it.hook:'');
- document.getElementById('shots').value='15';
- document.getElementById('ideas').innerHTML='<span style="color:#34d399;font-size:12px">เลือกแล้ว ✓ (ตั้ง 15 ช็อต ~2 นาที) — ปรับได้ แล้วกดสร้างสตอรี่บอร์ด</span>';}
+ setDur();
+ const mins=document.getElementById('dur').options[document.getElementById('dur').selectedIndex].text;
+ document.getElementById('ideas').innerHTML='<span style="color:#34d399;font-size:12px">เลือกแล้ว ✓ ('+document.getElementById('shots').value+' ช็อต ~'+mins+') — ปรับได้ แล้วกดสร้างสตอรี่บอร์ด</span>';}
 function startPoll(){if(timer)clearInterval(timer);timer=setInterval(poll,2000);poll();}
 async function poll(){
  try{const d=await(await api('/admin/story/status')).json();
@@ -12519,14 +12523,17 @@ async def admin_story_board(request: Request):
     topic = str(body.get("topic") or "").strip()[:200]
     if not topic:
         return JSONResponse({"ok": False, "msg": "ไม่มีหัวข้อ"})
-    n_shots = max(3, min(30, int(body.get("n_shots") or 8)))
+    n_shots = max(3, min(50, int(body.get("n_shots") or 8)))
     chars = max(1, min(3, int(body.get("characters") or 2)))
     model = str(body.get("model") or "grok").strip().lower()
     if model not in ("grok", "gemini", "deepseek"):
         model = "grok"
     aspect = "16:9" if str(body.get("aspect")) == "16:9" else "9:16"
+    genre = str(body.get("genre") or "").strip().lower()
+    if genre not in ("horror", "drama", "comedy"):
+        genre = ""
     import asyncio as _aio
-    _aio.create_task(story_studio.run_board_bg(topic, n_shots, chars, model, aspect))
+    _aio.create_task(story_studio.run_board_bg(topic, n_shots, chars, model, aspect, genre))
     return JSONResponse({"ok": True})
 
 
