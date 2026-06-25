@@ -76,7 +76,8 @@ async def generate_image(prompt: str, out_path: str, model: str = "", seed: int 
 
 
 async def generate_image_edit(prompt: str, ref_paths: list[str], out_path: str,
-                              seed: int | None = None, aspect: str = "9:16") -> str | None:
+                              seed: int | None = None, aspect: str = "9:16",
+                              resolution: str = "1K") -> str | None:
     """Character-consistent 9:16 image via fal Nano Banana 2 edit: generate a NEW scene from
     `prompt` while keeping the SAME character/subject shown in the reference image(s). Unlike
     Redux this is a SEMANTIC edit (it re-poses the character into a new scene instead of cloning
@@ -97,7 +98,7 @@ async def generate_image_edit(prompt: str, ref_paths: list[str], out_path: str,
             with open(p, "rb") as f:
                 urls.append("data:image/jpeg;base64," + base64.b64encode(f.read()).decode())
         body = {"prompt": prompt, "image_urls": urls, "num_images": 1,
-                "aspect_ratio": aspect, "resolution": "1K", "output_format": "jpeg"}
+                "aspect_ratio": aspect, "resolution": resolution, "output_format": "jpeg"}
         if seed is not None:
             body["seed"] = int(seed)
         async with httpx.AsyncClient(timeout=180) as c:

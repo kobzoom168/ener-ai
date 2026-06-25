@@ -171,11 +171,14 @@ async def preview_hero(scene: str = "") -> str | None:
         return None
     from app.agents import aivideo
     os.makedirs(_HERO_DIR, exist_ok=True)
-    scene = (scene or "standing in a beautiful cinematic Thai setting, confident hero pose, "
-                      "soft dramatic lighting").strip()
-    edit = ("Keep the SAME person from the reference image(s) — identical face and features. Render "
-            "them as a polished cinematic film character: " + scene + ". " + _REAL_STYLE)
-    return await aivideo.generate_image_edit(edit, h["images"], _HERO_PREVIEW, aspect="9:16")
+    scene = (scene or "a close-up frontal portrait, head and shoulders, looking straight at the camera, "
+                      "neutral calm expression, natural soft lighting").strip()
+    edit = ("This is the SAME REAL PERSON shown in the reference image(s). Reproduce their face EXACTLY — "
+            "identical facial structure, eyes, nose, mouth, eyebrows, jawline, skin tone, wrinkles and "
+            "hair. Do NOT beautify, do NOT change age, do NOT alter or average the features — it must "
+            "look unmistakably like the same individual. A photorealistic real photograph of this exact "
+            "person: " + scene + ". " + _REAL_STYLE)
+    return await aivideo.generate_image_edit(edit, h["images"], _HERO_PREVIEW, aspect="9:16", resolution="2K")
 
 
 # ── ค้นรูปบุคคลจริง (keyless DuckDuckGo image search) → reference for a true-to-life HERO face ──
