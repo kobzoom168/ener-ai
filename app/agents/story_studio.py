@@ -825,53 +825,73 @@ async def narrate_shots(shots: list[dict]) -> tuple[list[str], list[float]]:
 # ── stage 5: assemble → mp4 (9:16 Shorts/TikTok by default, or 16:9) ──────────
 def assemble_story(visuals: list[tuple[str, str]], narr_paths: list[str],
                    durs: list[float], out_mp4: str, fps: int = 30, aspect: str = "9:16") -> str:
-    """Build the final video at the chosen aspect: each shot's visual (image→Ken Burns zoom, or video)
-    timed to its narration, concatenated, with the narration as the audio track. Fail-open → ''."""
+    """Build the final video at the chosen aspect. Renders EACH shot to a small temp clip then concats
+    them (the whole thing in one filter_complex OOM-killed ffmpeg at ~5GB on the 7.5GB box). Each shot
+    = image→Ken Burns zoom or looped video, timed to its narration; audio = the narration track.
+    Checks ffmpeg returncode at every step + faststart. Fail-open → ''."""
     import subprocess
     from app.agents.vdo_agent import _concat_audio
     W, H = _aspect_dims(aspect)
-    BW, BH = int(W * 1.5), int(H * 1.5)  # oversample so the Ken Burns zoom never reveals edges
+    BW, BH = int(W * 1.25), int(H * 1.25)  # modest oversample for the zoom headroom (low memory)
     visuals = [(p, k) for (p, k) in visuals if p and os.path.exists(p)]
     if not visuals:
         return ""
+    workdir = out_mp4 + "_parts"
+    os.makedirs(workdir, exist_ok=True)
+
+    def _run(cmd):
+        try:
+            return subprocess.run(cmd, capture_output=True, timeout=300).returncode == 0
+        except Exception:
+            return False
+
+    parts = []
+    for i, ((path, kind), d) in enumerate(zip(visuals, durs)):
+        d = max(1.0, float(d))
+        clip = os.path.join(workdir, f"p{i:03d}.mp4")
+        if kind == "image":  # slow cinematic Ken Burns zoom-in — one shot at a time = little RAM
+            vf = (f"scale={BW}:{BH}:force_original_aspect_ratio=increase,crop={BW}:{BH},"
+                  f"zoompan=z='min(zoom+0.0004,1.12)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+                  f"d={max(1, int(d*fps))}:s={W}x{H}:fps={fps},setsar=1")
+            cmd = ["ffmpeg", "-y", "-loop", "1", "-t", f"{d:.3f}", "-i", path, "-vf", vf]
+        else:
+            cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-t", f"{d:.3f}", "-i", path,
+                   "-vf", f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps={fps},setsar=1"]
+        cmd += ["-an", "-r", str(fps), "-c:v", "libx264", "-preset", "veryfast",
+                "-pix_fmt", "yuv420p", "-threads", "2", clip]
+        if _run(cmd) and os.path.exists(clip) and os.path.getsize(clip) > 3000:
+            parts.append(clip)
+
+    if not parts:
+        return ""
+    listf = os.path.join(workdir, "list.txt")
+    with open(listf, "w", encoding="utf-8") as f:
+        for p in parts:
+            f.write("file '%s'\n" % p)
+
     narration = out_mp4 + ".narr.mp3"
     valid_narr = [p for p in narr_paths if p and os.path.exists(p)]
     if valid_narr:
         _concat_audio(valid_narr, narration)
-    cmd = ["ffmpeg", "-y"]
-    for (path, kind), d in zip(visuals, durs):
-        if kind == "image":
-            cmd += ["-i", path]
-        else:
-            cmd += ["-stream_loop", "-1", "-t", f"{max(1.0, d):.3f}", "-i", path]
     has_audio = os.path.exists(narration)
+
+    cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", listf]
     if has_audio:
         cmd += ["-i", narration]
-    n = len(visuals)
-    chains = []
-    for i, ((path, kind), d) in enumerate(zip(visuals, durs)):
-        frames = max(1, int(max(1.0, d) * fps))
-        if kind == "image":  # slow cinematic Ken Burns zoom-in
-            chains.append(
-                f"[{i}:v]scale={BW}:{BH}:force_original_aspect_ratio=increase,crop={BW}:{BH},"
-                f"zoompan=z='min(zoom+0.0004,1.12)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
-                f"d={frames}:s={W}x{H}:fps={fps},setsar=1[v{i}]")
-        else:
-            chains.append(
-                f"[{i}:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},"
-                f"fps={fps},setpts=PTS-STARTPTS,setsar=1[v{i}]")
-    cat = "".join(f"[v{i}]" for i in range(n))
-    fc = ";".join(chains) + f";{cat}concat=n={n}:v=1:a=0[vout]"
-    cmd += ["-filter_complex", fc, "-map", "[vout]"]
+    cmd += ["-c:v", "copy"]  # parts already encoded identically → fast, low-memory concat
     if has_audio:
-        cmd += ["-map", f"{n}:a", "-c:a", "aac", "-b:a", "160k"]
-    cmd += ["-r", str(fps), "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
-            "-shortest", out_mp4]
-    try:
-        subprocess.run(cmd, capture_output=True, timeout=900)
+        cmd += ["-map", "0:v", "-map", "1:a", "-c:a", "aac", "-b:a", "160k", "-shortest"]
+    cmd += ["-movflags", "+faststart", out_mp4]
+    ok = _run(cmd)
+
+    try:  # cleanup temp parts
+        for p in parts:
+            os.remove(p)
+        os.remove(listf)
+        os.rmdir(workdir)
     except Exception:
-        return ""
-    return out_mp4 if (os.path.exists(out_mp4) and os.path.getsize(out_mp4) > 10000) else ""
+        pass
+    return out_mp4 if (ok and os.path.exists(out_mp4) and os.path.getsize(out_mp4) > 10000) else ""
 
 
 # ── orchestrator: topic → finished story mp4 ─────────────────────────────────
