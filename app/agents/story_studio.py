@@ -850,10 +850,12 @@ def assemble_story(visuals: list[tuple[str, str]], narr_paths: list[str],
         d = max(1.0, float(d))
         clip = os.path.join(workdir, f"p{i:03d}.mp4")
         if kind == "image":  # slow cinematic Ken Burns zoom-in — one shot at a time = little RAM
+            # NOTE: -t must be an OUTPUT option here. As an input option before -loop it makes ffmpeg
+            # feed d*fps image frames and zoompan (d frames/input-frame) then explodes the duration.
             vf = (f"scale={BW}:{BH}:force_original_aspect_ratio=increase,crop={BW}:{BH},"
                   f"zoompan=z='min(zoom+0.0004,1.12)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
                   f"d={max(1, int(d*fps))}:s={W}x{H}:fps={fps},setsar=1")
-            cmd = ["ffmpeg", "-y", "-loop", "1", "-t", f"{d:.3f}", "-i", path, "-vf", vf]
+            cmd = ["ffmpeg", "-y", "-loop", "1", "-i", path, "-vf", vf, "-t", f"{d:.3f}"]
         else:
             cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-t", f"{d:.3f}", "-i", path,
                    "-vf", f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps={fps},setsar=1"]
