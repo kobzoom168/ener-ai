@@ -143,6 +143,89 @@ async def generate_image_edit(prompt: str, ref_paths: list[str], out_path: str,
         return None
 
 
+async def fal_upload(path: str, content_type: str) -> str | None:
+    """Upload a local file to fal storage → public URL (fal models that take a *_url won't accept
+    big data-URIs, e.g. OmniHuman audio_url). Fail-open → None."""
+    key = _key()
+    if not key or not path or not os.path.exists(path):
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=120) as c:
+            r = await c.post(
+                "https://rest.alpha.fal.ai/storage/upload/initiate",
+                headers={"Authorization": f"Key {key}", "Content-Type": "application/json"},
+                json={"content_type": content_type, "file_name": os.path.basename(path)})
+            if r.status_code >= 300:
+                return None
+            d = r.json()
+            upload_url, file_url = d.get("upload_url"), d.get("file_url")
+            if not upload_url or not file_url:
+                return None
+            with open(path, "rb") as f:
+                data = f.read()
+            pr = await c.put(upload_url, content=data, headers={"Content-Type": content_type})
+            return file_url if pr.status_code < 300 else None
+    except Exception:
+        return None
+
+
+async def omnihuman(image_path: str, audio_path: str, out_path: str) -> str | None:
+    """Audio-driven talking-head: a portrait image + an audio clip → a lip-synced video via fal
+    OmniHuman (ByteDance). Language-agnostic (drives the mouth off the waveform → works for Thai).
+    ~$0.14/s, audio ≤30s. Fail-open → None."""
+    import asyncio
+    key = _key()
+    if not key or not os.path.exists(image_path) or not os.path.exists(audio_path):
+        return None
+    img_url = await fal_upload(image_path, "image/png")
+    aud_url = await fal_upload(audio_path, "audio/mpeg")
+    if not img_url or not aud_url:
+        return None
+    mdl = (os.environ.get("FAL_OMNIHUMAN_MODEL", "") or "fal-ai/bytedance/omnihuman").strip()
+    headers = {"Authorization": f"Key {key}", "Content-Type": "application/json"}
+    try:
+        async with httpx.AsyncClient(timeout=600) as c:
+            sub = await c.post(f"https://queue.fal.run/{mdl}", headers=headers,
+                               json={"image_url": img_url, "audio_url": aud_url})
+            if sub.status_code >= 300:
+                return None
+            sj = sub.json()
+            status_url, response_url = sj.get("status_url"), sj.get("response_url")
+            if not status_url or not response_url:
+                return None
+            result = None
+            for _ in range(200):  # ~600s max
+                await asyncio.sleep(3)
+                st = await c.get(status_url, headers=headers)
+                if st.status_code >= 300:
+                    continue
+                try:
+                    status = st.json().get("status")
+                except Exception:
+                    continue
+                if status == "COMPLETED":
+                    rr = await c.get(response_url, headers=headers)
+                    if rr.status_code < 300:
+                        result = rr.json()
+                    break
+                if status in ("FAILED", "ERROR"):
+                    return None
+            if not result:
+                return None
+            vid = ((result.get("video") or {}).get("url")
+                   or (((result.get("videos") or [{}])[0]) or {}).get("url") or "")
+            if not vid:
+                return None
+            dr = await c.get(vid)
+            if dr.status_code >= 300 or not dr.content:
+                return None
+            with open(out_path, "wb") as fh:
+                fh.write(dr.content)
+        return out_path if os.path.exists(out_path) and os.path.getsize(out_path) > 10000 else None
+    except Exception:
+        return None
+
+
 async def generate_ai_video(prompt: str, out_path: str, model: str = "") -> str | None:
     """Generate a short hero clip from `prompt` via fal.ai's queue API. Fail-open.
     `model` overrides the configured fal model for this call."""

@@ -243,10 +243,11 @@ async def generate_script(title: str, summary: str) -> dict:
     return {"lines": lines, "caption": caption}
 
 
-def _synth_voice(text: str, out_path: str) -> str:
-    """TTS to MP3. Uses the cloned ElevenLabs voice if configured, else gTTS (fail-open)."""
+def _synth_voice(text: str, out_path: str, voice_id: str = "") -> str:
+    """TTS to MP3. Uses `voice_id` if given (per-character voice for dialogue), else the cloned
+    ElevenLabs voice, else gTTS (fail-open)."""
     key = os.environ.get("ELEVENLABS_API_KEY", "").strip()
-    voice = os.environ.get("ELEVENLABS_VOICE_ID", "").strip()
+    voice = (voice_id or "").strip() or os.environ.get("ELEVENLABS_VOICE_ID", "").strip()
     if key and voice:
         try:
             import httpx
