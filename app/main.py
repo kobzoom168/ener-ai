@@ -12447,9 +12447,11 @@ function renderBoard(b){
   const ms=`style="aspect-ratio:${ar}"`;
   const media=s.has_video?`<video class="media" ${ms} src="/admin/story/img?i=${s.idx}&v=1&t=${Date.now()}" muted></video>`
    :(s.has_image?`<img class="media" ${ms} src="/admin/story/img?i=${s.idx}&t=${Date.now()}">`:`<div class="media" ${ms}></div>`);
+  const dlg=(s.dialogue&&s.dialogue.length)?'<div style="margin-top:6px;font-size:12px;line-height:1.5;background:#1a2940;border-left:3px solid #f59e0b;border-radius:6px;padding:6px 8px">🗣️ <b style="color:#f59e0b">บทพูด</b> '+s.dialogue.map(d=>'<b>'+esc(d.speaker)+':</b> '+esc(d.line)).join('<br>')+'</div>':'';
   return `<div class="shot" data-i="${s.idx}">
    <div class="num">ช็อต ${s.idx}${s.has_video?' · 🎞️ วิดีโอที่อัป':''}</div>
    ${media}
+   ${dlg}
    <label>พรอมต์ภาพ (อังกฤษ)</label><textarea class="ip">${esc(s.image_prompt)}</textarea>
    <label>บทบรรยาย (ไทย)</label><textarea class="nr">${esc(s.narration)}</textarea>
    <div class="btns">
@@ -12578,8 +12580,9 @@ async def admin_story_status(request: Request):
     if b:
         board = {"title": b.get("title", ""), "aspect": b.get("aspect", "9:16"), "shots": [
             {"idx": x.get("idx"), "image_prompt": x.get("image_prompt", ""),
-             "narration": x.get("narration", ""), "has_image": bool(x.get("image")),
-             "has_video": bool(x.get("video"))} for x in b.get("shots", [])]}
+             "narration": x.get("narration", ""), "dialogue": x.get("dialogue", []),
+             "has_image": bool(x.get("image")), "has_video": bool(x.get("video"))}
+            for x in b.get("shots", [])]}
     return JSONResponse({"running": s.get("running"), "log": s.get("log", [])[-40:],
                          "mp4": bool(s.get("mp4")), "title": s.get("title", ""), "board": board})
 
