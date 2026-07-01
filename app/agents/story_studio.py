@@ -724,9 +724,11 @@ async def generate_story(topic: str, n_shots: int = 8, characters: int = 2,
         f"จำนวนตัวละครหลัก: ~{max(1, int(characters or 1))} ตัว\n"
         + (f"แนวเรื่อง: {tone}\n" if tone else "")
         + (f"สถานที่/ฉากหลัก: {loc} — ทุก image_prompt ต้องอยู่ที่สถานที่นี้ ให้ฉาก/โทนสี/บรรยากาศเดียวกันทั้งเรื่อง\n" if loc else "")
-        + ("โหมดละครพูด: **ทุกช็อตที่เห็นหน้าตัวละคร ให้ตัวละครพูดเอง (dialogue มุมมองบุคคลที่ 1)** "
-           "แทนการเล่า narration — เขียน dialogue 1 ประโยคสั้นกระชับพูดลื่นต่อช็อต ระบุ speaker ให้ตรงชื่อตัวละคร "
-           "(image_prompt ช็อตพูดต้องเป็น close-up/medium เห็นหน้าชัดเพื่อลิปซิงค์) · narration ใส่เท่าที่จำเป็น\n" if dialogue else "")
+        + ("โหมดละครพูด: เขียนเป็นเรื่องที่ **เข้าใจได้ มีโครงเรื่องชัดเจน (ต้น-กลาง-จบ)** — "
+           "ผสม 2 อย่าง: (1) narration เล่าดำเนินเรื่องให้ต่อเนื่องเข้าใจง่าย (2) dialogue ในช็อตสำคัญที่ตัวละครพูด "
+           "โดย dialogue ต้อง **เป็นบทสนทนาต่อเนื่องเรื่องเดียวกัน สื่อความหมาย ไม่ใช่ประโยคลอยๆ** · "
+           "แต่ละช็อตเลือกอย่างใดอย่างหนึ่ง: ช็อตที่ตัวละครพูด = ใส่ dialogue (ระบุ speaker ตรงชื่อ + image_prompt เป็น close-up/medium เห็นหน้าชัด) "
+           "· ช็อตเล่าเรื่อง/บรรยากาศ = ใส่ narration · ให้คนดูตามเรื่องรู้เรื่อง\n" if dialogue else "")
         + f"สไตล์ภาพ: {style} — เน้นไทยแท้สมจริงที่สุด\n\n"
         f"เขียนบทเล่าเรื่องให้ครบ {n} ช็อต เรียงต่อเนื่องมีต้น-กลาง-จบ"
         + (" คุมโทน/อารมณ์ตามแนวเรื่องตลอดทั้งเรื่อง" if tone else "")
@@ -919,8 +921,11 @@ def assemble_story(visuals: list[tuple[str, str]], narr_paths: list[str],
 
 
 # ── ละครพูด (talking drama): dialogue shots → OmniHuman lip-sync ──────────────
-_VOICE_FEMALE = "Z3R5wn05IrDiVCyEkUrK"  # ElevenLabs female (กบ supplied)
-_VOICE_MALE = "UmQN7jS1Ee8B1czsUtQh"    # ElevenLabs male
+import os as _os
+# กบ labelled Z3R5=female/UmQN=male, but ดาว(female) came out male → the labels were swapped.
+# Configurable via env so it's a 1-line fix if wrong again.
+_VOICE_FEMALE = _os.environ.get("STORY_VOICE_FEMALE", "") or "UmQN7jS1Ee8B1czsUtQh"
+_VOICE_MALE = _os.environ.get("STORY_VOICE_MALE", "") or "Z3R5wn05IrDiVCyEkUrK"
 
 
 def _voice_for(speaker: str, characters: list[dict]) -> str:
