@@ -588,18 +588,24 @@ async def assemble_board_bg(motion: str) -> None:
     STORY_STATE["log"] = STORY_STATE.get("log", []) + ["🎬 เริ่มตัดต่อ…"]
     try:
         shots = [s for s in b["shots"] if s.get("image") or s.get("video")]
-        if motion == "talk":  # ── ละครพูด: dialogue → OmniHuman lip-sync ──
+        if motion in ("talk", "talk1"):  # ── ละครพูด: dialogue → OmniHuman lip-sync ──
             aspect = b.get("aspect", "16:9")
-            _log_state("🗣️ ละครพูด — ลิปซิงค์ช็อตที่มีบทพูด (OmniHuman) อาจนานหลายนาที…")
+            talk_shots = shots
+            if motion == "talk1":  # cheap test — only the first shot that has dialogue
+                first = next((s for s in shots if s.get("dialogue")), None)
+                talk_shots = [first] if first else shots[:1]
+                _log_state("🧪 ทดสอบละครพูด 1 ช็อต (ช็อตแรกที่มีบทพูด) — เช็คก่อนจ่ายเต็ม…")
+            else:
+                _log_state("🗣️ ละครพูด — ลิปซิงค์ช็อตที่มีบทพูด (OmniHuman) อาจนานหลายนาที…")
 
             async def _alog(m):
                 _log_state(m)
             out = os.path.join(_STORY_DIR, f"story_{int(time.time())}.mp4")
-            mp4 = await assemble_talking(shots, b.get("characters", []), out, aspect, log=_alog)
+            mp4 = await assemble_talking(talk_shots, b.get("characters", []), out, aspect, log=_alog)
             if mp4:
                 STORY_STATE["mp4"] = mp4
                 _save_board()
-                _log_state("✅ คลิปละครพูดเสร็จ!")
+                _log_state("✅ " + ("ทดสอบ 1 ช็อตเสร็จ! ดูผลแล้วค่อยกดละครพูดเต็ม" if motion == "talk1" else "คลิปละครพูดเสร็จ!"))
             else:
                 STORY_STATE["err"] = "ตัดต่อไม่สำเร็จ"
                 _log_state("❌ ตัดต่อไม่สำเร็จ")

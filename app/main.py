@@ -12355,6 +12355,7 @@ _STORY_PAGE = """<!DOCTYPE html><html lang="th"><head><meta charset="utf-8">
    <span style="color:#475569">|  ตัดต่อ:</span>
    <button id="renderKB" onclick="assemble('kenburns')" disabled style="background:#26304a">✂️ Ken Burns (ซูม · ฟรี)</button>
    <button id="renderKL" onclick="assemble('kling')" disabled style="background:linear-gradient(135deg,#0891b2,#7c3aed)">🎬 Kling — ตัวละครขยับจริง (~฿13/ช็อต)</button>
+   <button id="renderTALK1" onclick="assemble('talk1')" disabled style="background:#26304a">🧪 ทดสอบพูด 1 ช็อต (~$1)</button>
    <button id="renderTALK" onclick="assemble('talk')" disabled style="background:linear-gradient(135deg,#db2777,#f59e0b)">🗣️ ละครพูด — ปากขยับ (OmniHuman ~฿25/ช็อตพูด)</button>
   </div>
   <details style="margin-top:10px"><summary style="cursor:pointer;color:#a78bfa;font-size:13px">📥 หรือ นำเข้าสคริปต์เอง (วางตาราง — คอลัมน์: ช็อต, เนื้อหา, บรรยาย, Prompt)</summary>
@@ -12433,7 +12434,7 @@ async function poll(){
   if(!d.running){clearInterval(timer);timer=null;
    document.getElementById('go').disabled=false;
    const has=!!(d.board&&d.board.shots&&d.board.shots.length);
-   ['renderKB','renderKL','renderTALK'].forEach(id=>document.getElementById(id).disabled=!has);
+   ['renderKB','renderKL','renderTALK','renderTALK1'].forEach(id=>document.getElementById(id).disabled=!has);
    if(d.mp4){const v=document.getElementById('vid');v.src='/admin/story/file?t='+Date.now();document.getElementById('resultCard').style.display='block';}
   }
  }catch(e){}
@@ -12474,7 +12475,7 @@ async function assemble(motion){
   if(!confirm('🎬 Kling จะสร้างวิดีโอ AI ทุกช็อต — ตัวละครขยับจริง\\nค่าใช้จ่าย ~฿13/ช็อต (รวม ~฿'+(n*13)+')\\nใช้เวลา ~5-8 นาที\\n\\nยืนยันทำต่อ?'))return;}
  if(motion==='talk'){
   if(!confirm('🗣️ ละครพูด — ช็อตที่มีบทพูดจะลิปซิงค์ด้วย OmniHuman\\nค่าใช้จ่าย ~฿25/ช็อตที่พูด (ช็อตบรรยายฟรี)\\nใช้เวลานานหลายนาที\\n\\nยืนยันทำต่อ?'))return;}
- ['renderKB','renderKL','renderTALK'].forEach(id=>document.getElementById(id).disabled=true);
+ ['renderKB','renderKL','renderTALK','renderTALK1'].forEach(id=>document.getElementById(id).disabled=true);
  await api('/admin/story/assemble?motion='+motion,{method:'POST'});startPoll();}
 function flash(i,m){const c=shotEl(i);if(c)c.querySelector('.num').insertAdjacentHTML('beforeend',' <span style="color:#22c55e">'+m+'</span>');}
 async function loadHero(){try{const d=await(await api('/admin/story/hero')).json();
@@ -12663,7 +12664,7 @@ async def admin_story_assemble(request: Request):
     if story_studio.STORY_STATE.get("running"):
         return JSONResponse({"ok": False})
     m = request.query_params.get("motion")
-    motion = m if m in ("kling", "talk") else "kenburns"
+    motion = m if m in ("kling", "talk", "talk1") else "kenburns"
     import asyncio as _aio
     _aio.create_task(story_studio.assemble_board_bg(motion))
     return JSONResponse({"ok": True})
