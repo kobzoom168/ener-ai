@@ -12351,6 +12351,7 @@ _STORY_PAGE = """<!DOCTYPE html><html lang="th"><head><meta charset="utf-8">
   </div>
   <div style="display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap">
    <button id="go" onclick="createBoard()">🎬 สร้างสตอรี่บอร์ด</button>
+   <label style="display:flex;gap:5px;align-items:center;color:#e8edf5;font-size:12px"><input type="checkbox" id="dialogue" style="width:auto"> 🗣️ ให้ตัวละครพูด (สำหรับละครพูด)</label>
    <span style="color:#475569">|  ตัดต่อ:</span>
    <button id="renderKB" onclick="assemble('kenburns')" disabled style="background:#26304a">✂️ Ken Burns (ซูม · ฟรี)</button>
    <button id="renderKL" onclick="assemble('kling')" disabled style="background:linear-gradient(135deg,#0891b2,#7c3aed)">🎬 Kling — ตัวละครขยับจริง (~฿13/ช็อต)</button>
@@ -12402,7 +12403,7 @@ async function createBoard(){
  const t=document.getElementById('topic').value.trim();if(!t){alert('ใส่หัวข้อก่อน');return;}
  document.getElementById('go').disabled=true;document.getElementById('board').innerHTML='';
  await api('/admin/story/board',{method:'POST',headers:{'Content-Type':'application/json'},
-  body:JSON.stringify({topic:t,n_shots:+shots.value,characters:+chars.value,model:model.value,aspect:document.getElementById('aspect').value,genre:document.getElementById('genre').value,location:document.getElementById('location').value})});
+  body:JSON.stringify({topic:t,n_shots:+shots.value,characters:+chars.value,model:model.value,aspect:document.getElementById('aspect').value,genre:document.getElementById('genre').value,location:document.getElementById('location').value,dialogue:document.getElementById('dialogue').checked})});
  startPoll();
 }
 async function importScript(){const t=document.getElementById('impt').value.trim();if(!t){alert('วางสคริปต์ก่อน');return;}
@@ -12538,8 +12539,9 @@ async def admin_story_board(request: Request):
     if genre not in ("horror", "drama", "comedy"):
         genre = ""
     location = str(body.get("location") or "").strip()[:120]
+    dialogue = bool(body.get("dialogue"))
     import asyncio as _aio
-    _aio.create_task(story_studio.run_board_bg(topic, n_shots, chars, model, aspect, genre, location))
+    _aio.create_task(story_studio.run_board_bg(topic, n_shots, chars, model, aspect, genre, location, dialogue))
     return JSONResponse({"ok": True})
 
 

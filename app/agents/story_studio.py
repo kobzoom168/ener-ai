@@ -328,15 +328,16 @@ def _log_state(m):
 
 
 async def run_board_bg(topic: str, n_shots: int, characters: int, model: str,
-                       aspect: str = "9:16", genre: str = "", location: str = "") -> None:
+                       aspect: str = "9:16", genre: str = "", location: str = "",
+                       dialogue: bool = False) -> None:
     """Stage 1-3 → a STORYBOARD (shots with image + editable script + narration). Per-shot upload /
     regenerate / assemble happen via separate endpoints afterward."""
     STORY_STATE.update(running=True, log=["🚀 สร้างสตอรี่บอร์ด…"], board=None, mp4="", title="", err="")
     try:
         from app.agents import aivideo
-        _log_state("✍️ เขียนบท…")
+        _log_state("✍️ เขียนบท…" + (" (ตัวละครพูด)" if dialogue else ""))
         story = await generate_story(topic, n_shots=n_shots, characters=characters, model=model,
-                                     genre=genre, location=location)
+                                     genre=genre, location=location, dialogue=dialogue)
         if not story.get("ok"):
             STORY_STATE["err"] = story.get("error", "")
             _log_state("❌ " + story.get("error", "")); return
@@ -712,7 +713,7 @@ _GENRE_TONE = {
 
 async def generate_story(topic: str, n_shots: int = 8, characters: int = 2,
                          style: str = "สมจริง photorealistic", model: str = "",
-                         genre: str = "", location: str = "") -> dict:
+                         genre: str = "", location: str = "", dialogue: bool = False) -> dict:
     """Topic → a shot-by-shot Thai story script. n_shots controls length (≈8s/shot)."""
     n = max(3, min(50, int(n_shots or 8)))
     tone = _GENRE_TONE.get(str(genre).strip().lower(), "")
@@ -723,6 +724,9 @@ async def generate_story(topic: str, n_shots: int = 8, characters: int = 2,
         f"จำนวนตัวละครหลัก: ~{max(1, int(characters or 1))} ตัว\n"
         + (f"แนวเรื่อง: {tone}\n" if tone else "")
         + (f"สถานที่/ฉากหลัก: {loc} — ทุก image_prompt ต้องอยู่ที่สถานที่นี้ ให้ฉาก/โทนสี/บรรยากาศเดียวกันทั้งเรื่อง\n" if loc else "")
+        + ("โหมดละครพูด: **ทุกช็อตที่เห็นหน้าตัวละคร ให้ตัวละครพูดเอง (dialogue มุมมองบุคคลที่ 1)** "
+           "แทนการเล่า narration — เขียน dialogue 1 ประโยคสั้นกระชับพูดลื่นต่อช็อต ระบุ speaker ให้ตรงชื่อตัวละคร "
+           "(image_prompt ช็อตพูดต้องเป็น close-up/medium เห็นหน้าชัดเพื่อลิปซิงค์) · narration ใส่เท่าที่จำเป็น\n" if dialogue else "")
         + f"สไตล์ภาพ: {style} — เน้นไทยแท้สมจริงที่สุด\n\n"
         f"เขียนบทเล่าเรื่องให้ครบ {n} ช็อต เรียงต่อเนื่องมีต้น-กลาง-จบ"
         + (" คุมโทน/อารมณ์ตามแนวเรื่องตลอดทั้งเรื่อง" if tone else "")
