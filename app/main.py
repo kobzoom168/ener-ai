@@ -12509,6 +12509,11 @@ async function loadBal(){try{const d=await(await api('/admin/story/balance')).js
  if(d.usd==null){el.innerHTML='💰 fal: ?';el.style.color='#8b96a8';return;}
  const low=d.usd<1;el.innerHTML='💰 fal: $'+d.usd.toFixed(2)+' (~฿'+d.baht+')';
  el.style.color=low?'#fff':'#34d399';el.style.background=low?'#b91c1c':'#16213a';}catch(e){}}
+const _FORM_FIELDS=['topic','location','genre','dur','shots','chars','model','aspect'];
+function saveForm(){try{const d={};_FORM_FIELDS.forEach(id=>{const e=document.getElementById(id);if(e)d[id]=e.value;});const dg=document.getElementById('dialogue');if(dg)d.dialogue=dg.checked;localStorage.setItem('storyForm',JSON.stringify(d));}catch(e){}}
+function loadForm(){try{const d=JSON.parse(localStorage.getItem('storyForm')||'{}');_FORM_FIELDS.forEach(id=>{const e=document.getElementById(id);if(e&&d[id]!=null)e.value=d[id];});const dg=document.getElementById('dialogue');if(dg&&d.dialogue!=null)dg.checked=d.dialogue;}catch(e){}}
+loadForm();
+_FORM_FIELDS.concat(['dialogue']).forEach(id=>{const e=document.getElementById(id);if(e){e.addEventListener('change',saveForm);e.addEventListener('input',saveForm);}});
 poll(); loadHero(); loadBal();  // restore the saved storyboard + hero + fal balance on page open
 </script></body></html>"""
 

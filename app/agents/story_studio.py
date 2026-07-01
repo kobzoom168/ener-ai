@@ -925,10 +925,10 @@ def assemble_story(visuals: list[tuple[str, str]], narr_paths: list[str],
 
 # ── ละครพูด (talking drama): dialogue shots → OmniHuman lip-sync ──────────────
 import os as _os
-# กบ labelled Z3R5=female/UmQN=male, but ดาว(female) came out male → the labels were swapped.
-# Configurable via env so it's a 1-line fix if wrong again.
-_VOICE_FEMALE = _os.environ.get("STORY_VOICE_FEMALE", "") or "UmQN7jS1Ee8B1czsUtQh"
-_VOICE_MALE = _os.environ.get("STORY_VOICE_MALE", "") or "Z3R5wn05IrDiVCyEkUrK"
+# กบ's original labels were right (Z3R5=female, UmQN=male) — confirmed on a clean shot-reverse-shot
+# clip. Configurable via env so it's a 1-line fix if ever wrong.
+_VOICE_FEMALE = _os.environ.get("STORY_VOICE_FEMALE", "") or "Z3R5wn05IrDiVCyEkUrK"
+_VOICE_MALE = _os.environ.get("STORY_VOICE_MALE", "") or "UmQN7jS1Ee8B1czsUtQh"
 
 
 def _voice_for(speaker: str, characters: list[dict]) -> str:
