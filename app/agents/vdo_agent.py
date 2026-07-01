@@ -258,7 +258,8 @@ def _synth_voice(text: str, out_path: str, voice_id: str = "") -> str:
                 json={
                     "text": text,
                     "model_id": model,
-                    "voice_settings": {"stability": 0.5, "similarity_boost": 0.8, "style": 0.0},
+                    "voice_settings": {"stability": 0.35, "similarity_boost": 0.85, "style": 0.45,
+                                       "use_speaker_boost": True},  # lower stability + style = more emotion/pacing
                 },
                 timeout=120,
             )
