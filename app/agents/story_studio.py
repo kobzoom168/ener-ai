@@ -962,6 +962,13 @@ _AMBIENT = {
 }
 
 
+_MUSIC = {
+    "horror": "tense eerie horror background score, suspenseful, dark ambient strings and low drones, instrumental, no vocals",
+    "drama": "emotional gentle piano and strings background score, heartfelt cinematic, instrumental, no vocals",
+    "comedy": "light playful quirky upbeat background music, fun, instrumental, no vocals",
+}
+
+
 async def gen_ambient(genre: str, out: str, seconds: int = 20) -> str | None:
     """Generate an ambient/atmosphere sound bed via ElevenLabs Sound Effects (mixed low under the clip)."""
     import httpx
@@ -975,6 +982,28 @@ async def gen_ambient(genre: str, out: str, seconds: int = 20) -> str | None:
             r = await c.post("https://api.elevenlabs.io/v1/sound-generation",
                              headers={"xi-api-key": key, "Content-Type": "application/json"},
                              json={"text": prompt, "duration_seconds": max(1, min(22, int(seconds)))})
+            if r.status_code < 300 and r.content:
+                with open(out, "wb") as f:
+                    f.write(r.content)
+                return out
+    except Exception:
+        pass
+    return None
+
+
+async def gen_music(genre: str, out: str, ms: int = 20000) -> str | None:
+    """Generate an instrumental background score via ElevenLabs Music (mixed low under the clip)."""
+    import httpx
+    key = _os.environ.get("ELEVENLABS_API_KEY", "").strip()
+    if not key:
+        return None
+    prompt = _MUSIC.get(str(genre).strip().lower(),
+                        "subtle cinematic instrumental background score, no vocals")
+    try:
+        async with httpx.AsyncClient(timeout=180) as c:
+            r = await c.post("https://api.elevenlabs.io/v1/music",
+                             headers={"xi-api-key": key, "Content-Type": "application/json"},
+                             json={"prompt": prompt, "music_length_ms": max(10000, min(30000, int(ms)))})
             if r.status_code < 300 and r.content:
                 with open(out, "wb") as f:
                     f.write(r.content)
@@ -1087,16 +1116,29 @@ async def assemble_talking(shots: list[dict], characters: list[dict], out_mp4: s
             f.write("file '%s'\n" % p)
     ok = _run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", listf,
                "-c", "copy", "-movflags", "+faststart", out_mp4])
-    if ok:  # ── mix a low ambient/atmosphere bed under the whole clip ──
-        await _say("🎼 ใส่เสียงบรรยากาศ…")
+    if ok:  # ── mix low ambient + background music under the whole clip ──
+        await _say("🎼 ใส่เสียงบรรยากาศ + เพลงประกอบ…")
         amb = os.path.join(workdir, "ambient.mp3")
+        mus = os.path.join(workdir, "music.mp3")
+        beds = []
         if await gen_ambient(genre, amb):
-            mixed = out_mp4 + ".amb.mp4"
-            if _run(["ffmpeg", "-y", "-i", out_mp4, "-stream_loop", "-1", "-i", amb,
-                     "-filter_complex",
-                     "[1:a]volume=0.20[amb];[0:a][amb]amix=inputs=2:duration=first:dropout_transition=0[a]",
-                     "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "160k",
-                     "-movflags", "+faststart", mixed]) and os.path.exists(mixed) and os.path.getsize(mixed) > 10000:
+            beds.append((amb, 0.16))
+        if await gen_music(genre, mus):
+            beds.append((mus, 0.18))
+        if beds:
+            mixed = out_mp4 + ".mix.mp4"
+            cmd = ["ffmpeg", "-y", "-i", out_mp4]
+            for p, _v in beds:
+                cmd += ["-stream_loop", "-1", "-i", p]
+            fc = ""
+            labels = "[0:a]"
+            for i, (_p, v) in enumerate(beds, start=1):
+                fc += f"[{i}:a]volume={v}[b{i}];"
+                labels += f"[b{i}]"
+            fc += f"{labels}amix=inputs={len(beds) + 1}:duration=first:dropout_transition=0[a]"
+            cmd += ["-filter_complex", fc, "-map", "0:v", "-map", "[a]", "-c:v", "copy",
+                    "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", mixed]
+            if _run(cmd) and os.path.exists(mixed) and os.path.getsize(mixed) > 10000:
                 os.replace(mixed, out_mp4)
     try:
         for p in os.listdir(workdir):
